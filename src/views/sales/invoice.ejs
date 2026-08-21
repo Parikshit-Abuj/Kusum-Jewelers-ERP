@@ -1,0 +1,114 @@
+<header class="page-header no-print">
+  <div>
+    <p class="eyebrow">Saved invoice</p>
+    <h1><%= sale.invoiceNumber %></h1>
+    <p class="muted">Created <%= sale.saleDate.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) %></p>
+  </div>
+  <div class="header-actions">
+    <a class="button secondary" href="/sales">All sales</a>
+    <a class="button secondary" href="/sales/new">New sale</a>
+    <a class="button" href="/sales/<%= sale.id %>/invoice.pdf" target="_blank" rel="noopener">🖨 Print / save PDF</a>
+  </div>
+</header>
+
+<section class="invoice panel">
+  <!-- Invoice header -->
+  <div class="invoice-top">
+    <div class="invoice-document-title">
+      <h2>TAX INVOICE</h2>
+      <p>Original copy</p>
+    </div>
+    <div class="invoice-meta">
+      <strong>TAX INVOICE</strong>
+      <span><%= sale.invoiceNumber %></span>
+      <span><%= sale.saleDate.toLocaleDateString('en-IN', { dateStyle: 'long' }) %></span>
+    </div>
+  </div>
+
+  <!-- Bill to / Payment -->
+  <div class="invoice-parties">
+    <div>
+      <small>BILL TO</small>
+      <strong><%= sale.customer?.name || 'Walk-in customer' %></strong>
+      <% if (sale.customer?.phone) { %><span><%= sale.customer.phone %></span><% } %>
+      <% if (sale.customer?.address) { %><span><%= sale.customer.address %></span><% } %>
+    </div>
+    <div>
+      <small>PAYMENT DETAILS</small>
+      <strong><%= sale.paymentMethod.replace('_', ' ') %></strong>
+      <% if (Number(sale.urdOffset) > 0) { %><span>URD adjusted: <%- money(sale.urdOffset) %></span><% } %>
+      <span>Paid: <%- money(sale.paid) %></span>
+      <% if (Number(sale.balance) > 0) { %>
+        <span style="color:#b47a21;font-weight:700;">Balance due: <%- money(sale.balance) %></span>
+      <% } else { %>
+        <span style="color:#1f7651;">Fully paid ✓</span>
+      <% } %>
+    </div>
+  </div>
+
+  <!-- Line items table -->
+  <table class="invoice-table">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Barcode / Item</th>
+        <th>Purity</th>
+        <th>Weight</th>
+        <th class="right">Qty</th>
+        <th class="right">Rate / g</th>
+        <th class="right">Making</th>
+        <th class="right">Amount (ex. GST)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% sale.items.forEach((item, index) => { %>
+      <tr>
+        <td><%= index + 1 %></td>
+        <td>
+          <strong><%= item.product.name %></strong>
+          <small><%= item.product.barcode || item.product.sku %> · <%= item.product.category %></small>
+        </td>
+        <td><%= item.product.purity || item.product.metal %></td>
+        <td><%= grams(item.weight || item.product.netWeight) %></td>
+        <td class="right"><%= item.quantity %></td>
+        <td class="right"><%- money(item.metalRate || item.unitPrice) %></td>
+        <td class="right">
+          <%- money(item.makingCharge) %>
+          <small><%= item.makingChargeType.replace('_', ' ') %></small>
+        </td>
+        <td class="right"><strong><%- money(item.taxableAmount || item.lineTotal) %></strong></td>
+      </tr>
+      <% }) %>
+    </tbody>
+  </table>
+
+  <!-- Totals + Note -->
+  <div class="invoice-bottom">
+    <div class="invoice-note">
+      <strong>Thank you.</strong>
+      <span><%= sale.notes || 'Please retain this invoice for future reference.' %></span>
+      <% if (Number(sale.balance) > 0) { %>
+        <div class="balance-due">⚠ Credit balance: <%- money(sale.balance) %> — pending collection</div>
+      <% } %>
+      <div class="invoice-sig">
+        <div>Authorised Signatory</div>
+      </div>
+    </div>
+    <div class="invoice-totals">
+      <div><span>Subtotal</span><strong><%- money(sale.subtotal) %></strong></div>
+      <% if (Number(sale.discount) > 0) { %>
+      <div><span>Discount</span><strong>− <%- money(sale.discount) %></strong></div>
+      <% } %>
+      <div><span>GST (<%= sale.gstRate %>%)</span><strong><%- money(sale.gstAmount) %></strong></div>
+      <div class="grand"><span>Grand total</span><strong><%- money(sale.total) %></strong></div>
+      <% if (Number(sale.urdOffset) > 0) { %>
+      <div><span>URD purchase adjustment</span><strong>− <%- money(sale.urdOffset) %></strong></div>
+      <div style="font-size:12px;font-weight:700;"><span>Net payable</span><span><%- money(Number(sale.total) - Number(sale.urdOffset)) %></span></div>
+      <% } %>
+      <div style="margin-top:8px;font-size:11px;color:#756f69;"><span>Amount paid</span><span><%- money(sale.paid) %></span></div>
+      <% if (Number(sale.balance) > 0) { %>
+      <div style="font-size:12px;font-weight:700;color:#b47a21;"><span>Balance due</span><span><%- money(sale.balance) %></span></div>
+      <% } %>
+    </div>
+  </div>
+</section>

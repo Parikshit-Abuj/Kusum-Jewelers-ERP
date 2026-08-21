@@ -1,0 +1,63 @@
+<header class="page-header">
+  <div>
+    <p class="eyebrow">Old gold / silver buying</p>
+    <h1>URD Purchases</h1>
+    <p class="muted">Track metal purchased from walk-in and regular customers.</p>
+  </div>
+  <div class="header-actions"><a class="button ghost" href="/data-management?resource=urd">Export / archive</a><a class="button" href="/urd-purchases/new">+ New purchase</a></div>
+</header>
+
+<% if (purchases.length) { %>
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>URD No.</th>
+        <th>Date</th>
+        <th>Customer</th>
+        <th>Metal</th>
+        <th>Purity</th>
+        <th class="right">Weight (g)</th>
+        <th class="right">Rate / g</th>
+        <th class="right">Valuation</th>
+        <th class="right">Payout</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      <% purchases.forEach(p => { %>
+      <tr>
+        <td><strong><%= p.purchaseNumber %></strong></td>
+        <td><%= p.purchaseDate.toLocaleDateString('en-IN', { dateStyle: 'medium' }) %></td>
+        <td>
+          <a href="/customers/<%= p.customer.id %>"><%= p.customer.name %></a>
+          <% if (p.customer.phone) { %><small><%= p.customer.phone %></small><% } %>
+        </td>
+        <td><%= p.metal %></td>
+        <td><%= p.purity || '—' %></td>
+        <td class="right"><%= Number(p.netWeight).toFixed(3) %></td>
+        <td class="right"><%- money(p.ratePerGram) %></td>
+        <td class="right"><strong><%- money(p.totalAmount) %></strong><% if (Number(p.saleOffset) > 0) { %><small>Settled: <%- money(p.saleOffset) %></small><% } %></td>
+        <td class="right"><strong><%- money(p.paid) %></strong><small><%= p.paymentMethod.replace('_', ' ') %></small></td>
+        <td class="actions">
+          <a class="button ghost small" href="/urd-purchases/<%= p.id %>/invoice.pdf" target="_blank">PDF</a>
+          <form method="post" action="/urd-purchases/<%= p.id %>/delete" onsubmit="return confirm('Delete this URD entry?')">
+            <button class="icon-button" type="submit" title="Delete" style="color:#b53d36">✕</button>
+          </form>
+        </td>
+      </tr>
+      <% if (p.description) { %>
+      <tr class="sub-row"><td colspan="10"><small><%= p.description %></small></td></tr>
+      <% } %>
+      <% }); %>
+    </tbody>
+  </table>
+</div>
+<% } else { %>
+<div class="empty-state">
+  <span>⇣</span>
+  <h3>No URD purchases yet</h3>
+  <p>When you buy old gold or silver from a customer, log it here and print its tax invoice when needed.</p>
+  <a class="button" href="/urd-purchases/new">Record first purchase</a>
+</div>
+<% } %>

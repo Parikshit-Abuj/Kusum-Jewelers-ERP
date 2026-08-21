@@ -1,0 +1,57 @@
+<header class="page-header">
+  <div><p class="eyebrow">Data lifecycle</p><h1>Export &amp; archive data</h1><p class="muted">Download a date-selected Excel backup before permanently removing old records.</p></div>
+</header>
+
+<div class="archive-notice"><strong>Keep your shop fast without breaking records.</strong><span>Exports are safe downloads. Permanent deletion is restricted to records that do not damage current stock, customer dues, active repairs or URD settlements.</span></div>
+
+<section class="content-grid archive-layout">
+  <article class="panel archive-export">
+    <div class="panel-heading"><div><h2>1. Download Excel backup</h2><p>Select a register and date range. The `.xlsx` file is generated directly from ERP data.</p></div></div>
+    <form method="post" action="/data/export">
+      <div class="form-grid three">
+        <label>Data register<select name="resource" data-resource-select><% resources.forEach((item) => { %><option value="<%= item.key %>" data-archive-disabled="<%= item.archiveDisabled ? 'true' : 'false' %>" <%= selectedResource === item.key ? 'selected' : '' %>><%= item.label %></option><% }) %></select></label>
+        <label>From date<input name="from" type="date" required value="<%= range.from %>"></label>
+        <label>To date<input name="to" type="date" required value="<%= range.to %>"></label>
+      </div>
+      <button class="button" type="submit">Download Excel (.xlsx)</button>
+    </form>
+  </article>
+
+  <aside class="panel archive-delete">
+    <h2>2. Permanently delete old data</h2>
+    <p class="muted">This cannot be undone. Export the same date range first and keep that Excel file safely.</p>
+    <form method="post" action="/data/archive" data-archive-form>
+      <label>Data register<select name="resource" data-resource-select><% resources.forEach((item) => { %><option value="<%= item.key %>" data-archive-disabled="<%= item.archiveDisabled ? 'true' : 'false' %>" <%= selectedResource === item.key ? 'selected' : '' %>><%= item.label %></option><% }) %></select></label>
+      <label>From date<input name="from" type="date" required value="<%= range.from %>"></label>
+      <label>To date<input name="to" type="date" required value="<%= range.to %>"></label>
+      <p class="archive-rule" data-archive-note><%= resource.archiveNote %></p>
+      <label class="archive-check"><input name="archiveAcknowledged" type="checkbox"> I downloaded the backup and understand this is permanent.</label>
+      <label>Type <strong>DELETE</strong> to confirm<input name="archiveConfirm" autocomplete="off" placeholder="DELETE"></label>
+      <button class="button danger full" type="submit" data-archive-submit <%= resource.archiveDisabled ? 'disabled' : '' %>>Permanently delete selected data</button>
+    </form>
+  </aside>
+</section>
+
+<section class="panel archive-register-guide">
+  <div class="panel-heading"><div><h2>What can be archived safely?</h2><p>Every register is available for date-filtered Excel export.</p></div></div>
+  <div class="archive-resource-grid"><% resources.forEach((item) => { %><article><strong><%= item.label %></strong><span class="pill <%= item.archiveDisabled ? 'warning' : 'neutral' %>"><%= item.archiveDisabled ? 'Export only' : 'Can archive safely' %></span><p><%= item.archiveNote %></p></article><% }) %></div>
+</section>
+
+<script>
+(function() {
+  const archiveForm = document.querySelector('[data-archive-form]');
+  if (!archiveForm) return;
+  const select = archiveForm.querySelector('[data-resource-select]');
+  const submit = archiveForm.querySelector('[data-archive-submit]');
+  const note = archiveForm.querySelector('[data-archive-note]');
+  const notes = <%- JSON.stringify(Object.fromEntries(resources.map((item) => [item.key, item.archiveNote]))) %>;
+  function update() {
+    const option = select.options[select.selectedIndex];
+    const disabled = option.dataset.archiveDisabled === 'true';
+    submit.disabled = disabled;
+    note.textContent = notes[select.value] || '';
+  }
+  select.addEventListener('change', update);
+  update();
+})();
+</script>

@@ -1,0 +1,33 @@
+{
+  "name": "kusum-jewelers-erp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Lightweight jewellery ERP for Kusum Jewelers",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev --name init",
+    "db:seed": "prisma db seed",
+    "db:backfill": "node prisma/backfill.js"
+  },
+  "prisma": {
+    "seed": "node prisma/seed.js"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.1",
+    "dotenv": "^16.6.1",
+    "ejs": "^3.1.10",
+    "exceljs": "^4.4.0",
+    "express": "^5.1.0",
+    "express-ejs-layouts": "^2.5.1",
+    "express-session": "^1.19.0",
+    "morgan": "^1.10.0",
+    "mysql2": "^3.23.4",
+    "pdfkit": "^0.19.1"
+  },
+  "devDependencies": {
+    "prisma": "^6.19.1"
+  }
+}

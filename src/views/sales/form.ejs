@@ -1,0 +1,208 @@
+<header class="page-header no-print">
+  <div>
+    <p class="eyebrow">Barcode billing desk</p>
+    <h1>New sale</h1>
+    <p class="muted">Scan or type a barcode — rate, weight and making charge fill in automatically.</p>
+  </div>
+  <a class="button ghost" href="/sales">Cancel</a>
+</header>
+
+<% if (!rateInfo.rate) { %>
+<div class="rate-notice warning">
+  <strong>Set today's metal rates before billing.</strong>
+  <span>Barcode billing needs a 22K, 24K or silver rate to calculate amounts.</span>
+  <a href="/rates">Set daily rates →</a>
+</div>
+<% } else { %>
+<div class="rate-notice">
+  <strong>Rates in use: <%= rateInfo.sourceDate %></strong>
+  <span>22K <%- money(rateInfo.rate.gold22k) %>/g &nbsp;·&nbsp; 24K <%- money(rateInfo.rate.gold24k) %>/g &nbsp;·&nbsp; Silver <%- money(rateInfo.rate.silver) %>/g</span>
+  <a href="/rates">Update rates →</a>
+</div>
+<% } %>
+
+<form class="transaction-layout barcode-sale" method="post" action="/sales" data-barcode-sale>
+
+  <!-- Left: items panel -->
+  <section class="panel transaction-main">
+    <div class="form-grid three compact-fields">
+      <label>Invoice no.
+        <input name="invoiceNumber" required value="<%= invoiceNumber %>">
+      </label>
+      <label>Bill date
+        <input name="saleDate" type="date" value="<%= dateInput() %>" data-sale-date>
+      </label>
+      <label>Customer mobile / ID *
+        <input name="customerPhone" inputmode="numeric" autocomplete="tel" maxlength="15" required placeholder="Type mobile number first" data-customer-phone>
+      </label>
+    </div>
+
+    <section class="customer-lookup" data-customer-lookup>
+      <input type="hidden" name="customerId" data-customer-id>
+      <div class="customer-lookup-status" data-customer-status>Enter the customer’s mobile number to load their ledger details.</div>
+      <div class="customer-existing" data-existing-customer hidden>
+        <strong data-existing-name></strong>
+        <span data-existing-details></span>
+        <a class="button ghost small" data-existing-ledger href="#" hidden>Open customer ledger</a>
+      </div>
+      <div class="form-grid three compact-fields" data-new-customer-fields hidden>
+        <label>New customer name *<input name="customerName" disabled data-customer-name placeholder="Customer name"></label>
+        <label>Email (optional)<input name="customerEmail" type="email" disabled data-customer-email placeholder="Email address"></label>
+        <label>Address (optional)<input name="customerAddress" disabled data-customer-address placeholder="Address"></label>
+      </div>
+    </section>
+
+    <div class="line-items-header">
+      <div>
+        <h2>Scanned jewellery</h2>
+        <p>Type a barcode (e.g. <strong>G22 1</strong>, <strong>G24 1</strong>, <strong>S 1</strong>) — item details load automatically.</p>
+      </div>
+      <button class="button secondary small" type="button" data-add-row>+ Add barcode</button>
+    </div>
+
+    <div class="barcode-legend">
+      <span>💡 Rate, making charge and final amount are all editable — adjust freely for bargaining.</span>
+      <span>Amount shown is before 3% GST.</span>
+    </div>
+
+    <!-- Barcode rows injected here by JS -->
+    <div class="barcode-lines" data-rows></div>
+
+    <section class="urd-settlement" data-sale-urd>
+      <label class="urd-toggle">
+        <input type="checkbox" name="includeUrdPurchase" data-urd-enabled>
+        <span><strong>Adjust URD purchase against this bill</strong><small>Use when the same customer sells old jewellery and buys new jewellery.</small></span>
+      </label>
+      <div class="urd-settlement-fields" data-urd-fields hidden>
+        <p class="form-hint">The URD value will be deducted from this invoice. For a larger buyback amount, save the URD purchase separately so the customer can be paid the difference.</p>
+        <div class="form-grid four compact-fields">
+          <label>Metal<select name="urdMetal" data-urd-metal><option value="GOLD">Gold</option><option value="SILVER">Silver</option></select></label>
+          <label>Purity<select name="urdPurity" data-urd-purity><option value="22K">22K</option><option value="24K">24K</option><option value="925">Silver 925</option><option value="PURE">Pure Silver</option></select></label>
+          <label>Gross wt. (g)<input name="urdGrossWeight" type="number" min="0" step="0.001" value="0" data-urd-gross-weight></label>
+          <label>Net wt. (g)<input name="urdNetWeight" type="number" min="0" step="0.001" value="0" data-urd-net-weight></label>
+          <label>Rate / g (₹)<input name="urdRatePerGram" type="number" min="0" step="0.01" value="0" data-urd-rate data-rate-22="<%= rateInfo.rate ? Number(rateInfo.rate.gold22k) : 0 %>" data-rate-24="<%= rateInfo.rate ? Number(rateInfo.rate.gold24k) : 0 %>" data-rate-silver="<%= rateInfo.rate ? Number(rateInfo.rate.silver) : 0 %>"></label>
+          <label>URD amount (₹)<input name="urdTotalAmount" type="number" min="0" step="0.01" value="0" data-urd-amount></label>
+          <label class="span-two">Description<input name="urdDescription" placeholder="Old chain, bangles, broken ring, etc."></label>
+        </div>
+      </div>
+    </section>
+
+    <!-- Row template (hidden, cloned by JS) -->
+    <template data-line-template>
+      <div class="barcode-line" data-line-item>
+        <div class="line-number">1</div>
+
+        <label>Barcode
+          <input name="barcode" autocomplete="off" placeholder="Scan / type barcode" data-barcode required>
+        </label>
+
+        <button class="remove-row" type="button" title="Remove item" data-remove-row>×</button>
+
+        <input type="hidden" name="productId" data-product-id>
+
+        <div class="scanned-item" data-item-details>
+          <strong>Waiting for barcode…</strong>
+          <small>Item details will appear here after you scan or type</small>
+        </div>
+
+        <div class="fields-row">
+          <label>Qty
+            <input name="quantity" type="number" min="1" value="1" required data-quantity>
+          </label>
+          <label>Weight (g)
+            <input type="number" readonly data-weight placeholder="0.000">
+          </label>
+          <label>Rate / g (₹)
+            <input name="metalRate" type="number" min="0" step="0.01" required data-metal-rate placeholder="0.00">
+          </label>
+          <label>Making type
+            <select name="makingChargeType" data-making-type>
+              <option value="FIXED">Fixed</option>
+              <option value="PER_GRAM" selected>Per gram</option>
+              <option value="PERCENTAGE">%</option>
+            </select>
+          </label>
+          <label>Making value
+            <input name="makingChargeValue" type="number" min="0" step="0.01" required data-making-value placeholder="0.00">
+          </label>
+          <label>Amount ex. GST (₹)
+            <input name="taxableAmount" type="number" min="0" step="0.01" required data-taxable-amount placeholder="0.00">
+          </label>
+        </div>
+
+        <small class="line-help" data-line-help></small>
+      </div>
+    </template>
+
+    <label class="notes-label">Notes
+      <textarea name="notes" rows="2" placeholder="Bargaining note, certificate reference, gift note, etc."></textarea>
+    </label>
+  </section>
+
+  <!-- Right: payment summary sidebar -->
+  <aside class="panel transaction-summary">
+    <h2>Payment summary</h2>
+
+    <div class="summary-row">
+      <span>Subtotal</span>
+      <strong data-subtotal>₹0.00</strong>
+    </div>
+
+    <label class="summary-input">Discount (₹)
+      <input name="discount" type="number" min="0" step="0.01" value="0" data-discount>
+    </label>
+
+    <div class="summary-row">
+      <span>GST (3%)</span>
+      <strong data-gst>₹0.00</strong>
+    </div>
+
+    <input name="gstRate" type="hidden" value="3">
+
+    <div class="summary-total">
+      <span>Invoice total</span>
+      <strong data-total>₹0.00</strong>
+    </div>
+
+    <div class="summary-row" data-urd-offset-row hidden>
+      <span>URD purchase adjustment</span>
+      <strong>− <span data-urd-offset>₹0.00</span></strong>
+    </div>
+
+    <div class="summary-row net-payable">
+      <span>Net payable</span>
+      <strong data-net-payable>₹0.00</strong>
+    </div>
+
+    <hr>
+
+    <label class="summary-input">Amount paid now (₹)
+      <input name="paid" type="number" min="0" step="0.01" value="0" data-paid>
+    </label>
+
+    <div class="summary-row due" data-balance-row>
+      <span>Credit balance</span>
+      <strong data-balance>₹0.00</strong>
+    </div>
+
+    <label class="summary-input">Payment method
+      <select name="paymentMethod" data-payment-method>
+        <% ['CASH','UPI','CARD','BANK_TRANSFER','CREDIT','MIXED'].forEach((method) => { %>
+        <option value="<%= method %>"><%= method.replace('_', ' ') %></option>
+        <% }) %>
+      </select>
+    </label>
+
+    <label class="cashbook-sync" data-cashbook-sync-control>
+      <input type="checkbox" name="syncCashbook" checked>
+      Add payment to Daily Cashbook
+    </label>
+
+    <p class="credit-hint">If the customer pays partially, enter the amount paid. The remaining balance will be logged in their credit sheet automatically under their mobile-number customer ID.</p>
+
+    <button class="button full large" type="submit">Generate bill →</button>
+
+    <p class="form-hint">Daily Cashbook sync is optional for cash, UPI, card and bank transfer.</p>
+  </aside>
+
+</form>

@@ -1,0 +1,189 @@
+<header class="page-header">
+  <div>
+    <p class="eyebrow">Daily money log</p>
+    <h1>Cashbook</h1>
+    <p class="muted">Track every cash, UPI and bank transaction in and out of the shop.</p>
+  </div>
+  <a class="button ghost" href="/data-management?resource=cashbook">Export / archive</a>
+</header>
+
+<!-- Summary cards -->
+<div class="cashbook-summary">
+  <article class="stat-card accent-gold">
+    <span class="stat-label">Total in</span>
+    <strong style="color:#1f7651"><%- money(summary.totalIn) %></strong>
+    <p>Cash <%- money(summary.cashIn) %> &nbsp;·&nbsp; UPI <%- money(summary.upiIn) %> &nbsp;·&nbsp; Bank <%- money(summary.bankIn) %></p>
+  </article>
+  <article class="stat-card">
+    <span class="stat-label">Total out</span>
+    <strong style="color:#b53d36"><%- money(summary.totalOut) %></strong>
+    <p>Cash <%- money(summary.cashOut) %> &nbsp;·&nbsp; UPI <%- money(summary.upiOut) %> &nbsp;·&nbsp; Bank <%- money(summary.bankOut) %></p>
+  </article>
+  <article class="stat-card <%= summary.netBalance >= 0 ? 'accent-gold' : '' %>">
+    <span class="stat-label">Net balance</span>
+    <strong style="color:<%= summary.netBalance >= 0 ? '#1f7651' : '#b53d36' %>"><%- money(summary.netBalance) %></strong>
+    <p>For the selected period</p>
+  </article>
+</div>
+
+<div class="content-grid cashbook-layout">
+
+  <!-- Left: entries table -->
+  <section class="panel">
+    <!-- Date filter -->
+    <form class="cashbook-filter" method="get">
+      <label>From
+        <input type="date" name="from" value="<%= fromDate %>">
+      </label>
+      <label>To
+        <input type="date" name="to" value="<%= toDate %>">
+      </label>
+      <label>Method
+        <select name="method">
+          <option value="">All methods</option>
+          <% ['CASH','UPI','CARD','BANK_TRANSFER'].forEach(m => { %>
+          <option value="<%= m %>" <%= methodFilter === m ? 'selected' : '' %>><%= m.replace('_', ' ') %></option>
+          <% }); %>
+        </select>
+      </label>
+      <button class="button secondary small" type="submit">Filter</button>
+      <a class="button ghost small" href="/cashbook">Reset</a>
+    </form>
+
+    <% if (entries.length) { %>
+    <div class="table-wrap" style="margin-top:0">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Description</th>
+            <th>Customer</th>
+            <th>Method</th>
+            <th>Type</th>
+            <th class="right">Amount</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <% entries.forEach(entry => { %>
+          <tr>
+            <td><strong><%= entry.entryDate %></strong></td>
+            <td>
+              <strong><%= entry.description %></strong>
+              <% if (entry.reference) { %><small>Ref: <%= entry.reference %></small><% } %>
+              <% if (entry.syncLedger) { %><small style="color:#1f7651">↔ Synced to ledger</small><% } %>
+              <% if (entry.notes) { %><small><%= entry.notes %></small><% } %>
+            </td>
+            <td>
+              <% if (entry.customer) { %>
+              <a href="/customers/<%= entry.customer.id %>"><%= entry.customer.name %></a>
+              <% } else { %>
+              <span class="muted">—</span>
+              <% } %>
+            </td>
+            <td><span class="pill neutral"><%= entry.paymentMethod.replace('_', ' ') %></span></td>
+            <td><span class="pill <%= entry.type === 'IN' ? 'success' : 'danger' %>"><%= entry.type === 'IN' ? '↑ IN' : '↓ OUT' %></span></td>
+            <td class="right">
+              <strong class="<%= entry.type === 'IN' ? 'paid-amount' : 'credit-amount' %>">
+                <%= entry.type === 'OUT' ? '− ' : '+ ' %><%- money(entry.amount) %>
+              </strong>
+            </td>
+            <td class="actions">
+              <form method="post" action="/cashbook/<%= entry.id %>/delete" onsubmit="return confirm('Delete this entry?')">
+                <button class="icon-button" type="submit" title="Delete entry" style="color:#b53d36">✕</button>
+              </form>
+            </td>
+          </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+    <% } else { %>
+    <div class="empty-state compact">
+      <span>⊟</span>
+      <h3>No entries for this period</h3>
+      <p>Add a cash-in or cash-out entry using the form on the right.</p>
+    </div>
+    <% } %>
+  </section>
+
+  <!-- Right: add entry form -->
+  <aside class="panel side-form cashbook-form">
+    <h2>Add entry</h2>
+    <form method="post" action="/cashbook">
+      <label>Date *
+        <input name="entryDate" type="date" required value="<%= dateInput() %>">
+      </label>
+      <label>Type *
+        <select name="type" id="cbType">
+          <option value="IN">↑ Cash IN — received money</option>
+          <option value="OUT">↓ Cash OUT — spent / paid</option>
+        </select>
+      </label>
+      <label>Payment method *
+        <select name="paymentMethod" data-payment-method>
+          <option value="CASH">Cash</option>
+          <option value="UPI">UPI</option>
+          <option value="CARD">Card</option>
+          <option value="BANK_TRANSFER">Bank Transfer</option>
+        </select>
+      </label>
+      <label>Description *
+        <input name="description" required placeholder="e.g. Gold sale cash payment, Shop rent…">
+      </label>
+      <label>Amount (₹) *
+        <input name="amount" type="number" min="0.01" step="0.01" required placeholder="0.00">
+      </label>
+
+      <hr style="margin:12px 0;border:0;border-top:1px solid var(--line);">
+
+      <label>Customer (optional)
+        <select name="customerId" id="cbCustomer">
+          <option value="">No customer — general entry</option>
+          <% customers.forEach(c => { %>
+          <option value="<%= c.id %>"><%= c.name %><%= c.phone ? ` · ${c.phone}` : '' %></option>
+          <% }); %>
+        </select>
+      </label>
+
+      <div id="syncOption" data-cashbook-sync-control style="display:none;margin-bottom:14px;">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;cursor:pointer;">
+          <input type="checkbox" name="syncLedger" style="width:auto;margin:0;">
+          Sync to customer ledger
+        </label>
+        <small style="display:block;margin-top:4px;color:#756f69;">
+          For an <strong>IN</strong> entry: reduces the customer's credit balance.<br>
+          For an <strong>OUT</strong> entry: logs an adjustment on the customer sheet.
+        </small>
+      </div>
+
+      <label>Reference / Receipt no.
+        <input name="reference" placeholder="Optional — invoice no., receipt, UTR…">
+      </label>
+      <label>Notes
+        <textarea name="notes" rows="2" placeholder="Any additional details…"></textarea>
+      </label>
+      <button class="button full" type="submit">Save entry</button>
+    </form>
+  </aside>
+
+</div>
+
+<script>
+(function() {
+  const customerSel = document.getElementById('cbCustomer');
+  const syncDiv = document.getElementById('syncOption');
+  const methodSel = document.querySelector('.cashbook-form [data-payment-method]');
+  const check = syncDiv && syncDiv.querySelector('input[name="syncLedger"]');
+  if (!customerSel || !syncDiv || !methodSel || !check) return;
+  function update() {
+    const allowed = Boolean(customerSel.value);
+    syncDiv.style.display = allowed ? 'block' : 'none';
+    check.disabled = !allowed;
+    if (!allowed) check.checked = false;
+  }
+  customerSel.addEventListener('change', update);
+  methodSel.addEventListener('change', update);
+  update();
+})();
+</script>

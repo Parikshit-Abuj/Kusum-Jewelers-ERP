@@ -1,0 +1,33 @@
+<header class="page-header">
+  <div><p class="eyebrow">Service desk</p><h1>Receive repair</h1><p class="muted">Record the customer piece and its condition before accepting it.</p></div>
+  <a class="button ghost" href="/repairs">Cancel</a>
+</header>
+<% if (!customers.length) { %>
+  <section class="panel empty-state"><span>◎</span><h3>Add a customer first</h3><p>Every repair needs a customer record.</p><a class="button" href="/customers">Add customer</a></section>
+<% } else { %>
+  <form class="panel form-panel" method="post" action="/repairs">
+    <section class="form-section">
+      <h2>Job details</h2>
+      <div class="form-grid three">
+        <label>Job no.<input name="repairNumber" required value="<%= repairNumber %>"></label>
+        <label>Customer *<select name="customerId" required><option value="">Select customer</option><% customers.forEach((customer) => { %><option value="<%= customer.id %>"><%= customer.name %><%= customer.phone ? ` · ${customer.phone}` : '' %></option><% }) %></select></label>
+        <label>Expected delivery<input name="dueDate" type="date"></label>
+      </div>
+    </section>
+    <section class="form-section">
+      <h2>Customer’s jewellery</h2>
+      <div class="form-grid three">
+        <label>Metal<select name="metal"><option value="">Not specified</option><% ['GOLD','SILVER','PLATINUM','DIAMOND','OTHER'].forEach((metal) => { %><option value="<%= metal %>"><%= metal %></option><% }) %></select></label>
+        <label>Gross weight (g)<input name="grossWeight" type="number" min="0" step="0.001"></label>
+        <label>Estimated charge (₹)<input name="estimatedCharge" type="number" min="0" step="0.01" value="0"></label>
+        <label>Advance received (₹)<input name="advancePaid" type="number" min="0" step="0.01" value="0"></label>
+        <label>Advance method<select name="paymentMethod" data-payment-method><option value="CASH">Cash</option><option value="UPI">UPI</option><option value="CARD">Card</option><option value="BANK_TRANSFER">Bank Transfer</option></select></label>
+        <label class="cashbook-sync" data-cashbook-sync-control><input type="checkbox" name="syncCashbook" checked> Add advance to Daily Cashbook</label>
+      </div>
+      <label>Item description *<textarea name="itemDescription" rows="3" required placeholder="e.g. 22K ring with red stone, size 14"></textarea></label>
+      <label>Issue / work requested<textarea name="issueDescription" rows="3" placeholder="e.g. resize by one size, tighten stone setting"></textarea></label>
+    </section>
+    <section class="form-section"><label>Notes / condition on receipt<textarea name="notes" rows="3" placeholder="Marks, missing stones, customer instructions, etc."></textarea></label></section>
+    <footer class="form-footer"><a class="button ghost" href="/repairs">Cancel</a><button class="button" type="submit">Receive repair job</button></footer>
+  </form>
+<% } %>

@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shop setup · Kusum Jewelers ERP</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body class="login-page">
+  <main class="login-card" style="max-width:620px">
+    <span class="brand-mark">KJ</span>
+    <p class="eyebrow">Kusum Jewelers</p>
+    <h1>Set up the shop ERP</h1>
+    <p class="muted">This one-time setup creates or upgrades the local MySQL database. A new database starts empty; existing shop data is kept. Your MySQL administrator password is used only now and is never saved.</p>
+    <% if (error) { %><div class="flash error"><span>!</span><%= error %></div><% } %>
+    <form method="post" action="/setup">
+      <div class="form-grid three compact-fields">
+        <label>MySQL host<input name="mysqlHost" required value="localhost" autocomplete="off"></label>
+        <label>MySQL port<input name="mysqlPort" type="number" min="1" max="65535" required value="3306"></label>
+        <label>MySQL admin user<input name="mysqlUser" required value="root" autocomplete="username"></label>
+      </div>
+      <label>MySQL admin password<input name="mysqlPassword" type="password" autocomplete="current-password" placeholder="Leave blank only if MySQL has no password"></label>
+      <label>Database name<input name="databaseName" required value="kusum_erp" pattern="[A-Za-z0-9_]+" autocomplete="off"></label>
+      <div class="form-grid two compact-fields">
+        <label>ERP login username<input name="appUsername" required value="kusum" minlength="3" autocomplete="username"></label>
+        <label>ERP login password<input name="appPassword" type="password" required minlength="8" value="kusum@123" autocomplete="new-password"></label>
+      </div>
+      <label>TSC printer name (optional now)<input name="printerName" value="TSC TTP-244 Pro" autocomplete="off"></label>
+      <p class="form-hint">MySQL Server must already be installed and running on this shop PC. The installer creates a separate limited ERP database user automatically.</p>
+      <button class="button full large" type="submit">Create database and start ERP</button>
+    </form>
+  </main>
+</body>
+</html>

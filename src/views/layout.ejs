@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title><%= title %> · Kusum Jewelers ERP</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="/">
+          <span class="brand-mark">KJ</span>
+          <span>Kusum Jewelers<small>Lightweight ERP</small></span>
+        </a>
+        <nav>
+          <a class="<%= currentPath === '/' ? 'active' : '' %>" href="/"><span>▦</span> Dashboard</a>
+          <a class="<%= currentPath.startsWith('/inventory') ? 'active' : '' %>" href="/inventory"><span>◇</span> Inventory</a>
+          <a class="<%= currentPath.startsWith('/rates') ? 'active' : '' %>" href="/rates"><span>⌁</span> Daily rates</a>
+          <a class="<%= currentPath.startsWith('/sales') ? 'active' : '' %>" href="/sales"><span>₹</span> Sales</a>
+          <a class="<%= currentPath.startsWith('/urd') ? 'active' : '' %>" href="/urd-purchases"><span>⇣</span> URD Purchase</a>
+          <a class="<%= currentPath.startsWith('/cashbook') ? 'active' : '' %>" href="/cashbook"><span>⊟</span> Cashbook</a>
+          <a class="<%= currentPath.startsWith('/customers') ? 'active' : '' %>" href="/customers"><span>◎</span> Customers</a>
+          <a class="<%= currentPath.startsWith('/data-management') ? 'active' : '' %>" href="/data-management"><span>⇩</span> Export & archive</a>
+          <a class="<%= currentPath.startsWith('/reports') ? 'active' : '' %>" href="/reports"><span>▤</span> Reports</a>
+        </nav>
+        <div class="sidebar-foot">Signed in as <strong><%= loggedInUser %></strong><br><span>Track every gram.</span><form method="post" action="/logout"><button class="sidebar-logout" type="submit">Sign out</button></form></div>
+      </aside>
+      <main class="main-content">
+        <% if (message) { %><div class="flash success"><span>✓</span><%= message %></div><% } %>
+        <% if (error) { %><div class="flash error"><span>!</span><%= error %></div><% } %>
+        <%- body %>
+      </main>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+</html>

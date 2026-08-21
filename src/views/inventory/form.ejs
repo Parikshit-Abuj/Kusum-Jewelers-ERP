@@ -1,0 +1,165 @@
+<header class="page-header">
+  <div>
+    <p class="eyebrow">Barcode inventory</p>
+    <h1><%= product ? 'Edit jewellery item' : 'Add jewellery item' %></h1>
+    <p class="muted">Set the weight once — billing picks up the day's live metal rate automatically.</p>
+  </div>
+  <a class="button ghost" href="/inventory">Cancel</a>
+</header>
+
+<% if (!rateInfo.rate) { %>
+<div class="rate-notice warning">
+  <strong>Daily rates are not set.</strong>
+  <span>Save 22K, 24K and silver rates so the suggested value can be calculated.</span>
+  <a href="/rates">Set daily rates →</a>
+</div>
+<% } else { %>
+<div class="rate-notice">
+  <strong>Rate in use: <%= rateInfo.sourceDate %></strong>
+  <span>22K <%- money(rateInfo.rate.gold22k) %>/g &nbsp;·&nbsp; 24K <%- money(rateInfo.rate.gold24k) %>/g &nbsp;·&nbsp; Silver <%- money(rateInfo.rate.silver) %>/g</span>
+  <a href="/rates">Update rates →</a>
+</div>
+<% } %>
+
+<form class="panel form-panel" method="post"
+  action="<%= product ? `/inventory/${product.id}` : '/inventory' %>"
+  data-product-form
+  data-rate-22="<%= rateInfo.rate ? Number(rateInfo.rate.gold22k) : 0 %>"
+  data-rate-24="<%= rateInfo.rate ? Number(rateInfo.rate.gold24k) : 0 %>"
+  data-rate-silver="<%= rateInfo.rate ? Number(rateInfo.rate.silver) : 0 %>">
+
+  <!-- Section 1: Identity -->
+  <section class="form-section">
+    <h2>Item identity</h2>
+    <div class="form-grid three">
+      <% if (product) { %>
+      <label>Barcode number
+        <input value="<%= product.barcode || 'Legacy item' %>" readonly style="font-family:'Courier New',monospace;letter-spacing:.08em;font-size:15px;font-weight:800;">
+      </label>
+      <% } else { %>
+      <div class="barcode-preview">
+        <span>Barcode number</span>
+        <strong data-barcode-preview>G22 1</strong>
+        <small>Generated automatically when you save</small>
+      </div>
+      <% } %>
+      <label>Item code (SKU)
+        <input name="sku" placeholder="Defaults to barcode if left blank" value="<%= product?.sku || '' %>">
+      </label>
+      <label>Item name *
+        <input name="name" required placeholder="e.g. Gold bridal necklace" value="<%= product?.name || '' %>">
+      </label>
+      <label>Category *
+        <input name="category" required placeholder="Ring, Chain, Bangle, Pendant…" value="<%= product?.category || '' %>">
+      </label>
+    </div>
+  </section>
+
+  <!-- Section 2: Metal & weight -->
+  <section class="form-section">
+    <h2>Metal &amp; weight</h2>
+    <div class="form-grid four">
+      <label>Metal *
+        <select name="metal" data-product-metal>
+          <option value="GOLD"     <%= product?.metal === 'GOLD'     || !product ? 'selected' : '' %>>Gold</option>
+          <option value="SILVER"   <%= product?.metal === 'SILVER'   ? 'selected' : '' %>>Silver</option>
+          <option value="PLATINUM" <%= product?.metal === 'PLATINUM' ? 'selected' : '' %>>Platinum</option>
+          <option value="DIAMOND"  <%= product?.metal === 'DIAMOND'  ? 'selected' : '' %>>Diamond</option>
+          <option value="OTHER"    <%= product?.metal === 'OTHER'    ? 'selected' : '' %>>Other</option>
+        </select>
+      </label>
+      <label>Purity *
+        <select name="purity" data-product-purity>
+          <option value="22K"   <%= product?.purity === '22K'   || !product ? 'selected' : '' %>>22K Gold</option>
+          <option value="24K"   <%= product?.purity === '24K'   ? 'selected' : '' %>>24K Gold</option>
+          <option value="925"   <%= product?.purity === '925'   ? 'selected' : '' %>>Silver 925</option>
+          <option value="PURE"  <%= product?.purity === 'PURE'  ? 'selected' : '' %>>Pure Silver</option>
+          <option value="PT950" <%= product?.purity === 'PT950' ? 'selected' : '' %>>Platinum 950</option>
+          <option value="18K"   <%= product?.purity === '18K'   ? 'selected' : '' %>>18K Gold</option>
+          <option value="OTHER" <%= product?.purity === 'OTHER' ? 'selected' : '' %>>Other</option>
+        </select>
+      </label>
+      <label>Gross weight (g)
+        <input name="grossWeight" data-weight-gross type="number" step="0.001" min="0" value="<%= product?.grossWeight || 0 %>">
+      </label>
+      <label>Stone weight (g)
+        <input name="stoneWeight" data-weight-stone type="number" step="0.001" min="0" value="<%= product?.stoneWeight || 0 %>">
+      </label>
+      <label>Net weight (g) *
+        <input name="netWeight" data-weight-net type="number" step="0.001" min="0" required value="<%= product?.netWeight || 0 %>">
+      </label>
+    </div>
+  </section>
+
+  <!-- Section 3: Rate & making charge -->
+  <section class="form-section">
+    <h2>Rate &amp; making charge</h2>
+    <div class="form-grid four">
+      <div class="rate-readout">
+        <span>Today's metal rate</span>
+        <strong data-product-rate>₹ — / g</strong>
+        <small>Applied automatically during billing</small>
+      </div>
+      <label>Making charge method
+        <select name="makingChargeType" data-making-type>
+          <% [['FIXED','Fixed per item'],['PER_GRAM','Per gram (recommended)'],['PERCENTAGE','% of metal value']].forEach(([value, label]) => { %>
+          <option value="<%= value %>" <%= product?.makingChargeType === value || (!product && value === 'PER_GRAM') ? 'selected' : '' %>><%= label %></option>
+          <% }) %>
+        </select>
+      </label>
+      <label>Making charge value (₹ or %)
+        <input name="makingChargeValue" data-making-value type="number" step="0.01" min="0" value="<%= product?.makingChargeValue || 0 %>">
+      </label>
+      <div class="rate-readout accent">
+        <span>Suggested total (ex. GST)</span>
+        <strong data-product-suggested>₹0.00</strong>
+        <small>Metal value + making charge</small>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section 4: Stock & logistics -->
+  <section class="form-section">
+    <h2>Stock &amp; details</h2>
+    <div class="form-grid four">
+      <% if (!product) { %>
+      <label>Opening quantity *
+        <input name="quantity" type="number" min="0" required value="1">
+      </label>
+      <% } %>
+      <label>Reorder level
+        <input name="reorderLevel" type="number" min="0" value="<%= product?.reorderLevel ?? 1 %>">
+      </label>
+      <label>Purchase cost (₹)
+        <input name="purchasePrice" type="number" step="0.01" min="0" value="<%= product?.purchasePrice || 0 %>">
+      </label>
+      <label>Storage / counter location
+        <input name="location" placeholder="e.g. Gold Tray A, Safe 3" value="<%= product?.location || '' %>">
+      </label>
+      <% if (product) { %>
+      <label>Status
+        <select name="status">
+          <% ['AVAILABLE','SOLD_OUT','IN_REPAIR','INACTIVE'].forEach((status) => { %>
+          <option value="<%= status %>" <%= product.status === status ? 'selected' : '' %>><%= status.replace('_', ' ') %></option>
+          <% }) %>
+        </select>
+      </label>
+      <% } %>
+    </div>
+    <input type="hidden" name="sellingPrice" value="<%= product?.sellingPrice || 0 %>" data-selling-price>
+  </section>
+
+  <!-- Section 5: Notes -->
+  <section class="form-section">
+    <label>Notes
+      <textarea name="notes" rows="3" placeholder="Design details, certificate number, stone details, etc."><%= product?.notes || '' %></textarea>
+    </label>
+  </section>
+
+  <footer class="form-footer">
+    <a class="button ghost" href="/inventory">Cancel</a>
+    <button class="button" type="submit">
+      <%= product ? 'Save changes' : 'Save item & generate barcode' %>
+    </button>
+  </footer>
+</form>

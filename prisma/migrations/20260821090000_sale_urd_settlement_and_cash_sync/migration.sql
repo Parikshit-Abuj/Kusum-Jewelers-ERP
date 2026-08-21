@@ -1,0 +1,14 @@
+ALTER TABLE `repair`
+  ADD COLUMN `advancePaymentMethod` ENUM('CASH', 'UPI', 'CARD', 'BANK_TRANSFER', 'CREDIT', 'MIXED') NOT NULL DEFAULT 'CASH';
+
+ALTER TABLE `sale`
+  ADD COLUMN `urdOffset` DECIMAL(12, 2) NOT NULL DEFAULT 0;
+
+ALTER TABLE `urdpurchase`
+  ADD COLUMN `saleId` INTEGER NULL,
+  ADD COLUMN `saleOffset` DECIMAL(12, 2) NOT NULL DEFAULT 0;
+
+CREATE UNIQUE INDEX `UrdPurchase_saleId_key` ON `UrdPurchase`(`saleId`);
+
+ALTER TABLE `UrdPurchase`
+  ADD CONSTRAINT `UrdPurchase_saleId_fkey` FOREIGN KEY (`saleId`) REFERENCES `Sale`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
