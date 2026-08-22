@@ -1,4 +1,5 @@
 const { app, BrowserWindow, dialog } = require('electron');
+const fs = require('fs');
 const http = require('http');
 const net = require('net');
 const os = require('os');
@@ -12,6 +13,30 @@ const shopDataDirectory = process.env.KUSUM_APP_DATA || path.join(
 process.env.KUSUM_APP_DATA = shopDataDirectory;
 process.env.KUSUM_CONFIG_PATH = process.env.KUSUM_CONFIG_PATH || path.join(shopDataDirectory, '.env');
 process.env.NODE_ENV = 'production';
+
+function writeStartupLog(error) {
+  try {
+    const logsDirectory = path.join(shopDataDirectory, 'logs');
+    fs.mkdirSync(logsDirectory, { recursive: true });
+    const detail = error instanceof Error ? (error.stack || error.message) : String(error);
+    fs.appendFileSync(
+      path.join(logsDirectory, 'desktop-shell.log'),
+      `[${new Date().toISOString()}] ${detail}\n`,
+      'utf8'
+    );
+  } catch (_) {
+    // Never let diagnostic logging prevent the ERP from opening.
+  }
+}
+
+process.on('uncaughtException', (error) => {
+  writeStartupLog(error);
+  try {
+    dialog.showErrorBox('Kusum Jewelers ERP could not start', error.message || String(error));
+  } catch (_) {}
+  app?.quit?.();
+});
+
 app.setPath('userData', path.join(shopDataDirectory, 'desktop-shell'));
 app.setAppUserModelId('KusumJewelersERP');
 
@@ -82,6 +107,7 @@ async function openErpWindow() {
     });
     await erpWindow.loadURL(`http://127.0.0.1:${localPort}`);
   } catch (error) {
+    writeStartupLog(error);
     dialog.showErrorBox(
       'Kusum Jewelers ERP could not start',
       `${error.message}\n\nCheck that no other program is using port 3000, then run the ERP again.`
