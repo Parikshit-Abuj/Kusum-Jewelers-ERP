@@ -7,7 +7,11 @@ const builderPath = path.join(__dirname, '..', 'excel-runtime', 'build-export.mj
 
 function run(command, args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const environment = { ...process.env };
+    // Electron's executable can run ordinary Node scripts when this is set.
+    // This keeps Excel exports working from the packaged desktop application.
+    if (process.versions.electron) environment.ELECTRON_RUN_AS_NODE = '1';
+    const child = spawn(command, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: environment });
     let stderr = '';
     child.stderr.on('data', (chunk) => { stderr += chunk; });
     child.on('error', reject);

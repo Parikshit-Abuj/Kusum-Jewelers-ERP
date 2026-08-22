@@ -1,3 +1,5 @@
+const crypto = require('crypto');
+
 function number(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -37,8 +39,12 @@ function grams(value) {
 
 function invoiceNumber(prefix) {
   const today = dateInput().replaceAll('-', '');
-  const token = String(Date.now()).slice(-5);
-  return `${prefix}-${today}-${token}`;
+  // Every desktop client can create documents against the same MySQL database.
+  // A timestamp plus a cryptographically random suffix keeps concurrent document
+  // numbers distinct without relying on a per-PC counter.
+  const token = Date.now().toString(36).toUpperCase();
+  const suffix = crypto.randomBytes(4).toString('hex').toUpperCase();
+  return `${prefix}-${today}-${token}-${suffix}`;
 }
 
 function barcodePrefix(metal, purity) {

@@ -78,6 +78,12 @@ using System.Windows.Forms;
 
 public static class KusumErpLauncher
 {
+    static void WriteLog(string file, string message)
+    {
+        try { File.AppendAllText(file, DateTime.Now.ToString("s") + " " + message + Environment.NewLine); }
+        catch { }
+    }
+
     static bool IsListening()
     {
         try
@@ -98,28 +104,56 @@ public static class KusumErpLauncher
         string node = Path.Combine(root, "runtime", "node.exe");
         string launcher = Path.Combine(root, "src", "shop-launcher.js");
         string appData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Kusum Jewelers ERP");
+        string logDirectory = Path.Combine(appData, "logs");
+        string logFile = Path.Combine(logDirectory, "launcher.log");
         if (!File.Exists(node) || !File.Exists(launcher))
         {
             MessageBox.Show("ERP installation files are missing. Run KusumJewelersERP-Setup.exe again.", "Kusum Jewelers ERP", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return;
         }
-        Directory.CreateDirectory(Path.Combine(appData, "logs"));
-        if (!IsListening())
+        try
         {
-            var start = new ProcessStartInfo();
-            start.FileName = node;
-            start.Arguments = "\"" + launcher + "\"";
-            start.WorkingDirectory = root;
-            start.UseShellExecute = false;
-            start.CreateNoWindow = true;
-            start.WindowStyle = ProcessWindowStyle.Hidden;
-            start.EnvironmentVariables["KUSUM_APP_DATA"] = appData;
-            start.EnvironmentVariables["KUSUM_CONFIG_PATH"] = Path.Combine(appData, ".env");
-            start.EnvironmentVariables["NODE_ENV"] = "production";
-            Process.Start(start);
-            for (int attempt = 0; attempt < 20 && !IsListening(); attempt++) Thread.Sleep(250);
+            Directory.CreateDirectory(logDirectory);
+            if (!IsListening())
+            {
+                var start = new ProcessStartInfo();
+                start.FileName = node;
+                start.Arguments = "\"" + launcher + "\"";
+                start.WorkingDirectory = root;
+                start.UseShellExecute = false;
+                start.CreateNoWindow = true;
+                start.WindowStyle = ProcessWindowStyle.Hidden;
+                start.RedirectStandardOutput = true;
+                start.RedirectStandardError = true;
+                start.EnvironmentVariables["KUSUM_APP_DATA"] = appData;
+                start.EnvironmentVariables["KUSUM_CONFIG_PATH"] = Path.Combine(appData, ".env");
+                start.EnvironmentVariables["NODE_ENV"] = "production";
+                var process = Process.Start(start);
+                process.OutputDataReceived += (sender, eventArgs) => { if (eventArgs.Data != null) WriteLog(logFile, eventArgs.Data); };
+                process.ErrorDataReceived += (sender, eventArgs) => { if (eventArgs.Data != null) WriteLog(logFile, "ERROR " + eventArgs.Data); };
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+                for (int attempt = 0; attempt < 40 && !IsListening(); attempt++) Thread.Sleep(250);
+            }
+            if (!IsListening())
+            {
+                MessageBox.Show("The ERP server did not start. Read the launcher log at:\n" + logFile, "Kusum Jewelers ERP", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+            try
+            {
+                Process.Start(new ProcessStartInfo("http://localhost:3000") { UseShellExecute = true });
+            }
+            catch
+            {
+                MessageBox.Show("The ERP server is running. Open this address in your browser:\nhttp://localhost:3000", "Kusum Jewelers ERP", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
         }
-        Process.Start(new ProcessStartInfo("http://localhost:3000") { UseShellExecute = true });
+        catch (Exception error)
+        {
+            WriteLog(logFile, "Launcher error: " + error);
+            MessageBox.Show("The ERP could not start. Read the launcher log at:\n" + logFile, "Kusum Jewelers ERP", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 }
 '@

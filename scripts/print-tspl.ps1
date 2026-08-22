@@ -4,6 +4,8 @@ param(
   [string]$PrinterName
 )
 
+$ErrorActionPreference = 'Stop'
+
 $base64 = [Console]::In.ReadToEnd()
 if ([string]::IsNullOrWhiteSpace($base64)) { throw 'No TSPL data was supplied.' }
 $bytes = [Convert]::FromBase64String($base64)
@@ -43,14 +45,15 @@ public static class RawTsplPrinter
         if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error(), operation + " failed");
     }
 
-    public static void Send(string printerName, byte[] bytes)
+    public static int Send(string printerName, byte[] bytes)
     {
         IntPtr handle;
         Check(OpenPrinter(printerName, out handle, IntPtr.Zero), "OpenPrinter for '" + printerName + "'");
         try
         {
             var doc = new DOC_INFO_1 { pDocName = "Kusum Jewelers TSPL barcode labels", pDataType = "RAW" };
-            if (StartDocPrinter(handle, 1, doc) == 0) throw new Win32Exception(Marshal.GetLastWin32Error(), "StartDocPrinter failed");
+            int jobId = StartDocPrinter(handle, 1, doc);
+            if (jobId == 0) throw new Win32Exception(Marshal.GetLastWin32Error(), "StartDocPrinter failed");
             try
             {
                 Check(StartPagePrinter(handle), "StartPagePrinter");
@@ -63,11 +66,12 @@ public static class RawTsplPrinter
                 finally { Check(EndPagePrinter(handle), "EndPagePrinter"); }
             }
             finally { Check(EndDocPrinter(handle), "EndDocPrinter"); }
+            return jobId;
         }
         finally { ClosePrinter(handle); }
     }
 }
 '@
 
-[RawTsplPrinter]::Send($PrinterName, $bytes)
-Write-Output ("Sent {0} native TSPL bytes to {1}." -f $bytes.Length, $PrinterName)
+$jobId = [RawTsplPrinter]::Send($PrinterName, $bytes)
+Write-Output ("Windows spooler accepted {0} native TSPL bytes for {1} as job #{2}." -f $bytes.Length, $PrinterName, $jobId)

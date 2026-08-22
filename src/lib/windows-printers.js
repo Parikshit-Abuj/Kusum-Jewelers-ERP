@@ -42,15 +42,15 @@ function normalise(value) {
   return String(value || '').trim().toLocaleLowerCase();
 }
 
-async function resolveTscPrinter(preferredName, force = false) {
+function statusFromPrinterList(preferredName, listed, checked = true) {
   const configuredName = String(preferredName || 'TSC TTP-244 Pro').trim();
-  const listed = await listWindowsPrinters(force);
   if (listed.error) {
     return {
       available: false,
       name: configuredName,
       message: `Windows could not check printers: ${listed.error}`,
-      printers: []
+      printers: [],
+      checked
     };
   }
 
@@ -62,7 +62,8 @@ async function resolveTscPrinter(preferredName, force = false) {
       available: false,
       name: configuredName,
       message: `TSC TTP-244 Pro is not installed in Windows. Turn it on, connect USB, and install its Windows driver; then click Recheck printer.`,
-      printers: listed.printers
+      printers: listed.printers,
+      checked
     };
   }
   if (!printer.isValid) {
@@ -70,15 +71,35 @@ async function resolveTscPrinter(preferredName, force = false) {
       available: false,
       name: printer.name,
       message: `${printer.name} is installed but is not currently available to Windows. Check the cable, power and driver.`,
-      printers: listed.printers
+      printers: listed.printers,
+      checked
     };
   }
   return {
     available: true,
     name: printer.name,
     message: `Detected ${printer.name}. Native TSPL labels will be sent as RAW data.`,
-    printers: listed.printers
+    printers: listed.printers,
+    checked
   };
 }
 
-module.exports = { listWindowsPrinters, resolveTscPrinter };
+function cachedTscPrinterStatus(preferredName) {
+  if (!cachedPrinters) {
+    const configuredName = String(preferredName || 'TSC TTP-244 Pro').trim();
+    return {
+      available: false,
+      name: configuredName,
+      message: 'Printer status has not been checked yet. Inventory opens immediately; click Recheck printer before troubleshooting.',
+      printers: [],
+      checked: false
+    };
+  }
+  return statusFromPrinterList(preferredName, cachedPrinters, false);
+}
+
+async function resolveTscPrinter(preferredName, force = false) {
+  return statusFromPrinterList(preferredName, await listWindowsPrinters(force), true);
+}
+
+module.exports = { listWindowsPrinters, resolveTscPrinter, cachedTscPrinterStatus };

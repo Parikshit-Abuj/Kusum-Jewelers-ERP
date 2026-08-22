@@ -5,9 +5,9 @@
 
 <section class="stats-grid">
   <article class="stat-card accent-gold"><span class="stat-label">Available inventory</span><strong><%= stats.stockPieces %> <small>pieces</small></strong><p><%= grams(stats.stockWeight) %> net weight · <a href="/inventory">View stock</a></p></article>
-  <article class="stat-card"><span class="stat-label">Today's sales</span><strong><%= money(stats.sales) %></strong><p><%= stats.invoices %> invoice<%= stats.invoices === 1 ? '' : 's' %> today</p></article>
-  <article class="stat-card"><span class="stat-label">Active repairs</span><strong><%= stats.activeRepairs %></strong><p><a href="/repairs">Open repair desk</a></p></article>
-  <article class="stat-card"><span class="stat-label">Catalog items</span><strong><%= stats.productCount %></strong><p>Across active inventory</p></article>
+  <article class="stat-card"><span class="stat-label">Today's billed sales</span><strong><%= money(stats.sales) %></strong><p><%= stats.invoices %> invoice<%= stats.invoices === 1 ? '' : 's' %> today</p></article>
+  <article class="stat-card"><span class="stat-label">Today's synced money flow</span><strong style="color:<%= stats.cashNet >= 0 ? '#1f7651' : '#b53d36' %>"><%= money(stats.cashNet) %></strong><p>In <%= money(stats.cashIn) %> · Out <%= money(stats.cashOut) %></p></article>
+  <article class="stat-card"><span class="stat-label">Customer credit pending</span><strong><%= money(stats.customerDue) %></strong><p><%= stats.activeRepairs %> active repair<%= stats.activeRepairs === 1 ? '' : 's' %> · <a href="/customers">View customers</a></p></article>
 </section>
 
 <section class="content-grid two-thirds">
@@ -20,7 +20,7 @@
     <% } else { %><div class="empty-state"><span>₹</span><h3>No sales recorded yet</h3><p>Create your first invoice from the sales desk.</p><a class="button" href="/sales/new">Create sale</a></div><% } %>
   </article>
   <article class="panel">
-    <div class="panel-heading"><div><h2>Needs attention</h2><p>Low inventory items.</p></div><a class="text-link" href="/inventory">Inventory →</a></div>
+    <div class="panel-heading"><div><h2>Needs attention</h2><p><%= stats.activeRepairs %> active repair<%= stats.activeRepairs === 1 ? '' : 's' %> · low inventory items.</p></div><a class="text-link" href="/inventory">Inventory →</a></div>
     <% if (lowStock.length) { %><ul class="attention-list"><% lowStock.forEach((product) => { %><li><div class="item-icon"><%= product.metal === 'GOLD' ? '◇' : '○' %></div><div><strong><%= product.name %></strong><small><%= product.sku %> · <%= product.purity || product.metal %></small></div><span class="pill warning"><%= product.quantity %> left</span></li><% }) %></ul>
     <% } else { %><div class="empty-state compact"><span>✓</span><h3>Stock levels look good</h3><p>Nothing is currently at its reorder level.</p></div><% } %>
   </article>

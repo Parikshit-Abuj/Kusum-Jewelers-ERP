@@ -12,16 +12,18 @@ const shopDataDirectory = process.env.KUSUM_APP_DATA
 const configPath = process.env.KUSUM_CONFIG_PATH
   || (process.env.KUSUM_APP_DATA ? path.join(shopDataDirectory, '.env') : path.join(appRoot, '.env'));
 dotenv.config({ path: configPath });
-const prisma = require('./lib/prisma');
+const { createPrisma } = require('./lib/prisma');
 const { writeUrdPurchaseInvoice } = require('./lib/urd-invoice-pdf');
 const { writeSaleInvoice } = require('./lib/sale-invoice-pdf');
-const { buildTsplJob, sendTsplToPrinter } = require('./lib/tspl-labels');
-const { resolveTscPrinter } = require('./lib/windows-printers');
-const { provisionShopDatabase } = require('./lib/shop-provisioning');
+const { buildTsplJob, checkTcpPrinter, sendTsplToPrinter } = require('./lib/tspl-labels');
+const { resolveTscPrinter, cachedTscPrinterStatus } = require('./lib/windows-printers');
+const { provisionShopDatabase, enableNetworkSharing, updatePrinterConfiguration, parseDatabaseConnection, isLocalHost } = require('./lib/shop-provisioning');
 const { buildExcelExport } = require('./lib/excel-export');
 const { RESOURCE_LIST, resourceFor, parseDateRange, getExportPayload, archiveData } = require('./lib/data-lifecycle');
 const { number, nullableNumber, asArray, dateInput, startOfToday, money, grams, invoiceNumber, barcodePrefix, metalRateFromDailyRate, makingAmount } = require('./lib/helpers');
 
+let prisma = createPrisma();
+let databaseHealth = { checkedAt: 0, error: null };
 const app = express();
 const port = Number(process.env.PORT || 3000);
 
@@ -149,9 +151,100 @@ function shopSetupRequired() {
   return !process.env.DATABASE_URL || !process.env.AUTH_USERNAME || !process.env.AUTH_PASSWORD;
 }
 
+async function reloadPrismaClient() {
+  const previous = prisma;
+  prisma = createPrisma();
+  databaseHealth = { checkedAt: 0, error: null };
+  await previous.$disconnect().catch(() => {});
+}
+
+async function databaseConnectionError(force = false) {
+  if (shopSetupRequired()) return null;
+  const now = Date.now();
+  if (!force && now - databaseHealth.checkedAt < 5000) return databaseHealth.error;
+  try {
+    await prisma.$queryRawUnsafe('SELECT 1');
+    databaseHealth = { checkedAt: now, error: null };
+    return null;
+  } catch (error) {
+    databaseHealth = { checkedAt: now, error };
+    return error;
+  }
+}
+
+function setupDefaults() {
+  const defaults = {
+    setupMode: 'SERVER', mysqlHost: 'localhost', mysqlPort: '3306', databaseName: 'kusum_erp',
+    databaseUser: 'kusum_erp_shared', appUsername: process.env.AUTH_USERNAME || 'kusum',
+    printerMode: String(process.env.TSC_PRINTER_MODE || 'WINDOWS').toUpperCase() === 'TCP' ? 'TCP' : 'WINDOWS',
+    printerName: process.env.TSC_PRINTER_NAME || 'TSC TTP-244 Pro',
+    printerHost: process.env.TSC_PRINTER_HOST || '',
+    printerPort: process.env.TSC_PRINTER_PORT || '9100'
+  };
+  if (!process.env.DATABASE_URL) return defaults;
+  try {
+    const connection = parseDatabaseConnection(process.env.DATABASE_URL);
+    const url = new URL(process.env.DATABASE_URL);
+    return {
+      ...defaults,
+      setupMode: process.env.KUSUM_DEPLOYMENT_MODE || (isLocalHost(connection.host) ? 'SERVER' : 'CLIENT'),
+      mysqlHost: connection.host,
+      mysqlPort: String(connection.port),
+      databaseName: connection.database,
+      databaseUser: decodeURIComponent(url.username) || defaults.databaseUser
+    };
+  } catch (_) {
+    return defaults;
+  }
+}
+
+function configuredLabelPrinter() {
+  const mode = String(process.env.TSC_PRINTER_MODE || 'WINDOWS').trim().toUpperCase() === 'TCP' ? 'TCP' : 'WINDOWS';
+  return {
+    mode,
+    name: String(process.env.TSC_PRINTER_NAME || 'TSC TTP-244 Pro').trim(),
+    host: String(process.env.TSC_PRINTER_HOST || '').trim(),
+    port: Number(process.env.TSC_PRINTER_PORT || 9100)
+  };
+}
+
+async function resolveLabelPrinter(force = false) {
+  const printer = configuredLabelPrinter();
+  if (printer.mode === 'TCP') {
+    if (!force) {
+      return {
+        available: false,
+        name: `TCP ${printer.host || 'printer IP'}:${printer.port || 9100}`,
+        message: 'Direct TCP printer status has not been checked yet. Inventory opens immediately; click Recheck printer before troubleshooting.',
+        checked: false
+      };
+    }
+    return checkTcpPrinter(printer.host, printer.port);
+  }
+  return force ? resolveTscPrinter(printer.name, true) : cachedTscPrinterStatus(printer.name);
+}
+
+function renderSetup(res, { repair = false, error = null } = {}) {
+  return res.render('setup', {
+    layout: false,
+    title: repair ? 'Repair ERP connection' : 'Shop setup',
+    repair,
+    error,
+    defaults: setupDefaults()
+  });
+}
+
+function localNetworkAddresses() {
+  return Object.values(os.networkInterfaces())
+    .flat()
+    .filter((address) => address && address.family === 'IPv4' && !address.internal)
+    .map((address) => address.address)
+    .filter((address, index, all) => all.indexOf(address) === index);
+}
+
 app.get('/setup', (req, res) => {
   if (!shopSetupRequired()) return res.redirect('/login');
-  res.render('setup', { layout: false, title: 'Shop setup', error: req.query.error || null });
+  renderSetup(res, { error: req.query.error || null });
 });
 
 app.post('/setup', async (req, res) => {
@@ -159,20 +252,38 @@ app.post('/setup', async (req, res) => {
   try {
     const values = await provisionShopDatabase({ appRoot, configPath, form: req.body });
     Object.assign(process.env, values);
+    await reloadPrismaClient();
     res.redirect('/login?message=Shop setup is complete. Sign in to begin.');
   } catch (error) {
     redirectWith(res, '/setup', 'error', error.message || 'Could not set up the shop database.');
   }
 });
 
-app.get('/login', (req, res) => {
+app.get('/connection-repair', (req, res) => {
+  renderSetup(res, { repair: true, error: req.query.error || null });
+});
+
+app.post('/connection-repair', async (req, res) => {
+  try {
+    const values = await provisionShopDatabase({ appRoot, configPath, form: req.body });
+    Object.assign(process.env, values);
+    await reloadPrismaClient();
+    res.redirect('/login?message=ERP connection saved. Sign in to continue.');
+  } catch (error) {
+    redirectWith(res, '/connection-repair', 'error', error.message || 'Could not save the ERP connection.');
+  }
+});
+
+app.get('/login', async (req, res) => {
   if (shopSetupRequired()) return res.redirect('/setup');
+  if (await databaseConnectionError()) return redirectWith(res, '/connection-repair', 'error', 'The saved database connection is unavailable. Enter the current database details below.');
   if (req.session?.authenticated) return res.redirect('/');
   res.render('auth/login', { layout: false, title: 'Sign in', error: req.query.error || null, message: req.query.message || null });
 });
 
-app.post('/login', (req, res) => {
+app.post('/login', async (req, res) => {
   if (shopSetupRequired()) return res.redirect('/setup');
+  if (await databaseConnectionError(true)) return redirectWith(res, '/connection-repair', 'error', 'The saved database connection is unavailable. Enter the current database details below.');
   const usernameOk = secureCredentialMatch(req.body.username, process.env.AUTH_USERNAME);
   const passwordOk = secureCredentialMatch(req.body.password, process.env.AUTH_PASSWORD);
   if (!usernameOk || !passwordOk) return redirectWith(res, '/login', 'error', 'Incorrect username or password.');
@@ -188,10 +299,50 @@ app.post('/logout', (req, res) => {
   req.session.destroy(() => res.redirect('/login'));
 });
 
-app.use((req, res, next) => {
+app.use(async (req, res, next) => {
   if (shopSetupRequired()) return res.redirect('/setup');
-  if (req.session?.authenticated) return next();
-  return res.redirect('/login');
+  if (!req.session?.authenticated) return res.redirect('/login');
+  if (await databaseConnectionError()) {
+    return redirectWith(res, '/connection-repair', 'error', 'The saved database connection is unavailable. Enter the current database details below.');
+  }
+  return next();
+});
+
+app.get('/network-setup', (req, res, next) => {
+  try {
+    const connection = parseDatabaseConnection(process.env.DATABASE_URL);
+    res.render('network-setup', {
+      title: 'Network PC setup',
+      connection,
+      addresses: localNetworkAddresses(),
+      canEnableSharing: isLocalHost(connection.host)
+    });
+  } catch (error) { next(error); }
+});
+
+app.post('/network-setup', async (req, res, next) => {
+  try {
+    const access = await enableNetworkSharing({ databaseUrl: process.env.DATABASE_URL, form: req.body });
+    redirectWith(res, '/network-setup', 'message', `Client PC access is ready for database ${access.database} on port ${access.port}. Use the selected database username on each client.`);
+  } catch (error) {
+    redirectWith(res, '/network-setup', 'error', error.message || 'Could not enable client PC access.');
+  }
+});
+
+app.get('/printer-setup', (req, res) => {
+  res.render('printer-setup', { title: 'Barcode printer setup', printer: configuredLabelPrinter() });
+});
+
+app.post('/printer-setup', (req, res) => {
+  try {
+    const values = updatePrinterConfiguration({ configPath, currentEnv: process.env, form: req.body });
+    Object.assign(process.env, values);
+    redirectWith(res, '/inventory', 'message', values.TSC_PRINTER_MODE === 'TCP'
+      ? `Direct TCP printer saved: ${values.TSC_PRINTER_HOST}:${values.TSC_PRINTER_PORT}. Use Test TSC to verify the printer.`
+      : `Windows printer saved: ${values.TSC_PRINTER_NAME}. Use Test TSC to verify the printer.`);
+  } catch (error) {
+    redirectWith(res, '/printer-setup', 'error', error.message || 'Could not save barcode printer settings.');
+  }
 });
 
 app.get('/data-management', (req, res, next) => {
@@ -242,14 +393,22 @@ app.post('/data/archive', async (req, res) => {
 app.get('/', async (req, res, next) => {
   try {
     const today = startOfToday();
-    const [productCount, stockProducts, todaySales, activeRepairs, lowStock, recentSales] = await Promise.all([
+    const todayKey = dateInput(today);
+    const [productCount, stockProducts, todaySales, activeRepairs, lowStock, recentSales, todayCashbook, customerDue] = await Promise.all([
       prisma.product.count({ where: { status: 'AVAILABLE' } }),
       prisma.product.findMany({ where: { quantity: { gt: 0 }, status: 'AVAILABLE' }, select: { quantity: true, netWeight: true } }),
-      prisma.sale.aggregate({ where: { saleDate: { gte: today } }, _sum: { total: true, paid: true }, _count: true }),
+      prisma.sale.aggregate({ where: { saleDate: { gte: today } }, _sum: { total: true, paid: true, balance: true, urdOffset: true }, _count: true }),
       prisma.repair.count({ where: { status: { in: ['RECEIVED', 'IN_PROGRESS', 'READY'] } } }),
       prisma.product.findMany({ where: { quantity: { lte: 1 }, status: 'AVAILABLE' }, orderBy: { quantity: 'asc' }, take: 6 }),
-      prisma.sale.findMany({ include: { customer: true }, orderBy: { saleDate: 'desc' }, take: 6 })
+      prisma.sale.findMany({ include: { customer: true }, orderBy: { saleDate: 'desc' }, take: 6 }),
+      prisma.cashbookEntry.findMany({ where: { entryDate: todayKey }, select: { type: true, amount: true } }),
+      prisma.customerLedger.aggregate({ _sum: { amount: true } })
     ]);
+    const cashFlow = todayCashbook.reduce((summary, entry) => {
+      if (entry.type === 'IN') summary.in += Number(entry.amount);
+      if (entry.type === 'OUT') summary.out += Number(entry.amount);
+      return summary;
+    }, { in: 0, out: 0 });
     res.render('dashboard', {
       title: 'Dashboard',
       stats: {
@@ -258,6 +417,10 @@ app.get('/', async (req, res, next) => {
         stockWeight: stockProducts.reduce((total, product) => total + Number(product.netWeight) * product.quantity, 0),
         sales: todaySales._sum.total || 0,
         invoices: todaySales._count,
+        cashIn: cashFlow.in,
+        cashOut: cashFlow.out,
+        cashNet: cashFlow.in - cashFlow.out,
+        customerDue: Math.max(0, Number(customerDue._sum.amount || 0)),
         activeRepairs
       },
       lowStock,
@@ -296,22 +459,36 @@ app.get('/inventory', async (req, res, next) => {
     const where = q ? { OR: [
       { barcode: { contains: q } }, { sku: { contains: q } }, { name: { contains: q } }, { category: { contains: q } }
     ] } : {};
-    const configuredPrinterName = process.env.TSC_PRINTER_NAME || 'TSC TTP-244 Pro';
-    const [products, printerStatus] = await Promise.all([
-      prisma.product.findMany({ where, orderBy: [{ status: 'asc' }, { updatedAt: 'desc' }] }),
-      resolveTscPrinter(configuredPrinterName, req.query.checkPrinter === '1')
-    ]);
-    res.render('inventory/index', { title: 'Inventory', products, q, printerName: printerStatus.name || configuredPrinterName, printerStatus });
+    const products = await prisma.product.findMany({ where, orderBy: [{ status: 'asc' }, { updatedAt: 'desc' }] });
+    const printerStatus = await resolveLabelPrinter(req.query.checkPrinter === '1');
+    const printerTransport = configuredLabelPrinter();
+    res.render('inventory/index', { title: 'Inventory', products, q, printerName: printerStatus.name || printerTransport.name, printerStatus, printerTransport });
   } catch (error) { next(error); }
+});
+
+app.post('/labels/test-print', async (req, res) => {
+  try {
+    const printerTransport = configuredLabelPrinter();
+    const printerStatus = await resolveLabelPrinter(true);
+    if (!printerStatus.available) throw new Error(printerStatus.message);
+    const tspl = buildTsplJob([{ product: {
+      metal: 'GOLD', barcode: 'TSC TEST', name: 'PRINTER TEST',
+      grossWeight: 0, stoneWeight: 0, netWeight: 0
+    } }]);
+    const result = await sendTsplToPrinter(printerTransport.mode === 'TCP' ? printerTransport : { mode: 'WINDOWS', name: printerStatus.name }, tspl);
+    redirectWith(res, '/inventory', 'message', `TSC test label ${printerTransport.mode === 'TCP' ? 'sent to' : 'queued to'} ${printerStatus.name}. ${result}`);
+  } catch (error) {
+    redirectWith(res, '/inventory', 'error', error.message || 'Could not send the TSC test label.');
+  }
 });
 
 app.post('/labels/print', async (req, res, next) => {
   try {
     const requests = labelRequests(req.body);
     if (!requests.length) return redirectWith(res, '/inventory', 'error', 'Select at least one inventory item to print labels.');
-    const configuredPrinterName = String(process.env.TSC_PRINTER_NAME || 'TSC TTP-244 Pro').trim();
-    if (!configuredPrinterName) return redirectWith(res, '/inventory', 'error', 'Set TSC_PRINTER_NAME to the installed Windows name for your TSC TTP-244 Pro printer.');
-    const printerStatus = await resolveTscPrinter(configuredPrinterName, true);
+    const printerTransport = configuredLabelPrinter();
+    if (printerTransport.mode === 'WINDOWS' && !printerTransport.name) return redirectWith(res, '/inventory', 'error', 'Set the installed Windows printer name before sending labels.');
+    const printerStatus = await resolveLabelPrinter(true);
     if (!printerStatus.available) throw new Error(printerStatus.message);
     const printerName = printerStatus.name;
     const products = await prisma.product.findMany({ where: { id: { in: requests.map((row) => row.id) } } });
@@ -322,8 +499,8 @@ app.post('/labels/print', async (req, res, next) => {
       return Array.from({ length: copies }, (_, copyIndex) => ({ product, copyIndex: copyIndex + 1, copies }));
     });
     const tspl = buildTsplJob(labels);
-    await sendTsplToPrinter(printerName, tspl);
-    redirectWith(res, '/inventory', 'message', `${labels.length} native TSPL label${labels.length === 1 ? '' : 's'} sent directly to ${printerName}.`);
+    const result = await sendTsplToPrinter(printerTransport.mode === 'TCP' ? printerTransport : { mode: 'WINDOWS', name: printerName }, tspl);
+    redirectWith(res, '/inventory', 'message', `${labels.length} native TSPL label${labels.length === 1 ? '' : 's'} ${printerTransport.mode === 'TCP' ? 'sent to' : 'queued to'} ${printerName}. ${result}`);
   } catch (error) {
     redirectWith(res, '/inventory', 'error', error.message || 'Could not send native TSPL labels to the printer.');
   }

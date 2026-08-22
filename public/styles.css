@@ -369,6 +369,13 @@ input:focus, select:focus, textarea:focus { border-color: #c08a32; box-shadow: 0
 .due.has-balance strong { color: var(--red); }
 .form-hint { color: var(--muted); text-align: center; margin: 11px 0 0; font-size: 11px; }
 .credit-hint { font-size: 11px; color: var(--muted); margin: 8px 0 0; line-height: 1.5; }
+.stack-form { display: grid; gap: 14px; }
+.stack-form .form-grid.compact-fields { padding: 0; border: 0; background: transparent; }
+.network-info ol { margin: 14px 0 20px; padding-left: 20px; color: #5d554e; font-size: 12px; }
+.network-info li + li { margin-top: 8px; }
+.network-info h3 { margin-top: 18px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.network-addresses { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+.network-addresses code { padding: 6px 8px; border: 1px solid #e4d8c7; border-radius: 6px; background: #fff9ef; color: #825512; font: 700 12px ui-monospace, Consolas, monospace; }
 
 /* ── Invoice ──────────────────────────────────────────────── */
 .invoice { max-width: 900px; margin: 0 auto; padding: 38px 42px; box-shadow: 0 5px 18px rgba(43,32,18,.08); }
@@ -539,6 +546,12 @@ input:focus, select:focus, textarea:focus { border-color: #c08a32; box-shadow: 0
 .login-card h1 { margin: 4px 0 8px; }
 .login-card form { display: grid; gap: 14px; margin-top: 24px; }
 .login-card .flash { position: static; min-width: 0; margin-top: 18px; }
+.segmented-control { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 5px; background: #f4f0ea; border: 1px solid #e1d9d0; border-radius: 10px; }
+.segmented-control label { display: flex; align-items: center; justify-content: center; gap: 7px; min-height: 34px; margin: 0; padding: 6px 8px; border-radius: 7px; color: #5b544e; font-size: 12px; font-weight: 700; cursor: pointer; }
+.segmented-control label:has(input:checked) { background: #fff; color: var(--gold-dark); box-shadow: 0 1px 4px rgba(64, 45, 25, .12); }
+.segmented-control input { width: auto; margin: 0; }
+.setup-mode-copy { padding: 11px 13px; border: 1px solid #eadcbf; border-radius: 9px; background: #fffbf3; color: #5d5449; font-size: 12px; }
+.setup-mode-copy p { margin-top: 3px; }
 .sidebar-logout { margin-top: 12px; padding: 0; background: none; border: 0; color: #f2c66d; font: inherit; cursor: pointer; }
 .cashbook-sync { display: flex; align-items: center; gap: 8px; margin: 12px 0; color: #315d48; font-size: 12px; font-weight: 700; }
 .cashbook-sync input { width: auto; margin: 0; accent-color: #247752; }

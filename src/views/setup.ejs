@@ -3,32 +3,105 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Shop setup · Kusum Jewelers ERP</title>
+  <title><%= repair ? 'Repair ERP connection' : 'Shop setup' %> · Kusum Jewelers ERP</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body class="login-page">
-  <main class="login-card" style="max-width:620px">
+  <main class="login-card" style="max-width:660px">
     <span class="brand-mark">KJ</span>
     <p class="eyebrow">Kusum Jewelers</p>
-    <h1>Set up the shop ERP</h1>
-    <p class="muted">This one-time setup creates or upgrades the local MySQL database. A new database starts empty; existing shop data is kept. Your MySQL administrator password is used only now and is never saved.</p>
+    <h1><%= repair ? 'Repair ERP connection' : 'Set up the shop ERP' %></h1>
+    <p class="muted"><% if (repair) { %>The application folder can be copied or deleted without losing Windows connection settings. Use this screen to safely replace stale database details; it does not delete any database records.<% } else { %>Choose one main database PC, then connect every billing or office PC to it over your private LAN or Wi-Fi router. The MySQL administrator password is used only on the main PC and is never saved.<% } %></p>
     <% if (error) { %><div class="flash error"><span>!</span><%= error %></div><% } %>
-    <form method="post" action="/setup">
+    <form method="post" action="<%= repair ? '/connection-repair' : '/setup' %>" id="setup-form">
+      <div class="segmented-control" role="radiogroup" aria-label="Installation type">
+        <label><input type="radio" name="setupMode" value="SERVER" <%= defaults.setupMode === 'CLIENT' ? '' : 'checked' %>> Main database PC</label>
+        <label><input type="radio" name="setupMode" value="CLIENT" <%= defaults.setupMode === 'CLIENT' ? 'checked' : '' %>> Client PC</label>
+      </div>
+
+      <div class="setup-mode-copy" data-server-copy>
+        <strong>Main database PC</strong>
+        <p>Use this once on the PC that keeps the shared MySQL database. It creates or upgrades the ERP database and creates the limited account used by client PCs.</p>
+      </div>
+      <div class="setup-mode-copy" data-client-copy hidden>
+        <strong>Client PC</strong>
+        <p>Use this on every additional billing or office PC. It connects to the already-created main database and never needs the MySQL administrator password.</p>
+      </div>
+
       <div class="form-grid three compact-fields">
-        <label>MySQL host<input name="mysqlHost" required value="localhost" autocomplete="off"></label>
-        <label>MySQL port<input name="mysqlPort" type="number" min="1" max="65535" required value="3306"></label>
-        <label>MySQL admin user<input name="mysqlUser" required value="root" autocomplete="username"></label>
+        <label>MySQL server name / IP<input name="mysqlHost" required value="<%= defaults.mysqlHost %>" autocomplete="off" data-mysql-host></label>
+        <label>MySQL port<input name="mysqlPort" type="number" min="1" max="65535" required value="<%= defaults.mysqlPort %>" autocomplete="off"></label>
+        <label>Database name<input name="databaseName" required value="<%= defaults.databaseName %>" pattern="[A-Za-z0-9_]+" autocomplete="off"></label>
       </div>
-      <label>MySQL admin password<input name="mysqlPassword" type="password" autocomplete="current-password" placeholder="Leave blank only if MySQL has no password"></label>
-      <label>Database name<input name="databaseName" required value="kusum_erp" pattern="[A-Za-z0-9_]+" autocomplete="off"></label>
+
+      <div data-server-fields>
+        <div class="form-grid two compact-fields">
+          <label>MySQL administrator user<input name="mysqlUser" required value="root" autocomplete="username"></label>
+          <label>MySQL administrator password<input name="mysqlPassword" type="password" autocomplete="current-password" placeholder="Leave blank only if MySQL has no password"></label>
+        </div>
+      </div>
+
       <div class="form-grid two compact-fields">
-        <label>ERP login username<input name="appUsername" required value="kusum" minlength="3" autocomplete="username"></label>
-        <label>ERP login password<input name="appPassword" type="password" required minlength="8" value="kusum@123" autocomplete="new-password"></label>
+        <label>Shared ERP database username<input name="databaseUser" required value="<%= defaults.databaseUser %>" minlength="3" autocomplete="off"></label>
+        <label>Shared ERP database password<input name="databasePassword" type="password" required minlength="12" autocomplete="new-password" placeholder="At least 12 characters"></label>
       </div>
-      <label>TSC printer name (optional now)<input name="printerName" value="TSC TTP-244 Pro" autocomplete="off"></label>
-      <p class="form-hint">MySQL Server must already be installed and running on this shop PC. The installer creates a separate limited ERP database user automatically.</p>
-      <button class="button full large" type="submit">Create database and start ERP</button>
+      <p class="form-hint">On the main PC, choose and safely note this database username and password. Enter the same two values on every client PC. It is one MySQL login with access only to this one shared Kusum ERP database; it is not the MySQL root account and it does not create a separate client database.</p>
+
+      <div class="form-grid two compact-fields">
+        <label>ERP login username<input name="appUsername" required value="<%= defaults.appUsername %>" minlength="3" autocomplete="username"></label>
+        <label>ERP login password<input name="appPassword" type="password" required minlength="8" value="<%= repair ? '' : 'kusum@123' %>" autocomplete="new-password" placeholder="<%= repair ? 'Enter ERP login password' : '' %>"></label>
+      </div>
+      <div class="setup-mode-copy">
+        <strong>Barcode printer connection</strong>
+        <p>Choose Windows queue for USB, a shared Windows printer, or a printer installed with a Standard TCP/IP port. Choose direct TCP only when this specific printer or print server has its own reachable IP address.</p>
+      </div>
+      <div class="segmented-control" role="radiogroup" aria-label="Barcode printer connection">
+        <label><input type="radio" name="printerMode" value="WINDOWS" <%= defaults.printerMode === 'TCP' ? '' : 'checked' %>> Windows printer / USB</label>
+        <label><input type="radio" name="printerMode" value="TCP" <%= defaults.printerMode === 'TCP' ? 'checked' : '' %>> Direct TCP / Ethernet</label>
+      </div>
+      <div data-windows-printer-fields>
+        <label>Installed Windows TSC printer name<input name="printerName" value="<%= defaults.printerName %>" autocomplete="off"></label>
+      </div>
+      <div class="form-grid two compact-fields" data-tcp-printer-fields hidden>
+        <label>Printer / print-server IP<input name="printerHost" value="<%= defaults.printerHost %>" autocomplete="off" placeholder="Example: 192.168.1.60"></label>
+        <label>Direct TCP port<input name="printerPort" type="number" min="1" max="65535" value="<%= defaults.printerPort %>" autocomplete="off"></label>
+      </div>
+      <p class="form-hint">A common RAW TCP port is 9100, but use the port shown on the printer or print-server configuration page. A USB-only TTP-244 Pro must use the Windows printer / USB option.</p>
+      <p class="form-hint" data-server-hint>Keep MySQL on this PC. After setup, allow its selected MySQL port through Windows Firewall only for Private networks / Local subnet, then use this PC’s LAN IP on clients.</p>
+      <p class="form-hint" data-client-hint hidden>Enter the main PC’s LAN IP or computer name and its MySQL port. Do not enter <code>localhost</code> here; that would mean this client PC.</p>
+      <button class="button full large" type="submit" data-submit-label>Create shared database and start ERP</button>
     </form>
   </main>
+  <script>
+    (() => {
+      const form = document.getElementById('setup-form');
+      const host = form.querySelector('[data-mysql-host]');
+      const serverFields = form.querySelector('[data-server-fields]');
+      const serverCopy = form.querySelector('[data-server-copy]');
+      const clientCopy = form.querySelector('[data-client-copy]');
+      const serverHint = form.querySelector('[data-server-hint]');
+      const clientHint = form.querySelector('[data-client-hint]');
+      const submit = form.querySelector('[data-submit-label]');
+      const windowsPrinterFields = form.querySelector('[data-windows-printer-fields]');
+      const tcpPrinterFields = form.querySelector('[data-tcp-printer-fields]');
+      const update = () => {
+        const client = form.querySelector('input[name="setupMode"]:checked').value === 'CLIENT';
+        serverFields.hidden = client;
+        serverCopy.hidden = client;
+        clientCopy.hidden = !client;
+        serverHint.hidden = client;
+        clientHint.hidden = !client;
+        submit.textContent = client ? 'Connect to main ERP database' : 'Create shared database and start ERP';
+        host.placeholder = client ? 'Example: 192.168.1.20' : 'localhost';
+        if (client && host.value === 'localhost') host.value = '';
+        if (!client && !host.value) host.value = 'localhost';
+        const directTcp = form.querySelector('input[name="printerMode"]:checked').value === 'TCP';
+        windowsPrinterFields.hidden = directTcp;
+        tcpPrinterFields.hidden = !directTcp;
+      };
+      form.querySelectorAll('input[name="setupMode"], input[name="printerMode"]').forEach((input) => input.addEventListener('change', update));
+      update();
+    })();
+  </script>
 </body>
 </html>

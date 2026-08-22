@@ -1,0 +1,48 @@
+<header class="page-header">
+  <div><p class="eyebrow">Native TSPL labels</p><h1>Barcode printer setup</h1><p class="muted">Select one transport for this PC. Barcode labels are always sent as the supplied native TSPL commands, never as PDF labels.</p></div>
+  <a class="button ghost" href="/inventory">Back to inventory</a>
+</header>
+
+<section class="content-grid two-thirds">
+  <article class="panel">
+    <div class="panel-heading"><div><h2>Connection</h2><p>Windows queue is the recommended choice for USB printers and a shared shop printer.</p></div></div>
+    <form method="post" action="/printer-setup" id="printer-setup-form" class="stack-form">
+      <div class="segmented-control" role="radiogroup" aria-label="Barcode printer transport">
+        <label><input type="radio" name="printerMode" value="WINDOWS" <%= printer.mode === 'TCP' ? '' : 'checked' %>> Windows printer / USB</label>
+        <label><input type="radio" name="printerMode" value="TCP" <%= printer.mode === 'TCP' ? 'checked' : '' %>> Direct TCP / Ethernet</label>
+      </div>
+      <div data-windows-printer-fields>
+        <label>Installed Windows printer name<input name="printerName" value="<%= printer.name %>" autocomplete="off" placeholder="Example: TSC TTP-244 Pro"></label>
+        <p class="form-hint">Use the exact Windows printer queue name. This works with USB, a Windows shared printer, or a printer installed in Windows using a Standard TCP/IP port.</p>
+      </div>
+      <div class="form-grid two compact-fields" data-tcp-printer-fields hidden>
+        <label>Printer / print-server IP<input name="printerHost" value="<%= printer.host %>" autocomplete="off" placeholder="Example: 192.168.1.60"></label>
+        <label>Direct TCP port<input name="printerPort" type="number" min="1" max="65535" value="<%= printer.port || 9100 %>" autocomplete="off"></label>
+      </div>
+      <p class="form-hint">Choose direct TCP only if this specific TSC printer or its Ethernet print server has a reachable network IP. Port 9100 is common, but use the printer’s configured RAW port.</p>
+      <button class="button" type="submit">Save printer connection</button>
+    </form>
+  </article>
+  <aside class="panel network-info">
+    <h2>Which option?</h2>
+    <p><strong>USB:</strong> install the TSC driver on this PC and use Windows printer / USB.</p>
+    <p><strong>Printer shared from the main PC:</strong> connect to the Windows shared queue on each client PC and use Windows printer / USB.</p>
+    <p><strong>Ethernet printer:</strong> either install its TCP/IP queue in Windows (recommended) or use direct TCP with its fixed IP.</p>
+    <p><strong>Wi-Fi router:</strong> it only carries the network connection; it does not add Ethernet capability to a USB-only printer.</p>
+    <p class="form-hint">After saving, open Inventory and click <strong>Test TSC</strong>. A success message confirms Windows accepted the RAW job or that the TCP connection accepted the bytes; check the physical label for the final hardware confirmation.</p>
+  </aside>
+</section>
+<script>
+  (() => {
+    const form = document.getElementById('printer-setup-form');
+    const windowsFields = form.querySelector('[data-windows-printer-fields]');
+    const tcpFields = form.querySelector('[data-tcp-printer-fields]');
+    const update = () => {
+      const directTcp = form.querySelector('input[name="printerMode"]:checked').value === 'TCP';
+      windowsFields.hidden = directTcp;
+      tcpFields.hidden = !directTcp;
+    };
+    form.querySelectorAll('input[name="printerMode"]').forEach((input) => input.addEventListener('change', update));
+    update();
+  })();
+</script>

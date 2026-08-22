@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const net = require('net');
 const { spawn } = require('child_process');
 
 const templateDir = path.join(__dirname, '..', 'tspl-templates');
@@ -63,7 +64,7 @@ function nativePrintScript() {
   return path.join(__dirname, '..', '..', 'scripts', 'print-tspl.ps1');
 }
 
-function sendTsplToPrinter(printerName, tspl) {
+function sendTsplToWindowsPrinter(printerName, tspl) {
   return new Promise((resolve, reject) => {
     const shell = process.env.SystemRoot
       ? path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
@@ -74,15 +75,120 @@ function sendTsplToPrinter(printerName, tspl) {
     });
     let stdout = '';
     let stderr = '';
+    let settled = false;
+    const finish = (error, result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (error) reject(error);
+      else resolve(result);
+    };
+    const timeout = setTimeout(() => {
+      child.kill();
+      finish(new Error(`Timed out while sending native TSPL to ${printerName}. Check that the TSC printer is powered on, online and not paused in Windows.`));
+    }, 15000);
     child.stdout.on('data', (chunk) => { stdout += chunk; });
     child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.on('error', (error) => reject(error));
+    child.on('error', (error) => finish(error));
     child.on('close', (code) => {
-      if (code === 0) return resolve(stdout.trim());
-      reject(new Error(stderr.trim() || stdout.trim() || `Windows printer process stopped with code ${code}.`));
+      if (code === 0) return finish(null, stdout.trim());
+      finish(new Error(stderr.trim() || stdout.trim() || `Windows printer process stopped with code ${code}.`));
     });
     child.stdin.end(Buffer.from(tspl, 'latin1').toString('base64'));
   });
 }
 
-module.exports = { buildTsplLabel, buildTsplJob, sendTsplToPrinter };
+function tcpPort(value) {
+  const parsed = Number(value || 9100);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+    throw new Error('Enter a valid direct TCP printer port (1 to 65535).');
+  }
+  return parsed;
+}
+
+function tcpHost(value) {
+  const host = String(value || '').trim();
+  if (!host || host.length > 253 || !/^[A-Za-z0-9][A-Za-z0-9.-]*$/.test(host)) {
+    throw new Error('Enter a valid direct TCP printer IP address or host name.');
+  }
+  return host;
+}
+
+function checkTcpPrinter(host, portNumber) {
+  const hostName = tcpHost(host);
+  const port = tcpPort(portNumber);
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host: hostName, port });
+    let settled = false;
+    const finish = (status) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(status);
+    };
+    socket.setTimeout(6000);
+    socket.once('connect', () => finish({
+      available: true,
+      name: `TCP ${hostName}:${port}`,
+      message: `Connected to ${hostName}:${port}. Native TSPL will be sent directly over TCP.`,
+      checked: true
+    }));
+    socket.once('timeout', () => finish({
+      available: false,
+      name: `TCP ${hostName}:${port}`,
+      message: `Timed out connecting to ${hostName}:${port}. Check the printer IP, TCP port, cable/router and network power.`,
+      checked: true
+    }));
+    socket.once('error', (error) => finish({
+      available: false,
+      name: `TCP ${hostName}:${port}`,
+      message: `Could not connect to ${hostName}:${port}: ${error.message || error}`,
+      checked: true
+    }));
+  });
+}
+
+function sendTsplOverTcp(host, portNumber, tspl) {
+  const hostName = tcpHost(host);
+  const port = tcpPort(portNumber);
+  const bytes = Buffer.from(tspl, 'latin1');
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({ host: hostName, port });
+    let settled = false;
+    const finish = (error, result) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      if (error) reject(error);
+      else resolve(result);
+    };
+    socket.setTimeout(15000);
+    socket.once('connect', () => {
+      socket.write(bytes, (error) => {
+        if (error) return finish(error);
+        socket.end();
+        finish(null, `Sent ${bytes.length} native TSPL bytes to ${hostName}:${port} over direct TCP.`);
+      });
+    });
+    socket.once('timeout', () => finish(new Error(`Timed out sending native TSPL to ${hostName}:${port}. Check the printer IP, TCP port, cable/router and network power.`)));
+    socket.once('error', (error) => finish(new Error(`Could not send native TSPL to ${hostName}:${port}: ${error.message || error}`)));
+  });
+}
+
+function sendTsplToPrinter(printer, tspl) {
+  const config = typeof printer === 'string' ? { mode: 'WINDOWS', name: printer } : (printer || {});
+  if (String(config.mode || 'WINDOWS').toUpperCase() === 'TCP') {
+    return sendTsplOverTcp(config.host, config.port, tspl);
+  }
+  const printerName = String(config.name || '').trim();
+  if (!printerName) throw new Error('Select an installed Windows printer before sending labels.');
+  return sendTsplToWindowsPrinter(printerName, tspl);
+}
+
+module.exports = {
+  buildTsplLabel,
+  buildTsplJob,
+  checkTcpPrinter,
+  sendTsplToPrinter,
+  sendTsplOverTcp
+};

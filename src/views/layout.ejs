@@ -23,6 +23,8 @@
           <a class="<%= currentPath.startsWith('/customers') ? 'active' : '' %>" href="/customers"><span>◎</span> Customers</a>
           <a class="<%= currentPath.startsWith('/data-management') ? 'active' : '' %>" href="/data-management"><span>⇩</span> Export & archive</a>
           <a class="<%= currentPath.startsWith('/reports') ? 'active' : '' %>" href="/reports"><span>▤</span> Reports</a>
+          <a class="<%= currentPath.startsWith('/network-setup') ? 'active' : '' %>" href="/network-setup"><span>⌁</span> Network PCs</a>
+          <a class="<%= currentPath.startsWith('/printer-setup') ? 'active' : '' %>" href="/printer-setup"><span>▥</span> Barcode printer</a>
         </nav>
         <div class="sidebar-foot">Signed in as <strong><%= loggedInUser %></strong><br><span>Track every gram.</span><form method="post" action="/logout"><button class="sidebar-logout" type="submit">Sign out</button></form></div>
       </aside>

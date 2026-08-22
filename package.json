@@ -3,10 +3,11 @@
   "version": "1.0.0",
   "private": true,
   "description": "Lightweight jewellery ERP for Kusum Jewelers",
-  "main": "src/server.js",
+  "main": "electron-main.js",
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
+    "desktop": "electron .",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev --name init",
     "db:seed": "prisma db seed",
@@ -28,6 +29,8 @@
     "pdfkit": "^0.19.1"
   },
   "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "electron": "^30.5.1",
     "prisma": "^6.19.1"
   }
 }
