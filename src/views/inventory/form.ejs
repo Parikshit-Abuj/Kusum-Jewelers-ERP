@@ -139,7 +139,7 @@
       <% if (product) { %>
       <label>Status
         <select name="status">
-          <% ['AVAILABLE','SOLD_OUT','IN_REPAIR','INACTIVE'].forEach((status) => { %>
+          <% ['AVAILABLE','SOLD_OUT','INACTIVE'].forEach((status) => { %>
           <option value="<%= status %>" <%= product.status === status ? 'selected' : '' %>><%= status.replace('_', ' ') %></option>
           <% }) %>
         </select>

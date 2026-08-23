@@ -1,6 +1,6 @@
 # Kusum Jewelers ERP
 
-Lightweight local ERP for jewellery inventory, daily gold and silver rates, barcode billing, customer credit, cashbook, URD purchases, repairs, exports and archive management.
+Lightweight local ERP for jewellery inventory, daily gold and silver rates, barcode billing, customer credit, cashbook, URD purchases, exports and archive management.
 
 ## Shop PC installer
 

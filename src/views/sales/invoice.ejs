@@ -62,14 +62,15 @@
     </thead>
     <tbody>
       <% sale.items.forEach((item, index) => { %>
+      <% const product = item.product || { name: item.productName, barcode: item.productBarcode, sku: item.productSku, purity: item.productPurity, metal: item.productMetal, netWeight: item.weight }; %>
       <tr>
         <td><%= index + 1 %></td>
         <td>
-          <strong><%= item.product.name %></strong>
-          <small><%= item.product.barcode || item.product.sku %> · <%= item.product.category %></small>
+          <strong><%= product.name || 'Jewellery item' %></strong>
+          <small><%= product.barcode || product.sku || 'Sold item' %><%= product.category ? ` · ${product.category}` : '' %></small>
         </td>
-        <td><%= item.product.purity || item.product.metal %></td>
-        <td><%= grams(item.weight || item.product.netWeight) %></td>
+        <td><%= product.purity || product.metal || '—' %></td>
+        <td><%= grams(item.weight || product.netWeight) %></td>
         <td class="right"><%= item.quantity %></td>
         <td class="right"><%- money(item.metalRate || item.unitPrice) %></td>
         <td class="right">

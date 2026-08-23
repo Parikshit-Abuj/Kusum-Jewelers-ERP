@@ -6,7 +6,6 @@ async function main() {
   if (count > 0) return;
 
   const customer = await prisma.customer.create({ data: { name: 'Walk-in Customer', phone: '0000000000' } });
-  await prisma.supplier.create({ data: { name: 'KJ Gold Suppliers', phone: '9999999999', gstin: '27ABCDE1234F1Z5' } });
   const products = [
     { sku: 'KJ-G-001', name: 'Classic Gold Chain', category: 'Chain', metal: MetalType.GOLD, purity: '22K', grossWeight: 12.450, netWeight: 12.450, quantity: 2, purchasePrice: 85000, sellingPrice: 91500, makingChargePerGram: 650, location: 'Gold Tray A' },
     { sku: 'KJ-G-002', name: 'Floral Gold Ring', category: 'Ring', metal: MetalType.GOLD, purity: '22K', grossWeight: 4.200, netWeight: 4.200, quantity: 4, purchasePrice: 29500, sellingPrice: 32400, makingChargePerGram: 750, location: 'Gold Tray B' },

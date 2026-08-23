@@ -294,6 +294,10 @@ document.querySelectorAll('.flash').forEach((el) => {
   const gstEl = form.querySelector('[data-gst]');
   const totalEl = form.querySelector('[data-total]');
   const paidInput = form.querySelector('[data-paid]');
+  const paymentMethodInput = form.querySelector('[data-payment-method]');
+  const splitPayment = form.querySelector('[data-split-payment]');
+  const cashPaidInput = form.querySelector('[data-cash-paid]');
+  const upiPaidInput = form.querySelector('[data-upi-paid]');
   const balanceEl = form.querySelector('[data-balance]');
   const saleDateInput = form.querySelector('[data-sale-date]');
   const urdEnabled = form.querySelector('[data-urd-enabled]');
@@ -498,7 +502,10 @@ document.querySelectorAll('.flash').forEach((el) => {
     const total = taxable + gst;
     const urdAdjustment = urdEnabled?.checked ? Math.max(0, n(urdAmount?.value)) : 0;
     const netPayable = Math.max(0, total - urdAdjustment);
-    const paid = n(paidInput ? paidInput.value : 0);
+    const paid = paymentMethodInput?.value === 'MIXED'
+      ? n(cashPaidInput?.value) + n(upiPaidInput?.value)
+      : n(paidInput ? paidInput.value : 0);
+    if (paymentMethodInput?.value === 'MIXED' && paidInput) paidInput.value = paid.toFixed(2);
     const balance = Math.max(0, netPayable - paid);
 
     if (subtotalEl) subtotalEl.textContent = fmt(subtotal);
@@ -516,6 +523,16 @@ document.querySelectorAll('.flash').forEach((el) => {
 
   if (discountInput) discountInput.addEventListener('input', updateFormTotals);
   if (paidInput) paidInput.addEventListener('input', updateFormTotals);
+  if (cashPaidInput) cashPaidInput.addEventListener('input', updateFormTotals);
+  if (upiPaidInput) upiPaidInput.addEventListener('input', updateFormTotals);
+  if (paymentMethodInput) paymentMethodInput.addEventListener('change', () => {
+    const mixed = paymentMethodInput.value === 'MIXED';
+    if (splitPayment) splitPayment.hidden = !mixed;
+    if (cashPaidInput) cashPaidInput.disabled = !mixed;
+    if (upiPaidInput) upiPaidInput.disabled = !mixed;
+    if (paidInput) paidInput.disabled = mixed;
+    updateFormTotals();
+  });
 
   function updateUrdRate() {
     if (!urdRate || !urdPurity) return;
@@ -573,7 +590,7 @@ document.querySelectorAll('.flash').forEach((el) => {
     const method = form?.querySelector('[data-payment-method]');
     if (!checkbox || !method) return;
     function update() {
-      const canSync = ['CASH', 'UPI', 'CARD', 'BANK_TRANSFER'].includes(method.value);
+      const canSync = ['CASH', 'UPI', 'CARD', 'BANK_TRANSFER', 'MIXED'].includes(method.value);
       control.hidden = !canSync;
       checkbox.disabled = !canSync;
       if (!canSync) checkbox.checked = false;

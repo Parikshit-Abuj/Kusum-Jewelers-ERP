@@ -15,7 +15,7 @@
     <td><span class="pill neutral"><%= product.makingChargeType.replace('_', ' ') %></span><small><%= product.makingChargeType === 'PERCENTAGE' ? `${product.makingChargeValue}%` : money(product.makingChargeValue) %></small></td>
     <td class="right"><strong><%= money(product.sellingPrice) %></strong><small>Cost: <%= money(product.purchasePrice) %></small></td>
     <td><%= product.location || '—' %></td>
-    <td class="actions"><a class="icon-button" title="Edit item" href="/inventory/<%= product.id %>/edit">✎</a><details class="inline-details"><summary title="Adjust stock">±</summary><form method="post" action="/inventory/<%= product.id %>/adjust"><label>Change (+/-)<input name="quantity" type="number" required></label><label>Reason<input name="note" placeholder="e.g. stock count"></label><button class="button small" type="submit">Save</button></form></details></td>
+    <td class="actions"><a class="icon-button" title="Edit item" href="/inventory/<%= product.id %>/edit">✎</a></td>
   </tr><% }) %>
   </tbody></table></div><% } else { %><div class="empty-state"><span>◇</span><h3>No jewellery items found</h3><p>Add stock to start billing and tracking inventory.</p><a class="button" href="/inventory/new">Add first item</a></div><% } %>
 </section>

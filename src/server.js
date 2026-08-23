@@ -20,7 +20,7 @@ const { resolveTscPrinter, cachedTscPrinterStatus } = require('./lib/windows-pri
 const { provisionShopDatabase, enableNetworkSharing, updatePrinterConfiguration, parseDatabaseConnection, isLocalHost } = require('./lib/shop-provisioning');
 const { buildExcelExport } = require('./lib/excel-export');
 const { RESOURCE_LIST, resourceFor, parseDateRange, getExportPayload, archiveData } = require('./lib/data-lifecycle');
-const { number, nullableNumber, asArray, dateInput, startOfToday, money, grams, invoiceNumber, barcodePrefix, metalRateFromDailyRate, makingAmount } = require('./lib/helpers');
+const { number, asArray, dateInput, startOfToday, dateTimeFromInput, money, grams, nextDocumentNumber, barcodePrefix, metalRateFromDailyRate, makingAmount } = require('./lib/helpers');
 
 let prisma = createPrisma();
 let databaseHealth = { checkedAt: 0, error: null };
@@ -55,19 +55,6 @@ app.use((req, res, next) => {
 function redirectWith(res, route, type, message) {
   const separator = route.includes('?') ? '&' : '?';
   res.redirect(`${route}${separator}${type}=${encodeURIComponent(message)}`);
-}
-
-function itemRows(body) {
-  const productIds = asArray(body.productId);
-  const quantities = asArray(body.quantity);
-  const prices = asArray(body.unitPrice);
-  const makingCharges = asArray(body.makingCharge);
-  return productIds.map((productId, index) => ({
-    productId: Number(productId),
-    quantity: Math.max(1, Math.floor(number(quantities[index], 1))),
-    unitPrice: number(prices[index]),
-    makingCharge: number(makingCharges[index])
-  })).filter((item) => item.productId > 0);
 }
 
 function labelRequests(body) {
@@ -113,8 +100,43 @@ async function nextBarcode(tx, metal, purity) {
 }
 
 function requestedCashbookSync(body) {
-  const paymentMethods = new Set(['CASH', 'UPI', 'CARD', 'BANK_TRANSFER']);
+  const paymentMethods = new Set(['CASH', 'UPI', 'CARD', 'BANK_TRANSFER', 'MIXED']);
   return body.syncCashbook === 'on' && paymentMethods.has(body.paymentMethod);
+}
+
+function salePaymentBreakdown(body) {
+  const selectedMethod = ['CASH', 'UPI', 'CARD', 'BANK_TRANSFER', 'CREDIT', 'MIXED'].includes(body.paymentMethod)
+    ? body.paymentMethod
+    : 'CASH';
+  if (selectedMethod !== 'MIXED') {
+    const paid = Math.max(0, number(body.paid));
+    return {
+      paid,
+      cashPaid: selectedMethod === 'CASH' ? paid : 0,
+      upiPaid: selectedMethod === 'UPI' ? paid : 0,
+      paymentMethod: selectedMethod,
+      cashbookPayments: paid > 0 ? [{ method: selectedMethod, amount: paid }] : []
+    };
+  }
+  const cashPaid = Math.max(0, number(body.cashPaid));
+  const upiPaid = Math.max(0, number(body.upiPaid));
+  return {
+    paid: cashPaid + upiPaid,
+    cashPaid,
+    upiPaid,
+    paymentMethod: cashPaid > 0 && upiPaid > 0 ? 'MIXED' : cashPaid > 0 ? 'CASH' : upiPaid > 0 ? 'UPI' : 'MIXED',
+    cashbookPayments: [
+      { method: 'CASH', amount: cashPaid },
+      { method: 'UPI', amount: upiPaid }
+    ].filter((payment) => payment.amount > 0)
+  };
+}
+
+function receiptMethodAmounts(paymentMethod, amount) {
+  const paymentData = {};
+  if (paymentMethod === 'CASH') paymentData.cashPaid = { increment: amount };
+  if (paymentMethod === 'UPI') paymentData.upiPaid = { increment: amount };
+  return paymentData;
 }
 
 function normalizePhone(value) {
@@ -394,11 +416,10 @@ app.get('/', async (req, res, next) => {
   try {
     const today = startOfToday();
     const todayKey = dateInput(today);
-    const [productCount, stockProducts, todaySales, activeRepairs, lowStock, recentSales, todayCashbook, customerDue] = await Promise.all([
+    const [productCount, stockProducts, todaySales, lowStock, recentSales, todayCashbook, customerDue] = await Promise.all([
       prisma.product.count({ where: { status: 'AVAILABLE' } }),
       prisma.product.findMany({ where: { quantity: { gt: 0 }, status: 'AVAILABLE' }, select: { quantity: true, netWeight: true } }),
       prisma.sale.aggregate({ where: { saleDate: { gte: today } }, _sum: { total: true, paid: true, balance: true, urdOffset: true }, _count: true }),
-      prisma.repair.count({ where: { status: { in: ['RECEIVED', 'IN_PROGRESS', 'READY'] } } }),
       prisma.product.findMany({ where: { quantity: { lte: 1 }, status: 'AVAILABLE' }, orderBy: { quantity: 'asc' }, take: 6 }),
       prisma.sale.findMany({ include: { customer: true }, orderBy: { saleDate: 'desc' }, take: 6 }),
       prisma.cashbookEntry.findMany({ where: { entryDate: todayKey }, select: { type: true, amount: true } }),
@@ -420,8 +441,7 @@ app.get('/', async (req, res, next) => {
         cashIn: cashFlow.in,
         cashOut: cashFlow.out,
         cashNet: cashFlow.in - cashFlow.out,
-        customerDue: Math.max(0, Number(customerDue._sum.amount || 0)),
-        activeRepairs
+        customerDue: Math.max(0, Number(customerDue._sum.amount || 0))
       },
       lowStock,
       recentSales
@@ -456,9 +476,10 @@ app.post('/rates', async (req, res, next) => {
 app.get('/inventory', async (req, res, next) => {
   try {
     const q = (req.query.q || '').trim();
-    const where = q ? { OR: [
+    const availableStock = { status: 'AVAILABLE', quantity: { gt: 0 } };
+    const where = q ? { AND: [availableStock, { OR: [
       { barcode: { contains: q } }, { sku: { contains: q } }, { name: { contains: q } }, { category: { contains: q } }
-    ] } : {};
+    ] }] } : availableStock;
     const products = await prisma.product.findMany({ where, orderBy: [{ status: 'asc' }, { updatedAt: 'desc' }] });
     const printerStatus = await resolveLabelPrinter(req.query.checkPrinter === '1');
     const printerTransport = configuredLabelPrinter();
@@ -599,7 +620,7 @@ app.get('/customers', async (req, res, next) => {
     ] } : {};
     const customers = await prisma.customer.findMany({
       where,
-      include: { _count: { select: { sales: true, repairs: true } }, ledger: { select: { amount: true } } },
+      include: { _count: { select: { sales: true } }, ledger: { select: { amount: true } } },
       orderBy: { name: 'asc' },
       take: 250
     });
@@ -629,8 +650,7 @@ app.get('/customers/:id', async (req, res, next) => {
       where: { id: Number(req.params.id) },
       include: {
         ledger: { include: { sale: true }, orderBy: { createdAt: 'desc' } },
-        sales: { orderBy: { saleDate: 'desc' }, take: 10 },
-        _count: { select: { repairs: true } }
+        sales: { orderBy: { saleDate: 'desc' }, take: 10 }
       }
     });
     const outstanding = customer.ledger.reduce((total, entry) => total + Number(entry.amount), 0);
@@ -660,7 +680,11 @@ app.post('/customers/:id/payments', async (req, res, next) => {
         const allocation = Math.min(remaining, Number(sale.balance));
         await tx.sale.update({
           where: { id: sale.id },
-          data: { paid: Number(sale.paid) + allocation, balance: Number(sale.balance) - allocation, paymentMethod: sale.paymentMethod === req.body.paymentMethod ? sale.paymentMethod : 'MIXED' }
+          data: {
+            paid: Number(sale.paid) + allocation, balance: Number(sale.balance) - allocation,
+            paymentMethod: sale.paymentMethod === req.body.paymentMethod ? sale.paymentMethod : 'MIXED',
+            ...receiptMethodAmounts(paymentMethod, allocation)
+          }
         });
         await tx.customerLedger.create({
           data: {
@@ -680,20 +704,6 @@ app.post('/customers/:id/payments', async (req, res, next) => {
     });
     redirectWith(res, `/customers/${customerId}`, 'message', 'Payment received and customer credit updated.');
   } catch (error) { redirectWith(res, `/customers/${req.params.id}`, 'error', error.message || 'Could not record payment.'); }
-});
-
-app.get('/suppliers', async (req, res, next) => {
-  try {
-    const suppliers = await prisma.supplier.findMany({ include: { _count: { select: { purchases: true } } }, orderBy: { createdAt: 'desc' } });
-    res.render('contacts/suppliers', { title: 'Suppliers', suppliers });
-  } catch (error) { next(error); }
-});
-
-app.post('/suppliers', async (req, res, next) => {
-  try {
-    await prisma.supplier.create({ data: { name: req.body.name.trim(), phone: req.body.phone || null, email: req.body.email || null, gstin: req.body.gstin || null, address: req.body.address || null } });
-    redirectWith(res, '/suppliers', 'message', 'Supplier added.');
-  } catch (error) { next(error); }
 });
 
 app.get('/sales', async (req, res, next) => {
@@ -759,8 +769,11 @@ app.get('/api/customers/phone/:phone', async (req, res, next) => {
 
 app.get('/sales/new', async (req, res, next) => {
   try {
-    const rateInfo = await getRateForDate(prisma);
-    res.render('sales/form', { title: 'New sale', invoiceNumber: invoiceNumber('INV'), rateInfo });
+    const [rateInfo, nextInvoiceNumber] = await Promise.all([
+      getRateForDate(prisma),
+      nextDocumentNumber(prisma, 'INV')
+    ]);
+    res.render('sales/form', { title: 'New sale', invoiceNumber: nextInvoiceNumber, rateInfo });
   } catch (error) { next(error); }
 });
 
@@ -769,8 +782,8 @@ app.post('/sales', async (req, res, next) => {
     const rows = saleRows(req.body);
     if (!rows.length) return redirectWith(res, '/sales/new', 'error', 'Enter at least one scanned barcode.');
     const discount = Math.max(0, number(req.body.discount));
-    const paid = Math.max(0, number(req.body.paid));
-    const saleDate = new Date(req.body.saleDate || Date.now());
+    const payment = salePaymentBreakdown(req.body);
+    const saleDate = dateTimeFromInput(req.body.saleDate);
     const includeUrdPurchase = req.body.includeUrdPurchase === 'on';
     const syncCashbook = requestedCashbookSync(req.body);
     const sale = await prisma.$transaction(async (tx) => {
@@ -817,14 +830,18 @@ app.post('/sales', async (req, res, next) => {
         if (urdAmount > total + 0.01) throw new Error('URD value is higher than this sale total. Record it as a separate URD purchase so the balance can be paid to the customer.');
       }
       const netPayable = Math.max(0, total - urdAmount);
-      const acceptedPaid = Math.min(paid, netPayable);
+      if (payment.paid > netPayable + 0.01) throw new Error(`Payment is greater than the net payable amount of ${money(netPayable)}.`);
+      const acceptedPaid = payment.paid;
       const balance = Math.max(0, netPayable - acceptedPaid);
       const sale = await tx.sale.create({ data: {
-        invoiceNumber: req.body.invoiceNumber || invoiceNumber('INV'), customerId, saleDate,
-        subtotal, discount: Math.min(discount, subtotal), gstRate, gstAmount, total, urdOffset: urdAmount, paid: acceptedPaid, balance,
-        paymentMethod: req.body.paymentMethod, notes: req.body.notes || null,
+        invoiceNumber: req.body.invoiceNumber || await nextDocumentNumber(tx, 'INV', saleDate), customerId, saleDate,
+        subtotal, discount: Math.min(discount, subtotal), gstRate, gstAmount, total, urdOffset: urdAmount, paid: acceptedPaid,
+        cashPaid: payment.cashPaid, upiPaid: payment.upiPaid, balance,
+        paymentMethod: payment.paymentMethod, notes: req.body.notes || null,
         items: { create: pricedRows.map((row) => ({
-          productId: row.productId, quantity: row.quantity, weight: row.weight, unitPrice: row.metalRate,
+          productId: row.productId, productBarcode: row.product.barcode, productSku: row.product.sku,
+          productName: row.product.name, productMetal: row.product.metal, productPurity: row.product.purity,
+          grossWeight: row.product.grossWeight, quantity: row.quantity, weight: row.weight, unitPrice: row.metalRate,
           metalRate: row.metalRate, metalAmount: row.metalAmount, makingCharge: row.makingCharge,
           makingChargeType: row.makingChargeType, makingChargeValue: row.makingChargeValue,
           taxableAmount: row.taxableAmount, lineTotal: row.taxableAmount
@@ -835,7 +852,7 @@ app.post('/sales', async (req, res, next) => {
       });
       if (includeUrdPurchase) {
         await tx.urdPurchase.create({ data: {
-          purchaseNumber: req.body.urdPurchaseNumber || invoiceNumber('URD'), customerId, purchaseDate: saleDate,
+          purchaseNumber: req.body.urdPurchaseNumber || await nextDocumentNumber(tx, 'URD', saleDate), customerId, purchaseDate: saleDate,
           metal: req.body.urdMetal || 'GOLD', purity: req.body.urdPurity || null,
           grossWeight: number(req.body.urdGrossWeight), netWeight: number(req.body.urdNetWeight),
           ratePerGram: number(req.body.urdRatePerGram), totalAmount: urdAmount, saleOffset: urdAmount,
@@ -844,17 +861,22 @@ app.post('/sales', async (req, res, next) => {
         } });
       }
       if (syncCashbook && acceptedPaid > 0) {
-        await tx.cashbookEntry.create({ data: {
-          entryDate: dateInput(saleDate), type: 'IN', paymentMethod: req.body.paymentMethod, amount: acceptedPaid,
-          description: `Sale payment — ${sale.invoiceNumber}`, reference: sale.invoiceNumber, customerId, syncLedger: Boolean(customerId),
-          notes: req.body.notes || null
-        } });
+        for (const recordedPayment of payment.cashbookPayments) {
+          await tx.cashbookEntry.create({ data: {
+            entryDate: dateInput(saleDate), type: 'IN', paymentMethod: recordedPayment.method, amount: recordedPayment.amount,
+            description: `Sale payment — ${sale.invoiceNumber}`, reference: sale.invoiceNumber, customerId, syncLedger: Boolean(customerId),
+            notes: req.body.notes || null
+          } });
+        }
       }
       for (const product of products) {
         const quantitySold = rows.filter((row) => row.productId === product.id).reduce((total, row) => total + row.quantity, 0);
         const remaining = product.quantity - quantitySold;
-        await tx.product.update({ where: { id: product.id }, data: { quantity: remaining, status: remaining ? 'AVAILABLE' : 'SOLD_OUT' } });
         await tx.stockMovement.create({ data: { productId: product.id, type: 'SALE', quantity: -quantitySold, note: `Sold via ${sale.invoiceNumber}` } });
+        // Sale-line snapshots preserve invoices and exports. A fully sold
+        // barcode can therefore be removed permanently from inventory.
+        if (remaining <= 0) await tx.product.delete({ where: { id: product.id } });
+        else await tx.product.update({ where: { id: product.id }, data: { quantity: remaining, status: 'AVAILABLE' } });
       }
       return sale;
     });
@@ -874,101 +896,6 @@ app.get('/sales/:id/invoice.pdf', async (req, res, next) => {
     const sale = await prisma.sale.findUnique({ where: { id: Number(req.params.id) }, include: { customer: true, items: { include: { product: true } } } });
     if (!sale) return res.status(404).render('not-found', { title: 'Invoice not found' });
     writeSaleInvoice(res, sale);
-  } catch (error) { next(error); }
-});
-
-app.get('/purchases', async (req, res, next) => {
-  try {
-    const purchases = await prisma.purchase.findMany({ include: { supplier: true, _count: { select: { items: true } } }, orderBy: { purchaseDate: 'desc' }, take: 100 });
-    res.render('purchases/index', { title: 'Purchases', purchases });
-  } catch (error) { next(error); }
-});
-
-app.get('/purchases/new', async (req, res, next) => {
-  try {
-    const [suppliers, products] = await Promise.all([prisma.supplier.findMany({ orderBy: { name: 'asc' } }), prisma.product.findMany({ orderBy: { name: 'asc' } })]);
-    res.render('purchases/form', { title: 'Record purchase', suppliers, products, purchaseNumber: invoiceNumber('PUR') });
-  } catch (error) { next(error); }
-});
-
-app.post('/purchases', async (req, res, next) => {
-  try {
-    const rows = itemRows(req.body);
-    if (!rows.length) return redirectWith(res, '/purchases/new', 'error', 'Add at least one inventory item.');
-    const discount = number(req.body.discount);
-    const paid = number(req.body.paid);
-    const syncCashbook = requestedCashbookSync(req.body);
-    await prisma.$transaction(async (tx) => {
-      const productIds = [...new Set(rows.map((row) => row.productId))];
-      const products = await tx.product.findMany({ where: { id: { in: productIds } } });
-      if (products.length !== productIds.length) throw new Error('One or more selected items no longer exist.');
-      const subtotal = rows.reduce((sum, row) => sum + row.unitPrice * row.quantity, 0);
-      const total = Math.max(0, subtotal - discount);
-      const purchase = await tx.purchase.create({ data: {
-        purchaseNumber: req.body.purchaseNumber || invoiceNumber('PUR'), supplierId: req.body.supplierId ? Number(req.body.supplierId) : null,
-        purchaseDate: new Date(req.body.purchaseDate || Date.now()), subtotal, discount, total, paid: Math.min(paid, total), paymentMethod: req.body.paymentMethod, notes: req.body.notes || null,
-        items: { create: rows.map((row) => ({ productId: row.productId, quantity: row.quantity, unitCost: row.unitPrice, lineTotal: row.unitPrice * row.quantity })) }
-      } });
-      for (const product of products) {
-        const productRows = rows.filter((row) => row.productId === product.id);
-        const quantityReceived = productRows.reduce((total, row) => total + row.quantity, 0);
-        const latestCost = productRows[productRows.length - 1].unitPrice;
-        await tx.product.update({ where: { id: product.id }, data: { quantity: product.quantity + quantityReceived, purchasePrice: latestCost, status: 'AVAILABLE' } });
-        await tx.stockMovement.create({ data: { productId: product.id, type: 'PURCHASE', quantity: quantityReceived, note: `Received via ${purchase.purchaseNumber}` } });
-      }
-      if (syncCashbook && Number(purchase.paid) > 0) {
-        await tx.cashbookEntry.create({ data: {
-          entryDate: dateInput(purchase.purchaseDate), type: 'OUT', paymentMethod: req.body.paymentMethod, amount: purchase.paid,
-          description: `Supplier purchase — ${purchase.purchaseNumber}`, reference: purchase.purchaseNumber, syncLedger: false,
-          notes: req.body.notes || null
-        } });
-      }
-    });
-    redirectWith(res, '/purchases', 'message', 'Purchase recorded and stock increased.');
-  } catch (error) { redirectWith(res, '/purchases/new', 'error', error.message || 'Could not save purchase.'); }
-});
-
-app.get('/repairs', async (req, res, next) => {
-  try {
-    const repairs = await prisma.repair.findMany({ include: { customer: true }, orderBy: [{ status: 'asc' }, { dueDate: 'asc' }] });
-    res.render('repairs/index', { title: 'Repairs & orders', repairs });
-  } catch (error) { next(error); }
-});
-
-app.get('/repairs/new', async (req, res, next) => {
-  try {
-    const customers = await prisma.customer.findMany({ orderBy: { name: 'asc' } });
-    res.render('repairs/form', { title: 'Receive repair', customers, repairNumber: invoiceNumber('REP') });
-  } catch (error) { next(error); }
-});
-
-app.post('/repairs', async (req, res, next) => {
-  try {
-    const syncCashbook = requestedCashbookSync(req.body);
-    await prisma.$transaction(async (tx) => {
-      const repair = await tx.repair.create({ data: {
-        repairNumber: req.body.repairNumber || invoiceNumber('REP'), customerId: Number(req.body.customerId), itemDescription: req.body.itemDescription.trim(),
-        metal: req.body.metal || null, grossWeight: nullableNumber(req.body.grossWeight), issueDescription: req.body.issueDescription || null,
-        estimatedCharge: number(req.body.estimatedCharge), advancePaid: number(req.body.advancePaid), advancePaymentMethod: req.body.paymentMethod || 'CASH', dueDate: req.body.dueDate ? new Date(req.body.dueDate) : null,
-        notes: req.body.notes || null
-      } });
-      if (syncCashbook && Number(repair.advancePaid) > 0) {
-        await tx.cashbookEntry.create({ data: {
-          entryDate: dateInput(), type: 'IN', paymentMethod: req.body.paymentMethod, amount: repair.advancePaid,
-          description: `Repair advance — ${repair.repairNumber}`, reference: repair.repairNumber, customerId: repair.customerId,
-          syncLedger: false, notes: req.body.notes || null
-        } });
-      }
-    });
-    redirectWith(res, '/repairs', 'message', 'Repair job received.');
-  } catch (error) { next(error); }
-});
-
-app.post('/repairs/:id/status', async (req, res, next) => {
-  try {
-    const status = req.body.status;
-    await prisma.repair.update({ where: { id: Number(req.params.id) }, data: { status, finalCharge: nullableNumber(req.body.finalCharge), deliveredAt: status === 'DELIVERED' ? new Date() : null } });
-    redirectWith(res, '/repairs', 'message', 'Repair status updated.');
   } catch (error) { next(error); }
 });
 
@@ -1040,7 +967,10 @@ app.post('/cashbook', async (req, res, next) => {
             const allocation = Math.min(remaining, Number(sale.balance));
             await tx.sale.update({
               where: { id: sale.id },
-              data: { paid: Number(sale.paid) + allocation, balance: Number(sale.balance) - allocation, paymentMethod: 'MIXED' }
+              data: {
+                paid: Number(sale.paid) + allocation, balance: Number(sale.balance) - allocation, paymentMethod: 'MIXED',
+                ...receiptMethodAmounts(paymentMethod, allocation)
+              }
             });
             await tx.customerLedger.create({
               data: {
@@ -1088,7 +1018,8 @@ app.get('/urd-purchases/new', async (req, res, next) => {
       prisma.customer.findMany({ orderBy: { name: 'asc' } }),
       getRateForDate(prisma, dateInput())
     ]);
-    res.render('urd-purchases/form', { title: 'New URD purchase', customers, rateInfo, purchaseNumber: invoiceNumber('URD'), purchase: null });
+    const purchaseNumber = await nextDocumentNumber(prisma, 'URD');
+    res.render('urd-purchases/form', { title: 'New URD purchase', customers, rateInfo, purchaseNumber, purchase: null });
   } catch (error) { next(error); }
 });
 
@@ -1098,12 +1029,13 @@ app.post('/urd-purchases', async (req, res, next) => {
     const paid = Math.min(Math.max(0, number(req.body.paid)), totalAmount);
     const paymentMethod = req.body.paymentMethod || 'CASH';
     const syncCashbook = requestedCashbookSync(req.body);
+    const purchaseDate = dateTimeFromInput(req.body.purchaseDate);
     const purchase = await prisma.$transaction(async (tx) => {
       const record = await tx.urdPurchase.create({
         data: {
-          purchaseNumber: req.body.purchaseNumber || invoiceNumber('URD'),
+          purchaseNumber: req.body.purchaseNumber || await nextDocumentNumber(tx, 'URD', purchaseDate),
           customerId: Number(req.body.customerId),
-          purchaseDate: req.body.purchaseDate ? new Date(req.body.purchaseDate) : new Date(),
+          purchaseDate,
           metal: req.body.metal || 'GOLD', purity: req.body.purity || null,
           grossWeight: number(req.body.grossWeight), netWeight: number(req.body.netWeight), ratePerGram: number(req.body.ratePerGram),
           totalAmount, paid, paymentMethod, description: req.body.description || null, notes: req.body.notes || null
@@ -1135,32 +1067,39 @@ app.get('/urd-purchases/:id/invoice.pdf', async (req, res, next) => {
 app.post('/urd-purchases/:id/delete', async (req, res, next) => {
   try {
     const purchase = await prisma.urdPurchase.findUniqueOrThrow({ where: { id: Number(req.params.id) } });
+    const outstanding = Math.max(0, Number(purchase.totalAmount) - Number(purchase.paid) - Number(purchase.saleOffset));
+    if (outstanding > 0.01) throw new Error(`This URD purchase has ${money(outstanding)} still payable to the customer and cannot be deleted.`);
     await prisma.urdPurchase.delete({ where: { id: purchase.id } });
     redirectWith(res, '/urd-purchases', 'message', 'Purchase deleted.');
-  } catch (error) { next(error); }
+  } catch (error) {
+    redirectWith(res, '/urd-purchases', 'error', error.message || 'Could not delete this URD purchase.');
+  }
 });
 
 app.get('/reports', async (req, res, next) => {
   try {
     const from = req.query.from ? new Date(req.query.from) : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
     const to = req.query.to ? new Date(`${req.query.to}T23:59:59`) : new Date();
-    const [sales, purchases, saleByMetal, stockProducts, receivables] = await Promise.all([
+    const [sales, saleByMetal, stockProducts, receivables] = await Promise.all([
       prisma.sale.aggregate({ where: { saleDate: { gte: from, lte: to } }, _sum: { subtotal: true, discount: true, gstAmount: true, total: true, paid: true, balance: true }, _count: true }),
-      prisma.purchase.aggregate({ where: { purchaseDate: { gte: from, lte: to } }, _sum: { total: true, paid: true }, _count: true }),
-      prisma.saleItem.groupBy({ by: ['productId'], _sum: { quantity: true, lineTotal: true }, orderBy: { _sum: { lineTotal: 'desc' } }, take: 5 }),
+      prisma.saleItem.groupBy({ by: ['productId', 'productName', 'productSku'], _sum: { quantity: true, lineTotal: true }, orderBy: { _sum: { lineTotal: 'desc' } }, take: 5 }),
       prisma.product.findMany({ select: { metal: true, quantity: true, netWeight: true } }),
       prisma.sale.aggregate({ _sum: { balance: true } })
     ]);
-    const topProductIds = saleByMetal.map((row) => row.productId);
+    const topProductIds = saleByMetal.map((row) => row.productId).filter((id) => Number.isInteger(id));
     const names = await prisma.product.findMany({ where: { id: { in: topProductIds } }, select: { id: true, sku: true, name: true } });
-    const topProducts = saleByMetal.map((row) => ({ ...row, product: names.find((p) => p.id === row.productId) }));
+    const topProducts = saleByMetal.map((row) => ({
+      ...row,
+      product: names.find((product) => product.id === row.productId)
+        || { name: row.productName || 'Jewellery item', sku: row.productSku || '' }
+    }));
     const stockByMetal = Object.values(stockProducts.reduce((summary, product) => {
       if (!summary[product.metal]) summary[product.metal] = { metal: product.metal, quantity: 0, netWeight: 0 };
       summary[product.metal].quantity += product.quantity;
       summary[product.metal].netWeight += Number(product.netWeight) * product.quantity;
       return summary;
     }, {})).sort((a, b) => a.metal.localeCompare(b.metal));
-    res.render('reports/index', { title: 'Reports', from, to, sales, purchases, stockByMetal, receivables: receivables._sum.balance || 0, topProducts });
+    res.render('reports/index', { title: 'Reports', from, to, sales, stockByMetal, receivables: receivables._sum.balance || 0, topProducts });
   } catch (error) { next(error); }
 });
 

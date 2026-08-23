@@ -73,6 +73,18 @@ columns.forEach((column, index) => {
 header.height = 24;
 
 if (rows.length) {
+  sheet.addTable({
+    name: 'ExportDataTable',
+    ref: `A${headerRow}`,
+    headerRow: true,
+    totalsRow: false,
+    style: { theme: 'TableStyleLight9', showRowStripes: true },
+    columns: columns.map((column) => ({ name: column.label })),
+    rows: rows.map((row) => columns.map((column) => cellValue(row[column.key], column.type)))
+  });
+  // Excel tables may infer all-digit strings as numbers. Reapply each value
+  // after the table exists so invoice numbers, mobile IDs and barcode-like
+  // values stay exact text instead of appearing in scientific notation.
   rows.forEach((row, rowIndex) => {
     const excelRow = sheet.getRow(dataStart + rowIndex);
     columns.forEach((column, index) => {
@@ -84,17 +96,8 @@ if (rows.length) {
         horizontal: ['currency', 'number', 'weight'].includes(column.type) ? 'right' : 'left'
       };
       const format = numberFormat(column.type);
-      if (format) cell.numFmt = format;
+      cell.numFmt = format || (column.type === 'text' ? '@' : 'General');
     });
-  });
-  sheet.addTable({
-    name: 'ExportDataTable',
-    ref: `A${headerRow}`,
-    headerRow: true,
-    totalsRow: false,
-    style: { theme: 'TableStyleLight9', showRowStripes: true },
-    columns: columns.map((column) => ({ name: column.label })),
-    rows: rows.map((row) => columns.map((column) => cellValue(row[column.key], column.type)))
   });
 } else {
   sheet.mergeCells(dataStart, 1, dataStart, lastColumn);

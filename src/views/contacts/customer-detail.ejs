@@ -5,7 +5,7 @@
 </header>
 <section class="customer-summary">
   <article class="stat-card accent-gold"><span class="stat-label">Current credit due</span><strong><%= money(outstanding) %></strong><p>Across <%= unpaidCount %> unpaid invoice<%= unpaidCount === 1 ? '' : 's' %></p></article>
-  <article class="stat-card"><span class="stat-label">Recent invoices</span><strong><%= customer.sales.length %></strong><p><%= customer._count.repairs %> repair job<%= customer._count.repairs === 1 ? '' : 's' %> on record</p></article>
+  <article class="stat-card"><span class="stat-label">Recent invoices</span><strong><%= customer.sales.length %></strong><p>Sales recorded for this customer</p></article>
 </section>
 <section class="content-grid customer-detail-grid">
   <article class="panel">

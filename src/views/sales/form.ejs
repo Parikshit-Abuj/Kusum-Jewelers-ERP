@@ -27,7 +27,7 @@
   <section class="panel transaction-main">
     <div class="form-grid three compact-fields">
       <label>Invoice no.
-        <input name="invoiceNumber" required value="<%= invoiceNumber %>">
+        <input name="invoiceNumber" required readonly value="<%= invoiceNumber %>">
       </label>
       <label>Bill date
         <input name="saleDate" type="date" value="<%= dateInput() %>" data-sale-date>
@@ -193,12 +193,21 @@
       </select>
     </label>
 
+    <div class="form-grid two compact-fields" data-split-payment hidden>
+      <label>Cash paid (₹)
+        <input name="cashPaid" type="number" min="0" step="0.01" value="0" data-cash-paid disabled>
+      </label>
+      <label>UPI paid (₹)
+        <input name="upiPaid" type="number" min="0" step="0.01" value="0" data-upi-paid disabled>
+      </label>
+    </div>
+
     <label class="cashbook-sync" data-cashbook-sync-control>
       <input type="checkbox" name="syncCashbook" checked>
       Add payment to Daily Cashbook
     </label>
 
-    <p class="credit-hint">If the customer pays partially, enter the amount paid. The remaining balance will be logged in their credit sheet automatically under their mobile-number customer ID.</p>
+    <p class="credit-hint">Choose <strong>Mixed</strong> to enter cash and UPI separately. The remaining balance will be logged in the customer’s credit sheet automatically.</p>
 
     <button class="button full large" type="submit">Generate bill →</button>
 

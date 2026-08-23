@@ -18,18 +18,14 @@ enum MetalType {
 enum ProductStatus {
   AVAILABLE
   SOLD_OUT
-  IN_REPAIR
   INACTIVE
 }
 
 enum MovementType {
   OPENING
-  PURCHASE
   SALE
   ADJUSTMENT_IN
   ADJUSTMENT_OUT
-  REPAIR_OUT
-  REPAIR_IN
 }
 
 enum PaymentMethod {
@@ -58,14 +54,6 @@ enum CashbookType {
   OUT
 }
 
-enum RepairStatus {
-  RECEIVED
-  IN_PROGRESS
-  READY
-  DELIVERED
-  CANCELLED
-}
-
 model Customer {
   id            Int              @id @default(autoincrement())
   name          String
@@ -75,22 +63,9 @@ model Customer {
   createdAt     DateTime         @default(now())
   updatedAt     DateTime         @updatedAt
   sales         Sale[]
-  repairs       Repair[]
   ledger        CustomerLedger[]
   urdPurchases  UrdPurchase[]
   cashbookEntries CashbookEntry[]
-}
-
-model Supplier {
-  id        Int      @id @default(autoincrement())
-  name      String
-  phone     String?
-  email     String?
-  address   String?  @db.Text
-  gstin     String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  purchases Purchase[]
 }
 
 model Product {
@@ -117,7 +92,6 @@ model Product {
   createdAt           DateTime      @default(now())
   updatedAt           DateTime      @updatedAt
   saleItems           SaleItem[]
-  purchaseItems       PurchaseItem[]
   movements           StockMovement[]
 }
 
@@ -133,34 +107,6 @@ model StockMovement {
   @@index([productId, createdAt])
 }
 
-model Purchase {
-  id            Int          @id @default(autoincrement())
-  purchaseNumber String      @unique
-  supplierId    Int?
-  purchaseDate  DateTime     @default(now())
-  subtotal      Decimal      @default(0) @db.Decimal(12, 2)
-  discount      Decimal      @default(0) @db.Decimal(12, 2)
-  total         Decimal      @default(0) @db.Decimal(12, 2)
-  paid          Decimal      @default(0) @db.Decimal(12, 2)
-  paymentMethod PaymentMethod @default(CASH)
-  notes         String?      @db.Text
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-  supplier      Supplier?    @relation(fields: [supplierId], references: [id], onDelete: SetNull)
-  items         PurchaseItem[]
-}
-
-model PurchaseItem {
-  id          Int      @id @default(autoincrement())
-  purchaseId  Int
-  productId   Int
-  quantity    Int
-  unitCost    Decimal  @db.Decimal(12, 2)
-  lineTotal   Decimal  @db.Decimal(12, 2)
-  purchase    Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
-  product     Product  @relation(fields: [productId], references: [id])
-}
-
 model Sale {
   id            Int           @id @default(autoincrement())
   invoiceNumber String        @unique
@@ -173,6 +119,8 @@ model Sale {
   total         Decimal       @default(0) @db.Decimal(12, 2)
   urdOffset     Decimal       @default(0) @db.Decimal(12, 2)
   paid          Decimal       @default(0) @db.Decimal(12, 2)
+  cashPaid      Decimal       @default(0) @db.Decimal(12, 2)
+  upiPaid       Decimal       @default(0) @db.Decimal(12, 2)
   balance       Decimal       @default(0) @db.Decimal(12, 2)
   paymentMethod PaymentMethod @default(CASH)
   notes         String?       @db.Text
@@ -189,7 +137,13 @@ model Sale {
 model SaleItem {
   id          Int     @id @default(autoincrement())
   saleId      Int
-  productId   Int
+  productId   Int?
+  productBarcode String?
+  productSku  String  @default("")
+  productName String  @default("")
+  productMetal MetalType?
+  productPurity String?
+  grossWeight Decimal @default(0) @db.Decimal(12, 3)
   quantity    Int
   weight      Decimal @default(0) @db.Decimal(12, 3)
   unitPrice   Decimal @db.Decimal(12, 2)
@@ -201,7 +155,7 @@ model SaleItem {
   taxableAmount Decimal @default(0) @db.Decimal(12, 2)
   lineTotal   Decimal @db.Decimal(12, 2)
   sale        Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
-  product     Product @relation(fields: [productId], references: [id])
+  product     Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
 }
 
 model DailyRate {
@@ -236,30 +190,6 @@ model CustomerLedger {
 
   @@index([customerId, createdAt])
   @@index([saleId])
-}
-
-model Repair {
-  id                Int          @id @default(autoincrement())
-  repairNumber      String       @unique
-  customerId        Int
-  itemDescription   String       @db.Text
-  metal             MetalType?
-  grossWeight       Decimal?     @db.Decimal(12, 3)
-  issueDescription  String?      @db.Text
-  estimatedCharge   Decimal      @default(0) @db.Decimal(12, 2)
-  finalCharge       Decimal?     @db.Decimal(12, 2)
-  advancePaid       Decimal      @default(0) @db.Decimal(12, 2)
-  advancePaymentMethod PaymentMethod @default(CASH)
-  dueDate           DateTime?
-  status            RepairStatus @default(RECEIVED)
-  receivedAt        DateTime     @default(now())
-  deliveredAt       DateTime?
-  notes             String?      @db.Text
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
-  customer          Customer     @relation(fields: [customerId], references: [id], onDelete: Restrict)
-
-  @@index([status, dueDate])
 }
 
 model CashbookEntry {
@@ -304,4 +234,10 @@ model UrdPurchase {
 
   @@index([purchaseDate])
   @@index([customerId])
+}
+
+model DocumentSequence {
+  key        String   @id @db.VarChar(32)
+  lastNumber Int      @default(0)
+  updatedAt  DateTime @updatedAt
 }

@@ -1,4 +1,14 @@
-const crypto = require('crypto');
+// The ERP is used in India. Keeping dates in this business timezone prevents
+// a date-only form value from becoming the previous calendar day in invoices.
+const SHOP_TIME_ZONE = 'Asia/Kolkata';
+
+function shopDateParts(value = new Date()) {
+  return Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: SHOP_TIME_ZONE,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
+  }).formatToParts(new Date(value)).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+}
 
 function number(value, fallback = 0) {
   const parsed = Number(value);
@@ -16,15 +26,19 @@ function asArray(value) {
 }
 
 function dateInput(value = new Date()) {
-  const date = new Date(value);
-  const offset = date.getTimezoneOffset();
-  return new Date(date.getTime() - offset * 60000).toISOString().slice(0, 10);
+  const parts = shopDateParts(value);
+  return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
 function startOfToday() {
-  const date = new Date();
-  date.setHours(0, 0, 0, 0);
-  return date;
+  return new Date(`${dateInput()}T00:00:00+05:30`);
+}
+
+function dateTimeFromInput(value) {
+  const input = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input)) return new Date(value || Date.now());
+  const now = shopDateParts();
+  return new Date(`${input}T${now.hour}:${now.minute}:${now.second}+05:30`);
 }
 
 function money(value) {
@@ -37,14 +51,25 @@ function grams(value) {
   return `${Number(value || 0).toFixed(3)} g`;
 }
 
-function invoiceNumber(prefix) {
-  const today = dateInput().replaceAll('-', '');
-  // Every desktop client can create documents against the same MySQL database.
-  // A timestamp plus a cryptographically random suffix keeps concurrent document
-  // numbers distinct without relying on a per-PC counter.
-  const token = Date.now().toString(36).toUpperCase();
-  const suffix = crypto.randomBytes(4).toString('hex').toUpperCase();
-  return `${prefix}-${today}-${token}-${suffix}`;
+async function nextDocumentNumber(db, prefix, value = new Date()) {
+  const day = dateInput(value).replaceAll('-', '');
+  const key = `${prefix}-${day}`;
+  // MySQL atomically advances this shared counter, so every LAN client receives
+  // a short, sequential number without duplicate invoice numbers. The lookup
+  // also skips a matching number that may already exist from older ERP data.
+  for (;;) {
+    const sequence = await db.documentSequence.upsert({
+      where: { key },
+      create: { key, lastNumber: 1 },
+      update: { lastNumber: { increment: 1 } }
+    });
+    const serial = String(sequence.lastNumber).padStart(4, '0');
+    const candidate = prefix === 'INV' ? `${day}${serial}` : `${prefix}-${day}-${serial}`;
+    const existing = prefix === 'INV'
+      ? await db.sale.findUnique({ where: { invoiceNumber: candidate }, select: { id: true } })
+      : await db.urdPurchase.findUnique({ where: { purchaseNumber: candidate }, select: { id: true } });
+    if (!existing) return candidate;
+  }
 }
 
 function barcodePrefix(metal, purity) {
@@ -71,4 +96,4 @@ function makingAmount(type, value, metalAmount, weight, quantity = 1) {
   return charge * number(weight) * quantity;
 }
 
-module.exports = { number, nullableNumber, asArray, dateInput, startOfToday, money, grams, invoiceNumber, barcodePrefix, metalRateFromDailyRate, makingAmount };
+module.exports = { number, nullableNumber, asArray, dateInput, startOfToday, dateTimeFromInput, money, grams, nextDocumentNumber, barcodePrefix, metalRateFromDailyRate, makingAmount };

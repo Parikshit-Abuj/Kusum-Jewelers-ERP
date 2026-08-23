@@ -2,7 +2,7 @@ const PDFDocument = require('pdfkit');
 
 // The shop uses pre-printed A4 sheets. Keep the letterhead area clear and
 // print the ruled invoice body in the same structure as the supplied invoice.
-const page = { left: 19, right: 572, titleY: 96, infoY: 124, bodyBottom: 510, bottom: 800 };
+const page = { left: 19, right: 572, infoY: 124, bodyBottom: 510, bottom: 800 };
 
 function amount(value) {
   return new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2, minimumFractionDigits: 2 }).format(Number(value || 0));
@@ -73,17 +73,17 @@ function labelValue(doc, label, value, labelX, valueX, y, valueWidth, fontSize =
 
 function formattedDateTime(value) {
   const date = new Date(value);
-  const dateText = date.toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
-  const timeText = date.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+  const options = { timeZone: 'Asia/Kolkata' };
+  const dateText = date.toLocaleDateString('en-IN', { ...options, day: '2-digit', month: '2-digit', year: 'numeric' });
+  const timeText = date.toLocaleTimeString('en-IN', { ...options, hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
   return `${dateText}  ${timeText}`;
 }
 
 function invoiceHeader(doc, sale, continuation = false) {
   const title = continuation ? 'TAX INVOICE - CONTINUED' : 'TAX INVOICE';
-  doc.fillColor('#111').font('Helvetica-Bold').fontSize(17).text(title, page.left, page.titleY, {
-    width: page.right - page.left,
-    align: 'center'
-  });
+  // The shop's pre-printed sheet already carries the visual header. Keep this
+  // as the small form label directly above the customer information block.
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(8.8).text(title, 105, page.infoY - 15, { width: 190 });
 
   const y = page.infoY;
   const height = 75;
@@ -127,7 +127,10 @@ function amountInWords(value) {
 }
 
 function drawItem(doc, item, y) {
-  const product = item.product || {};
+  const product = item.product || {
+    name: item.productName, barcode: item.productBarcode, sku: item.productSku,
+    metal: item.productMetal, purity: item.productPurity, grossWeight: item.grossWeight, netWeight: item.weight
+  };
   const textY = y + 8;
   // Older bills stored the final line total in unitPrice/lineTotal while the
   // newer weight/rate/taxable fields were zero. Prefer the new fields, then
@@ -204,10 +207,20 @@ function footerTotals(doc, sale, y) {
   doc.font('Helvetica-Bold').fontSize(8.4).text('Narration :', 27, y + 38);
   doc.font('Helvetica').fontSize(8.2).text(sale.notes || '', 85, y + 38, { width: totalX - 99, height: 17, ellipsis: true });
   line(doc, page.left, y + 60, totalX, y + 60, 0.45);
-  const paymentLabel = String(sale.paymentMethod || 'CASH').replaceAll('_', ' ');
-  doc.font('Helvetica-Bold').fontSize(8.7).text(`By ${paymentLabel}`, 50, y + 70, { width: 155 });
-  doc.text(amount(sale.paid), 50, y + 84, { width: 155 });
-  if (Number(sale.balance || 0) > 0) doc.font('Helvetica').fontSize(8.2).text(`Balance Due: ${amount(sale.balance)}`, 50, y + 103, { width: 210 });
+  const cashPaid = Number(sale.cashPaid || 0);
+  const upiPaid = Number(sale.upiPaid || 0);
+  if (cashPaid > 0 || upiPaid > 0) {
+    doc.font('Helvetica-Bold').fontSize(8.2).text('By CASH', 50, y + 68, { width: 155 });
+    doc.text(amount(cashPaid), 50, y + 81, { width: 155 });
+    doc.text('By UPI', 50, y + 95, { width: 155 });
+    doc.text(amount(upiPaid), 50, y + 108, { width: 155 });
+    if (Number(sale.balance || 0) > 0) doc.font('Helvetica').fontSize(7.8).text(`Balance Due: ${amount(sale.balance)}`, 50, y + 123, { width: 210 });
+  } else {
+    const paymentLabel = String(sale.paymentMethod || 'CASH').replaceAll('_', ' ');
+    doc.font('Helvetica-Bold').fontSize(8.7).text(`By ${paymentLabel}`, 50, y + 70, { width: 155 });
+    doc.text(amount(sale.paid), 50, y + 84, { width: 155 });
+    if (Number(sale.balance || 0) > 0) doc.font('Helvetica').fontSize(8.2).text(`Balance Due: ${amount(sale.balance)}`, 50, y + 103, { width: 210 });
+  }
 
   rows.forEach(([label, value], index) => {
     const rowY = y + 7 + index * 16;
