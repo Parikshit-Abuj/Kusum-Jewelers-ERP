@@ -34,7 +34,10 @@ if (-not (Test-Path -LiteralPath $electronZip)) {
 }
 
 New-Item -ItemType Directory -Path $outputPath -Force | Out-Null
-& node $packager $projectRoot 'Kusum ERP' --platform=win32 --arch=x64 --out=$outputPath --overwrite --prune=true --asar=false --electron-zip-dir=$electronZipDirectory --ignore='^/(\.env|output|outputs|tmp|work|\.npm-cache)(/|$)' --ignore='^/src/excel-runtime/node_modules(/|$)'
+# Package only the desktop ERP.  Android Studio, Gradle and pnpm caches may
+# live beside the source project on a development PC, but are never required
+# by the shop application and can otherwise add more than a gigabyte.
+& node $packager $projectRoot 'Kusum ERP' --platform=win32 --arch=x64 --out=$outputPath --overwrite --prune=true --asar=false --electron-zip-dir=$electronZipDirectory --ignore='^/(\.env|output|outputs|tmp|work|\.npm-cache|\.pnpm-store|\.kusumapp-gradle|\.android-kusumapp|kusum-erp-mobile-apk|analytics\.settings)(/|$)' --ignore='^/src/excel-runtime/node_modules(/|$)'
 if ($LASTEXITCODE -ne 0) { throw 'Could not package the Electron desktop ERP.' }
 
 $applicationDirectory = Join-Path $outputPath 'Kusum ERP-win32-x64'
