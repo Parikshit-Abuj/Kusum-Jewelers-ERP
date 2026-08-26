@@ -1,15 +1,71 @@
 <header class="page-header">
-  <div><p class="eyebrow">Data lifecycle</p><h1>Export &amp; archive data</h1><p class="muted">Download a date-selected Excel backup before permanently removing old records.</p></div>
+  <div>
+    <p class="eyebrow">Data management</p>
+    <h1>Database &amp; Data lifecycle</h1>
+    <p class="muted">Backup, restore, and date-wise data exports.</p>
+  </div>
 </header>
 
-<div class="archive-notice"><strong>Keep your shop fast without breaking records.</strong><span>Exports are safe downloads. Permanent deletion is restricted to records that do not damage current stock, customer dues or URD settlements.</span></div>
+<!-- ── Full Database SQL Backup & Restore ────────────────────── -->
+<section class="panel sql-backup-panel" style="margin-bottom: 20px;">
+  <div class="panel-heading">
+    <div>
+      <h2>Database Backup &amp; Restore (.sql)</h2>
+      <p>Download or import full database .sql backups.</p>
+    </div>
+  </div>
+
+  <div class="content-grid two-thirds" style="gap: 16px;">
+    <!-- Download SQL Backup -->
+    <article class="sql-box" style="padding: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px;">
+      <h3 style="margin-top: 0; font-size: 14px;">Download SQL Backup</h3>
+      <p style="font-size: 12px; color: var(--muted); margin: 6px 0 14px;">
+        Download a complete .sql backup of all shop data and tables.
+      </p>
+      <a class="button" href="/data/backup-sql">
+        <span>⇩</span> Download .sql Backup
+      </a>
+    </article>
+
+    <!-- Restore SQL Backup -->
+    <article class="sql-box" style="padding: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px;">
+      <h3 style="margin-top: 0; font-size: 14px;">Restore .sql Backup</h3>
+      <form method="post" action="/data/restore-sql" enctype="multipart/form-data" onsubmit="return confirm('Restore database from this backup file? Existing tables will be updated.');">
+        <label style="display: block; font-size: 12px; font-weight: bold; margin-bottom: 6px;">
+          Select .sql file
+          <input type="file" name="sqlFile" accept=".sql,text/plain,application/sql" required style="margin-top: 4px; padding: 6px; font-size: 12px; width: 100%;">
+        </label>
+        <label class="archive-check" style="margin: 8px 0; font-size: 12px;">
+          <input name="restoreAcknowledged" type="checkbox" required>
+          Confirm database restore
+        </label>
+        <button class="button secondary" type="submit" style="margin-top: 4px;">
+          <span>⟳</span> Upload &amp; Restore
+        </button>
+      </form>
+    </article>
+  </div>
+</section>
 
 <section class="content-grid archive-layout">
   <article class="panel archive-export">
-    <div class="panel-heading"><div><h2>1. Download Excel backup</h2><p>Select a register and date range. The `.xlsx` file is generated directly from ERP data.</p></div></div>
+    <div class="panel-heading">
+      <div>
+        <h2>Excel (.xlsx) exports</h2>
+        <p>Select a register and date range to download report.</p>
+      </div>
+    </div>
     <form method="post" action="/data/export">
       <div class="form-grid three">
-        <label>Data register<select name="resource" data-resource-select><% resources.forEach((item) => { %><option value="<%= item.key %>" data-archive-disabled="<%= item.archiveDisabled ? 'true' : 'false' %>" <%= selectedResource === item.key ? 'selected' : '' %>><%= item.label %></option><% }) %></select></label>
+        <label>Data register
+          <select name="resource" data-resource-select>
+            <% resources.forEach((item) => { %>
+            <option value="<%= item.key %>" data-archive-disabled="<%= item.archiveDisabled ? 'true' : 'false' %>" <%= selectedResource === item.key ? 'selected' : '' %>>
+              <%= item.label %>
+            </option>
+            <% }) %>
+          </select>
+        </label>
         <label>From date<input name="from" type="date" required value="<%= range.from %>"></label>
         <label>To date<input name="to" type="date" required value="<%= range.to %>"></label>
       </div>
@@ -18,14 +74,22 @@
   </article>
 
   <aside class="panel archive-delete">
-    <h2>2. Permanently delete old data</h2>
-    <p class="muted">This cannot be undone. Export the same date range first and keep that Excel file safely.</p>
+    <h2>Archive old data</h2>
+    <p class="muted">Permanently delete records in selected range.</p>
     <form method="post" action="/data/archive" data-archive-form>
-      <label>Data register<select name="resource" data-resource-select><% resources.forEach((item) => { %><option value="<%= item.key %>" data-archive-disabled="<%= item.archiveDisabled ? 'true' : 'false' %>" <%= selectedResource === item.key ? 'selected' : '' %>><%= item.label %></option><% }) %></select></label>
+      <label>Data register
+        <select name="resource" data-resource-select>
+          <% resources.forEach((item) => { %>
+          <option value="<%= item.key %>" data-archive-disabled="<%= item.archiveDisabled ? 'true' : 'false' %>" data-archive-note="<%= item.archiveNote %>" <%= selectedResource === item.key ? 'selected' : '' %>>
+            <%= item.label %>
+          </option>
+          <% }) %>
+        </select>
+      </label>
       <label>From date<input name="from" type="date" required value="<%= range.from %>"></label>
       <label>To date<input name="to" type="date" required value="<%= range.to %>"></label>
       <p class="archive-rule" data-archive-note><%= resource.archiveNote %></p>
-      <label class="archive-check"><input name="archiveAcknowledged" type="checkbox"> I downloaded the backup and understand this is permanent.</label>
+      <label class="archive-check"><input name="archiveAcknowledged" type="checkbox"> I downloaded a backup and want to proceed.</label>
       <label>Type <strong>DELETE</strong> to confirm<input name="archiveConfirm" autocomplete="off" placeholder="DELETE"></label>
       <button class="button danger full" type="submit" data-archive-submit <%= resource.archiveDisabled ? 'disabled' : '' %>>Permanently delete selected data</button>
     </form>
@@ -33,8 +97,21 @@
 </section>
 
 <section class="panel archive-register-guide">
-  <div class="panel-heading"><div><h2>What can be archived safely?</h2><p>Every register is available for date-filtered Excel export.</p></div></div>
-  <div class="archive-resource-grid"><% resources.forEach((item) => { %><article><strong><%= item.label %></strong><span class="pill <%= item.archiveDisabled ? 'warning' : 'neutral' %>"><%= item.archiveDisabled ? 'Export only' : 'Can archive safely' %></span><p><%= item.archiveNote %></p></article><% }) %></div>
+  <div class="panel-heading">
+    <div>
+      <h2>Register details</h2>
+      <p>Status and archive rules for each data register.</p>
+    </div>
+  </div>
+  <div class="archive-resource-grid">
+    <% resources.forEach((item) => { %>
+    <article>
+      <strong><%= item.label %></strong>
+      <span class="pill <%= item.archiveDisabled ? 'warning' : 'neutral' %>"><%= item.archiveDisabled ? 'Export only' : 'Can archive' %></span>
+      <p><%= item.archiveNote %></p>
+    </article>
+    <% }) %>
+  </div>
 </section>
 
 <script>
@@ -44,12 +121,12 @@
   const select = archiveForm.querySelector('[data-resource-select]');
   const submit = archiveForm.querySelector('[data-archive-submit]');
   const note = archiveForm.querySelector('[data-archive-note]');
-  const notes = <%- JSON.stringify(Object.fromEntries(resources.map((item) => [item.key, item.archiveNote]))) %>;
   function update() {
     const option = select.options[select.selectedIndex];
+    if (!option) return;
     const disabled = option.dataset.archiveDisabled === 'true';
-    submit.disabled = disabled;
-    note.textContent = notes[select.value] || '';
+    if (submit) submit.disabled = disabled;
+    if (note) note.textContent = option.dataset.archiveNote || '';
   }
   select.addEventListener('change', update);
   update();

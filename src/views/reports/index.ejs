@@ -1,4 +1,193 @@
-<header class="page-header"><div><p class="eyebrow">Business overview</p><h1>Reports</h1><p class="muted">A practical view of sales, receivables and stock by metal.</p></div></header>
-<section class="panel report-filter"><form method="get"><label>From<input name="from" type="date" value="<%= dateInput(from) %>"></label><label>To<input name="to" type="date" value="<%= dateInput(to) %>"></label><button class="button secondary" type="submit">Apply dates</button></form></section>
-<section class="stats-grid report-stats"><article class="stat-card accent-gold"><span class="stat-label">Sales in period</span><strong><%= money(sales._sum.total) %></strong><p><%= sales._count %> invoice<%= sales._count === 1 ? '' : 's' %> · GST <%= money(sales._sum.gstAmount) %></p></article><article class="stat-card"><span class="stat-label">Amount collected</span><strong><%= money(sales._sum.paid) %></strong><p>Payments recorded against sales</p></article><article class="stat-card"><span class="stat-label">Outstanding receivables</span><strong><%= money(receivables) %></strong><p>Balance across all invoices</p></article></section>
-<section class="content-grid reports-grid"><article class="panel"><div class="panel-heading"><div><h2>Top selling items</h2><p>Ranked by billed amount in selected period.</p></div></div><% if (topProducts.length) { %><div class="table-wrap"><table><thead><tr><th>Item</th><th class="right">Units</th><th class="right">Billed</th></tr></thead><tbody><% topProducts.forEach((row) => { %><tr><td><strong><%= row.product?.name || 'Deleted product' %></strong><small><%= row.product?.sku || '' %></small></td><td class="right"><%= row._sum.quantity %></td><td class="right"><strong><%= money(row._sum.lineTotal) %></strong></td></tr><% }) %></tbody></table></div><% } else { %><div class="empty-state compact"><span>▤</span><h3>No sales for this period</h3><p>Try another date range once invoices are recorded.</p></div><% } %></article><article class="panel"><div class="panel-heading"><div><h2>Inventory by metal</h2><p>Pieces and total net weight in current stock.</p></div></div><% if (stockByMetal.length) { %><ul class="metal-report"><% stockByMetal.forEach((row) => { %><li><div><span class="metal-dot <%= row.metal.toLowerCase() %>"></span><strong><%= row.metal %></strong></div><div class="right"><strong><%= row.quantity || 0 %> pieces</strong><small><%= grams(row.netWeight || 0) %> net</small></div></li><% }) %></ul><% } else { %><div class="empty-state compact"><span>◇</span><h3>No inventory yet</h3><p>Stock summaries will appear here.</p></div><% } %></article></section>
+<header class="page-header">
+  <div>
+    <p class="eyebrow">Business overview</p>
+    <h1>Reports</h1>
+    <p class="muted">A practical view of sales, receivables, and item-wise stock weights.</p>
+  </div>
+</header>
+
+<section class="panel report-filter">
+  <form method="get">
+    <label>From<input name="from" type="date" value="<%= dateInput(from) %>"></label>
+    <label>To<input name="to" type="date" value="<%= dateInput(to) %>"></label>
+    <button class="button secondary" type="submit">Apply dates</button>
+  </form>
+</section>
+
+<section class="stats-grid report-stats">
+  <article class="stat-card accent-gold">
+    <span class="stat-label">Sales in period</span>
+    <strong><%= money(sales._sum.total) %></strong>
+    <p><%= sales._count %> invoice<%= sales._count === 1 ? '' : 's' %> · GST <%= money(sales._sum.gstAmount) %></p>
+  </article>
+  <article class="stat-card">
+    <span class="stat-label">Amount collected</span>
+    <strong><%= money(sales._sum.paid) %></strong>
+    <p>Payments recorded against sales</p>
+  </article>
+  <article class="stat-card">
+    <span class="stat-label">Outstanding receivables</span>
+    <strong><%= money(receivables) %></strong>
+    <p>Balance across all invoices</p>
+  </article>
+</section>
+
+<section class="content-grid reports-grid">
+  <article class="panel">
+    <div class="panel-heading">
+      <div>
+        <h2>Top selling items</h2>
+        <p>Top Gold and Silver items by billed amount in selected period.</p>
+      </div>
+    </div>
+    <% if (topProducts.length) { %>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Metal</th>
+            <th>Item</th>
+            <th class="right">Units</th>
+            <th class="right">Billed</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% topProducts.forEach((row) => { %>
+          <tr>
+            <td>
+              <span class="metal-dot <%= row.metal.toLowerCase() %>"></span>
+              <strong><%= row.metal %></strong>
+            </td>
+            <td>
+              <strong><%= row.name %></strong>
+              <small><%= row.sku %><%= row.purity ? ` · ${row.purity}` : '' %></small>
+            </td>
+            <td class="right"><%= row.quantity %></td>
+            <td class="right"><strong><%= money(row.billed) %></strong></td>
+          </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+    <% } else { %>
+    <div class="empty-state compact">
+      <span>▤</span>
+      <h3>No sales for this period</h3>
+      <p>Try another date range once invoices are recorded.</p>
+    </div>
+    <% } %>
+  </article>
+
+  <article class="panel">
+    <div class="panel-heading">
+      <div>
+        <h2>Inventory by metal</h2>
+        <p>Pieces and total net weight in current stock.</p>
+      </div>
+    </div>
+    <% if (stockByMetal.length) { %>
+    <ul class="metal-report">
+      <% stockByMetal.forEach((row) => { %>
+      <li>
+        <div>
+          <span class="metal-dot <%= row.metal.toLowerCase() %>"></span>
+          <strong><%= row.metal %></strong>
+        </div>
+        <div class="right">
+          <strong><%= row.quantity || 0 %> pieces</strong>
+          <small><%= grams(row.netWeight || 0) %> net (<%= grams(row.grossWeight || 0) %> gross)</small>
+        </div>
+      </li>
+      <% }) %>
+    </ul>
+    <% } else { %>
+    <div class="empty-state compact">
+      <span>◇</span>
+      <h3>No inventory yet</h3>
+      <p>Stock summaries will appear here.</p>
+    </div>
+    <% } %>
+  </article>
+</section>
+
+<!-- Item-wise weight report section with live search -->
+<section class="panel" style="margin-top: 18px;" data-report-item-section>
+  <div class="panel-heading">
+    <div>
+      <h2>Item-wise stock &amp; weight report</h2>
+      <p>Detailed gross and net weight for every piece in stock.</p>
+    </div>
+    <div class="report-item-search-box">
+      <input type="text" id="reportItemSearchInput" placeholder="Search by name, category, metal, barcode or SKU…" autocomplete="off">
+    </div>
+  </div>
+
+  <% if (itemWiseStock && itemWiseStock.length) { %>
+    <div class="table-wrap">
+      <table class="report-items-table" id="reportItemsTable">
+        <thead>
+          <tr>
+            <th>Barcode / SKU</th>
+            <th>Item name</th>
+            <th>Category</th>
+            <th>Metal / Purity</th>
+            <th class="right">Stock (pcs)</th>
+            <th class="right">Net wt / pc</th>
+            <th class="right">Gross wt / pc</th>
+            <th class="right">Total net wt</th>
+            <th class="right">Total gross wt</th>
+            <th>Location</th>
+          </tr>
+        </thead>
+        <tbody id="reportItemsTbody">
+          <% itemWiseStock.forEach((item) => { %>
+          <tr data-item-row data-search="<%= `${item.name} ${item.category} ${item.metal} ${item.purity} ${item.barcode} ${item.sku} ${item.location}`.toLowerCase() %>"
+              data-pieces="<%= item.quantity %>"
+              data-net-total="<%= item.totalNetWeight %>"
+              data-gross-total="<%= item.totalGrossWeight %>">
+            <td>
+              <strong class="barcode-label"><%= item.barcode %></strong>
+              <small><%= item.sku %></small>
+            </td>
+            <td><strong><%= item.name %></strong></td>
+            <td><%= item.category %></td>
+            <td>
+              <span class="metal-dot <%= item.metal.toLowerCase() %>"></span>
+              <%= item.metal %> <small><%= item.purity %></small>
+            </td>
+            <td class="right"><strong><%= item.quantity %></strong></td>
+            <td class="right"><%= grams(item.netWeight) %></td>
+            <td class="right"><%= grams(item.grossWeight) %></td>
+            <td class="right"><strong><%= grams(item.totalNetWeight) %></strong></td>
+            <td class="right"><%= grams(item.totalGrossWeight) %></td>
+            <td><%= item.location %></td>
+          </tr>
+          <% }) %>
+        </tbody>
+        <tfoot>
+          <tr class="report-table-total-row">
+            <td colspan="4">
+              <strong>Total (<span id="reportVisibleCount"><%= itemWiseStock.length %></span> items)</strong>
+            </td>
+            <td class="right"><strong id="reportTotalPieces"><%= itemWiseStock.reduce((sum, item) => sum + item.quantity, 0) %></strong></td>
+            <td colspan="2"></td>
+            <td class="right"><strong id="reportTotalNet"><%= grams(itemWiseStock.reduce((sum, item) => sum + item.totalNetWeight, 0)) %></strong></td>
+            <td class="right"><strong id="reportTotalGross"><%= grams(itemWiseStock.reduce((sum, item) => sum + item.totalGrossWeight, 0)) %></strong></td>
+            <td></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    <div class="empty-state compact" id="reportNoMatches" style="display: none;">
+      <span>🔍</span>
+      <h3>No items match your search</h3>
+      <p>Try searching for a different item name, category or metal.</p>
+    </div>
+  <% } else { %>
+    <div class="empty-state compact">
+      <span>◇</span>
+      <h3>No stock items available</h3>
+      <p>Add items to inventory to see the item-wise weight report.</p>
+    </div>
+  <% } %>
+</section>

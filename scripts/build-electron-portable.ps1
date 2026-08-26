@@ -34,11 +34,11 @@ if (-not (Test-Path -LiteralPath $electronZip)) {
 }
 
 New-Item -ItemType Directory -Path $outputPath -Force | Out-Null
-& node $packager $projectRoot 'Kusum Jewelers ERP' --platform=win32 --arch=x64 --out=$outputPath --overwrite --prune=true --asar=false --electron-zip-dir=$electronZipDirectory --ignore='^/(\.env|output|outputs|tmp|work|\.npm-cache)(/|$)' --ignore='^/src/excel-runtime/node_modules(/|$)'
+& node $packager $projectRoot 'Kusum ERP' --platform=win32 --arch=x64 --out=$outputPath --overwrite --prune=true --asar=false --electron-zip-dir=$electronZipDirectory --ignore='^/(\.env|output|outputs|tmp|work|\.npm-cache)(/|$)' --ignore='^/src/excel-runtime/node_modules(/|$)'
 if ($LASTEXITCODE -ne 0) { throw 'Could not package the Electron desktop ERP.' }
 
-$applicationDirectory = Join-Path $outputPath 'Kusum Jewelers ERP-win32-x64'
-$desktopExe = Join-Path $applicationDirectory 'Kusum Jewelers ERP.exe'
+$applicationDirectory = Join-Path $outputPath 'Kusum ERP-win32-x64'
+$desktopExe = Join-Path $applicationDirectory 'Kusum ERP.exe'
 if (-not (Test-Path -LiteralPath $desktopExe)) { throw 'The portable ERP executable was not created.' }
 
 # Electron Packager prunes development packages. Preserve the generated Prisma
@@ -62,12 +62,12 @@ $copiedEnv = Join-Path $applicationDirectory 'resources\app\.env'
 if (Test-Path -LiteralPath $copiedEnv) { Remove-Item -LiteralPath $copiedEnv -Force }
 
 $instructions = @'
-Kusum Jewelers ERP - Portable desktop package
+Kusum ERP - Portable desktop package
 
 Single-PC setup
-1. Copy this entire "Kusum Jewelers ERP-win32-x64" folder to the shop PC. Do not copy only the EXE; it needs the files beside it.
+1. Copy this entire "Kusum ERP-win32-x64" folder to the shop PC. Do not copy only the EXE; it needs the files beside it.
 2. Install and start MySQL Server on that PC, then install the TSC TTP-244 Pro Windows driver.
-3. Double-click "Kusum Jewelers ERP.exe" and select "Main database PC" at first setup.
+3. Double-click "Kusum ERP.exe" and select "Main database PC" at first setup.
 
 Shared main-PC / client-PC setup
 1. Install MySQL Server only on the main database PC. On first ERP start there, choose "Main database PC", use localhost and the selected MySQL port, then choose and note the shared ERP database username and password.
@@ -79,7 +79,7 @@ Shared main-PC / client-PC setup
 
 The ERP creates or upgrades the kusum_erp database. The MySQL administrator password is used only during main-PC setup and is never saved. Existing shop data is never deleted.
 
-To update an existing shop installation: first close the ERP, then replace the entire old application folder with the new "Kusum Jewelers ERP-win32-x64" folder. Do not delete the local kusum_erp MySQL database or the ERP settings in %LOCALAPPDATA%\Kusum Jewelers ERP; this preserves all shop data and setup.
+To update an existing shop installation: first close the ERP, then replace the entire old application folder with the new "Kusum ERP-win32-x64" folder. Do not delete the local kusum_erp MySQL database or the ERP settings in %LOCALAPPDATA%\Kusum Jewelers ERP; this preserves all shop data and setup.
 
 No development database, credentials, or test records are included in this package. Internet and Node.js are not required on the shop PC.
 '@

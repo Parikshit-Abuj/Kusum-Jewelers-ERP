@@ -73,6 +73,7 @@ strong { font-weight: 700; }
 }
 
 nav { display: grid; gap: 4px; }
+nav a.nav-sub { padding-left: 30px; font-size: 12px; }
 nav a { display: flex; align-items: center; gap: 12px; padding: 10px 11px; border-radius: 8px; color: #c9c2bb; font-size: 13px; font-weight: 600; transition: .13s; }
 nav a span { width: 18px; color: #bca980; text-align: center; font-size: 17px; }
 nav a:hover, nav a.active { background: #37332f; color: #fff; }
@@ -107,11 +108,12 @@ nav a.active { box-shadow: inset 3px 0 0 #dfa437; }
 .button.full { width: 100%; }
 
 /* ── Dashboard stat cards ─────────────────────────────────── */
-.stats-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 18px; }
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 18px; }
 .stat-card, .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
 .stat-card { min-height: 130px; padding: 20px; border-top: 3px solid transparent; transition: .18s; }
 .stat-card:hover { box-shadow: var(--shadow-lg); transform: translateY(-2px); }
 .stat-card.accent-gold { border-top-color: #d6a13d; background: linear-gradient(145deg, #fffdf9, #fff8eb); }
+.stat-card.accent-silver { border-top-color: #a8b0b8; background: linear-gradient(145deg, #fafbfc, #f0f2f5); }
 .stat-label { display: block; color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
 .stat-card strong { display: block; margin-top: 14px; font-size: 25px; line-height: 1; letter-spacing: -.04em; }
 .stat-card strong small { display: inline; font-size: 13px; color: #5e5750; }
@@ -406,6 +408,15 @@ input:focus, select:focus, textarea:focus { border-color: #c08a32; box-shadow: 0
 .invoice-sig { margin-top: 40px; display: flex; justify-content: flex-end; }
 .invoice-sig div { text-align: center; width: 160px; padding-top: 40px; border-top: 1px solid var(--ink); font-size: 11px; color: var(--muted); }
 
+/* ── Sales filter ─────────────────────────────────────────── */
+.sales-filter { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; padding: 0 0 16px; border-bottom: 1px solid var(--line); margin-bottom: 0; }
+.sales-filter form { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; width: 100%; }
+.sales-filter label { font-size: 11px; font-weight: 700; color: #554e47; flex: 1; min-width: 150px; display: flex; flex-direction: column; gap: 4px; }
+.sales-filter input { padding: 7px 8px; font-size: 12px; }
+.sales-filter-actions { display: flex; gap: 6px; align-items: center; padding-top: 14px; }
+.filter-result-count { padding: 10px 0 0; font-size: 12px; color: var(--muted); }
+@media (max-width: 700px) { .sales-filter label { min-width: 100%; } }
+
 /* ── Reports ──────────────────────────────────────────────── */
 .report-filter { margin-bottom: 18px; padding: 13px 20px; }
 .report-filter form { display: flex; align-items: end; gap: 10px; }
@@ -592,3 +603,65 @@ input:focus, select:focus, textarea:focus { border-color: #c08a32; box-shadow: 0
 .archive-resource-grid p { margin: 9px 0 0; color: #756f69; font-size: 12px; line-height: 1.4; }
 @media (max-width: 1000px) { .archive-layout { grid-template-columns: 1fr; } .archive-resource-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 600px) { .archive-notice { display: block; } .archive-notice strong { display: block; margin-bottom: 5px; } .archive-resource-grid { grid-template-columns: 1fr; } }
+
+/* ── Autocomplete dropdown ────────────────────────────────── */
+.autocomplete-wrap { position: relative; }
+.autocomplete-list {
+  display: none; position: absolute; left: 0; top: 100%; z-index: 20;
+  width: 100%; max-height: 220px; overflow-y: auto;
+  margin: 2px 0 0; padding: 4px 0; list-style: none;
+  background: #fff; border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(29,22,14,.15);
+}
+.autocomplete-list.open { display: block; }
+.autocomplete-list li {
+  padding: 8px 12px; cursor: pointer; font-size: 13px; transition: background .1s;
+}
+.autocomplete-list li:hover, .autocomplete-list li.highlighted {
+  background: #f5f0e9;
+}
+.autocomplete-list li small { display: block; font-size: 11px; color: var(--muted); margin-top: 1px; }
+.autocomplete-list .autocomplete-new { color: var(--gold-dark); font-weight: 700; font-style: italic; }
+
+/* ── Item Names management ────────────────────────────────── */
+.item-names-add { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; padding: 0 0 16px; border-bottom: 1px solid var(--line); margin-bottom: 0; }
+.item-names-add label { font-size: 11px; font-weight: 700; color: #554e47; flex: 1; min-width: 160px; display: flex; flex-direction: column; gap: 4px; }
+.item-names-add input { padding: 7px 8px; font-size: 12px; }
+.item-names-add .button { margin-top: 14px; }
+.item-name-row { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid #eeeae5; }
+.item-name-row:last-child { border-bottom: 0; }
+.item-name-row input { padding: 5px 8px; font-size: 12px; flex: 1; min-width: 120px; }
+.item-name-row .button { padding: 5px 10px; font-size: 11px; }
+@media (max-width: 600px) { .item-names-add label { min-width: 100%; } }
+
+/* ── Reports Item-wise weight search & table ───────────────── */
+.report-item-search-box input {
+  min-width: 320px;
+  padding: 7px 12px;
+  font-size: 13px;
+  border-radius: 6px;
+}
+@media (max-width: 700px) { .report-item-search-box input { min-width: 100%; } }
+.report-items-table tfoot td {
+  border-top: 2px solid var(--ink);
+  padding: 10px 8px;
+  background: #fbf9f6;
+}
+.mixed-cashbook-sync {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 10px 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #f8faf8;
+  border: 1px dashed #bee3d0;
+}
+.mixed-cashbook-sync[hidden],
+.mixed-cashbook-sync[style*="display: none"],
+.mixed-cashbook-sync[style*="display:none"] {
+  display: none !important;
+}
+.mixed-cashbook-sync .cashbook-sync {
+  margin: 4px 0;
+}

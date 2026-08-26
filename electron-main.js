@@ -102,14 +102,14 @@ async function openErpWindow() {
       height: 920,
       minWidth: 1040,
       minHeight: 720,
-      title: 'Kusum Jewelers ERP',
+      title: 'Kusum ERP',
       webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: false }
     });
     await erpWindow.loadURL(`http://127.0.0.1:${localPort}`);
   } catch (error) {
     writeStartupLog(error);
     dialog.showErrorBox(
-      'Kusum Jewelers ERP could not start',
+      'Kusum ERP could not start',
       `${error.message}\n\nCheck that no other program is using port 3000, then run the ERP again.`
     );
     app.quit();

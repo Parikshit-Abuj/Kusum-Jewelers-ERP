@@ -46,7 +46,7 @@ function description(value) {
 
 function exportEnvelope(resource, range, columns, rows) {
   return {
-    title: `Kusum Jewelers ERP - ${resource.label}`,
+    title: `Kusum ERP - ${resource.label}`,
     subtitle: `${resource.dateLabel}: ${range.from} to ${range.to} | ${rows.length} exported row${rows.length === 1 ? '' : 's'}`,
     columns,
     rows,
@@ -89,9 +89,53 @@ async function getExportPayload(db, key, range) {
       return exportEnvelope(resource, range, [common.date('entryDate', 'Entry date'), common.text('type', 'Type', 10), common.text('paymentMethod', 'Payment method', 16), common.text('description', 'Description', 32), common.currency('amount', 'Amount'), common.text('reference', 'Reference', 18), common.text('customerPhone', 'Customer phone', 16), common.text('customerName', 'Customer'), common.text('syncLedger', 'Ledger synced', 14), common.text('notes', 'Notes', 30)], rows);
     }
     case 'inventory': {
-      const products = await db.product.findMany({ where: { createdAt: dateTimeRange(range) }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
-      const rows = products.map((product) => ({ createdAt: product.createdAt, barcode: product.barcode || '', sku: product.sku, itemName: product.name, category: product.category, metal: product.metal, purity: product.purity || '', grossWeight: amount(product.grossWeight), stoneWeight: amount(product.stoneWeight), netWeight: amount(product.netWeight), quantity: product.quantity, purchasePrice: amount(product.purchasePrice), sellingPrice: amount(product.sellingPrice), status: product.status, location: product.location || '', notes: description(product.notes) }));
-      return exportEnvelope(resource, range, [common.date('createdAt', 'Created date'), common.text('barcode', 'Barcode', 16), common.text('sku', 'SKU', 16), common.text('itemName', 'Item'), common.text('category', 'Category'), common.text('metal', 'Metal', 12), common.text('purity', 'Purity', 10), common.weight('grossWeight', 'Gross wt. (g)'), common.weight('stoneWeight', 'Stone wt. (g)'), common.weight('netWeight', 'Net wt. (g)'), common.number('quantity', 'Stock qty'), common.currency('purchasePrice', 'Purchase price'), common.currency('sellingPrice', 'Selling price'), common.text('status', 'Status', 14), common.text('location', 'Location'), common.text('notes', 'Notes', 30)], rows);
+      const products = await db.product.findMany({ where: { createdAt: dateTimeRange(range) } });
+      // Group and sort item-wise below their respective metals (GOLD, SILVER, PLATINUM, DIAMOND, OTHER)
+      const metalPriority = { GOLD: 1, SILVER: 2, PLATINUM: 3, DIAMOND: 4, OTHER: 5 };
+      const sortedProducts = [...products].sort((a, b) => {
+        const pA = metalPriority[a.metal] || 99;
+        const pB = metalPriority[b.metal] || 99;
+        if (pA !== pB) return pA - pB;
+        const nameCmp = (a.name || '').localeCompare(b.name || '');
+        if (nameCmp !== 0) return nameCmp;
+        return (a.category || '').localeCompare(b.category || '');
+      });
+      const rows = sortedProducts.map((product) => ({
+        metal: product.metal,
+        itemName: product.name,
+        category: product.category,
+        purity: product.purity || '',
+        barcode: product.barcode || '',
+        sku: product.sku,
+        grossWeight: amount(product.grossWeight),
+        stoneWeight: amount(product.stoneWeight),
+        netWeight: amount(product.netWeight),
+        quantity: product.quantity,
+        purchasePrice: amount(product.purchasePrice),
+        sellingPrice: amount(product.sellingPrice),
+        status: product.status,
+        location: product.location || '',
+        createdAt: product.createdAt,
+        notes: description(product.notes)
+      }));
+      return exportEnvelope(resource, range, [
+        common.text('metal', 'Metal', 12),
+        common.text('itemName', 'Item name', 24),
+        common.text('category', 'Category', 18),
+        common.text('purity', 'Purity', 10),
+        common.text('barcode', 'Barcode', 16),
+        common.text('sku', 'SKU', 16),
+        common.weight('grossWeight', 'Gross wt. (g)'),
+        common.weight('stoneWeight', 'Stone wt. (g)'),
+        common.weight('netWeight', 'Net wt. (g)'),
+        common.number('quantity', 'Stock qty'),
+        common.currency('purchasePrice', 'Purchase price'),
+        common.currency('sellingPrice', 'Selling price'),
+        common.text('status', 'Status', 14),
+        common.text('location', 'Location', 16),
+        common.date('createdAt', 'Created date'),
+        common.text('notes', 'Notes', 30)
+      ], rows);
     }
     case 'stock-movements': {
       const movements = await db.stockMovement.findMany({ where: { createdAt: dateTimeRange(range) }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], include: { product: true } });

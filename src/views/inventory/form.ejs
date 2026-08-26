@@ -47,10 +47,13 @@
         <input name="sku" placeholder="Defaults to barcode if left blank" value="<%= product?.sku || '' %>">
       </label>
       <label>Item name *
-        <input name="name" required placeholder="e.g. Gold bridal necklace" value="<%= product?.name || '' %>">
+        <div class="autocomplete-wrap">
+          <input name="name" required placeholder="e.g. Gold bridal necklace" value="<%= product?.name || '' %>" data-item-name-input autocomplete="off">
+          <ul class="autocomplete-list" data-item-name-list></ul>
+        </div>
       </label>
       <label>Category *
-        <input name="category" required placeholder="Ring, Chain, Bangle, Pendant…" value="<%= product?.category || '' %>">
+        <input name="category" required placeholder="Ring, Chain, Bangle, Pendant…" value="<%= product?.category || '' %>" data-item-category-input>
       </label>
     </div>
   </section>
@@ -121,15 +124,7 @@
   <!-- Section 4: Stock & logistics -->
   <section class="form-section">
     <h2>Stock &amp; details</h2>
-    <div class="form-grid four">
-      <% if (!product) { %>
-      <label>Opening quantity *
-        <input name="quantity" type="number" min="0" required value="1">
-      </label>
-      <% } %>
-      <label>Reorder level
-        <input name="reorderLevel" type="number" min="0" value="<%= product?.reorderLevel ?? 1 %>">
-      </label>
+    <div class="form-grid <%= product ? 'three' : 'two' %>">
       <label>Purchase cost (₹)
         <input name="purchasePrice" type="number" step="0.01" min="0" value="<%= product?.purchasePrice || 0 %>">
       </label>

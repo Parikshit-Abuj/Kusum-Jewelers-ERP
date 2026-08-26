@@ -7,7 +7,8 @@
   <div class="header-actions"><a class="button ghost" href="/data-management?resource=urd">Export / archive</a><a class="button" href="/urd-purchases/new">+ New purchase</a></div>
 </header>
 
-<% if (purchases.length) { %>
+<% const purchaseList = typeof purchases !== 'undefined' && Array.isArray(purchases) ? purchases : []; %>
+<% if (purchaseList.length) { %>
 <div class="table-wrap">
   <table>
     <thead>
@@ -25,7 +26,7 @@
       </tr>
     </thead>
     <tbody>
-      <% purchases.forEach(p => { %>
+      <% purchaseList.forEach(p => { %>
       <tr>
         <td><strong><%= p.purchaseNumber %></strong></td>
         <td><%= p.purchaseDate.toLocaleDateString('en-IN', { dateStyle: 'medium' }) %></td>

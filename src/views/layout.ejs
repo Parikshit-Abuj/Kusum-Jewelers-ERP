@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title><%= title %> · Kusum Jewelers ERP</title>
+    <title><%= title %> · Kusum ERP</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
@@ -11,11 +11,12 @@
       <aside class="sidebar">
         <a class="brand" href="/">
           <span class="brand-mark">KJ</span>
-          <span>Kusum Jewelers<small>Lightweight ERP</small></span>
+          <span>Kusum ERP<small>Jewelry Management</small></span>
         </a>
         <nav>
           <a class="<%= currentPath === '/' ? 'active' : '' %>" href="/"><span>▦</span> Dashboard</a>
           <a class="<%= currentPath.startsWith('/inventory') ? 'active' : '' %>" href="/inventory"><span>◇</span> Inventory</a>
+          <a class="nav-sub <%= currentPath.startsWith('/item-names') ? 'active' : '' %>" href="/item-names"><span>⊞</span> Item Names</a>
           <a class="<%= currentPath.startsWith('/rates') ? 'active' : '' %>" href="/rates"><span>⌁</span> Daily rates</a>
           <a class="<%= currentPath.startsWith('/sales') ? 'active' : '' %>" href="/sales"><span>₹</span> Sales</a>
           <a class="<%= currentPath.startsWith('/urd') ? 'active' : '' %>" href="/urd-purchases"><span>⇣</span> URD Purchase</a>

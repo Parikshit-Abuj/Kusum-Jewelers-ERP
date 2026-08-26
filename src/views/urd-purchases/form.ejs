@@ -7,7 +7,7 @@
 <% } %>
 <form class="panel form-panel" method="post" action="/urd-purchases" data-urd-form>
   <section class="form-section"><h2>Purchase details</h2><div class="form-grid four">
-    <label>URD No.<input name="purchaseNumber" required readonly value="<%= purchaseNumber %>"></label>
+    <label>URD No.<input name="purchaseNumber" required readonly value="<%= typeof purchaseNumber !== 'undefined' ? purchaseNumber : '' %>"></label>
     <label>Date *<input name="purchaseDate" type="date" required value="<%= dateInput() %>"></label>
     <label>Customer *<select name="customerId" required><option value="">Select customer</option><% customers.forEach(c => { %><option value="<%= c.id %>"><%= c.name %><%= c.phone ? ` · ${c.phone}` : '' %></option><% }); %></select></label>
     <label>Metal *<select name="metal" data-urd-metal><option value="GOLD" selected>Gold</option><option value="SILVER">Silver</option><option value="PLATINUM">Platinum</option><option value="OTHER">Other</option></select></label>

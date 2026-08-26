@@ -1,14 +1,30 @@
 <header class="page-header">
-  <div><p class="eyebrow">Kusum Jewelers</p><h1>Good day — here’s your shop at a glance.</h1><p class="muted">Live inventory, sales and customer credit in one place.</p></div>
+  <div><p class="eyebrow">Kusum ERP</p><h1>Good day — here's your shop at a glance.</h1><p class="muted">Live inventory, sales and customer credit in one place.</p></div>
   <div class="header-actions"><a class="button" href="/sales/new">+ New sale</a></div>
 </header>
 
 <section class="stats-grid">
-  <article class="stat-card accent-gold"><span class="stat-label">Available inventory</span><strong><%= stats.stockPieces %> <small>pieces</small></strong><p><%= grams(stats.stockWeight) %> net weight · <a href="/inventory">View stock</a></p></article>
+  <article class="stat-card accent-gold"><span class="stat-label">Gold stock</span><strong><%= grams(stats.goldWeight) %></strong><p><%= stats.goldPieces %> piece<%= stats.goldPieces === 1 ? '' : 's' %> · <a href="/inventory">View stock</a></p></article>
+  <article class="stat-card accent-silver"><span class="stat-label">Silver stock</span><strong><%= grams(stats.silverWeight) %></strong><p><%= stats.silverPieces %> piece<%= stats.silverPieces === 1 ? '' : 's' %> · <a href="/inventory">View stock</a></p></article>
   <article class="stat-card"><span class="stat-label">Today's billed sales</span><strong><%= money(stats.sales) %></strong><p><%= stats.invoices %> invoice<%= stats.invoices === 1 ? '' : 's' %> today</p></article>
   <article class="stat-card"><span class="stat-label">Today's synced money flow</span><strong style="color:<%= stats.cashNet >= 0 ? '#1f7651' : '#b53d36' %>"><%= money(stats.cashNet) %></strong><p>In <%= money(stats.cashIn) %> · Out <%= money(stats.cashOut) %></p></article>
   <article class="stat-card"><span class="stat-label">Customer credit pending</span><strong><%= money(stats.customerDue) %></strong><p><a href="/customers">View customer sheets</a></p></article>
+  <% if (stats.otherPieces > 0) { %>
+  <article class="stat-card"><span class="stat-label">Other metals</span><strong><%= grams(stats.otherWeight) %></strong><p><%= stats.otherPieces %> piece<%= stats.otherPieces === 1 ? '' : 's' %></p></article>
+  <% } %>
 </section>
+
+<!-- Item-wise weight breakdown -->
+<% if (itemWeightBreakdown.length) { %>
+<section class="panel">
+  <div class="panel-heading"><div><h2>Stock weight breakdown</h2><p>Item-wise net weight across available inventory.</p></div></div>
+  <div class="table-wrap"><table><thead><tr><th>Item name</th><th>Category</th><th>Metal</th><th class="right">Pieces</th><th class="right">Total net weight</th></tr></thead><tbody>
+    <% itemWeightBreakdown.forEach((item) => { %>
+    <tr><td><strong><%= item.name %></strong></td><td><%= item.category %></td><td><span class="metal-dot <%= item.metal.toLowerCase() %>"></span><%= item.metal %></td><td class="right"><%= item.pieces %></td><td class="right"><strong><%= grams(item.weight) %></strong></td></tr>
+    <% }) %>
+  </tbody></table></div>
+</section>
+<% } %>
 
 <section class="content-grid two-thirds">
   <article class="panel">

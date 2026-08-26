@@ -7,21 +7,28 @@
   <a class="button ghost" href="/data-management?resource=cashbook">Export / archive</a>
 </header>
 
+<%
+  const fDate = typeof fromDate !== 'undefined' ? fromDate : dateInput();
+  const tDate = typeof toDate !== 'undefined' ? toDate : dateInput();
+  const mFilter = typeof methodFilter !== 'undefined' ? methodFilter : '';
+  const s = typeof summary !== 'undefined' && summary ? summary : { totalIn: 0, cashIn: 0, upiIn: 0, bankIn: 0, totalOut: 0, cashOut: 0, upiOut: 0, bankOut: 0, netBalance: 0 };
+%>
+
 <!-- Summary cards -->
 <div class="cashbook-summary">
   <article class="stat-card accent-gold">
     <span class="stat-label">Total in</span>
-    <strong style="color:#1f7651"><%- money(summary.totalIn) %></strong>
-    <p>Cash <%- money(summary.cashIn) %> &nbsp;·&nbsp; UPI <%- money(summary.upiIn) %> &nbsp;·&nbsp; Bank <%- money(summary.bankIn) %></p>
+    <strong style="color:#1f7651"><%- money(s.totalIn) %></strong>
+    <p>Cash <%- money(s.cashIn) %> &nbsp;·&nbsp; UPI <%- money(s.upiIn) %> &nbsp;·&nbsp; Bank <%- money(s.bankIn) %></p>
   </article>
   <article class="stat-card">
     <span class="stat-label">Total out</span>
-    <strong style="color:#b53d36"><%- money(summary.totalOut) %></strong>
-    <p>Cash <%- money(summary.cashOut) %> &nbsp;·&nbsp; UPI <%- money(summary.upiOut) %> &nbsp;·&nbsp; Bank <%- money(summary.bankOut) %></p>
+    <strong style="color:#b53d36"><%- money(s.totalOut) %></strong>
+    <p>Cash <%- money(s.cashOut) %> &nbsp;·&nbsp; UPI <%- money(s.upiOut) %> &nbsp;·&nbsp; Bank <%- money(s.bankOut) %></p>
   </article>
-  <article class="stat-card <%= summary.netBalance >= 0 ? 'accent-gold' : '' %>">
+  <article class="stat-card <%= s.netBalance >= 0 ? 'accent-gold' : '' %>">
     <span class="stat-label">Net balance</span>
-    <strong style="color:<%= summary.netBalance >= 0 ? '#1f7651' : '#b53d36' %>"><%- money(summary.netBalance) %></strong>
+    <strong style="color:<%= s.netBalance >= 0 ? '#1f7651' : '#b53d36' %>"><%- money(s.netBalance) %></strong>
     <p>For the selected period</p>
   </article>
 </div>
@@ -33,16 +40,16 @@
     <!-- Date filter -->
     <form class="cashbook-filter" method="get">
       <label>From
-        <input type="date" name="from" value="<%= fromDate %>">
+        <input type="date" name="from" value="<%= fDate %>">
       </label>
       <label>To
-        <input type="date" name="to" value="<%= toDate %>">
+        <input type="date" name="to" value="<%= tDate %>">
       </label>
       <label>Method
         <select name="method">
           <option value="">All methods</option>
           <% ['CASH','UPI','CARD','BANK_TRANSFER'].forEach(m => { %>
-          <option value="<%= m %>" <%= methodFilter === m ? 'selected' : '' %>><%= m.replace('_', ' ') %></option>
+          <option value="<%= m %>" <%= mFilter === m ? 'selected' : '' %>><%= m.replace('_', ' ') %></option>
           <% }); %>
         </select>
       </label>

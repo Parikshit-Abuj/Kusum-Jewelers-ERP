@@ -241,3 +241,10 @@ model DocumentSequence {
   lastNumber Int      @default(0)
   updatedAt  DateTime @updatedAt
 }
+
+model ItemName {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique @db.VarChar(255)
+  category  String   @db.VarChar(100)
+  createdAt DateTime @default(now())
+}

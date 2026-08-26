@@ -27,7 +27,7 @@
   <section class="panel transaction-main">
     <div class="form-grid three compact-fields">
       <label>Invoice no.
-        <input name="invoiceNumber" required readonly value="<%= invoiceNumber %>">
+        <input name="invoiceNumber" required readonly value="<%= typeof invoiceNumber !== 'undefined' ? invoiceNumber : '' %>">
       </label>
       <label>Bill date
         <input name="saleDate" type="date" value="<%= dateInput() %>" data-sale-date>
@@ -187,7 +187,7 @@
 
     <label class="summary-input">Payment method
       <select name="paymentMethod" data-payment-method>
-        <% ['CASH','UPI','CARD','BANK_TRANSFER','CREDIT','MIXED'].forEach((method) => { %>
+        <% ['CASH','UPI','CARD','BANK_TRANSFER','MIXED'].forEach((method) => { %>
         <option value="<%= method %>"><%= method.replace('_', ' ') %></option>
         <% }) %>
       </select>
@@ -202,12 +202,27 @@
       </label>
     </div>
 
-    <label class="cashbook-sync" data-cashbook-sync-control>
-      <input type="checkbox" name="syncCashbook" checked>
-      Add payment to Daily Cashbook
-    </label>
+    <!-- Single payment sync -->
+    <div data-single-cashbook-sync>
+      <label class="cashbook-sync" data-cashbook-sync-control>
+        <input type="checkbox" name="syncCashbook" checked>
+        Add payment to Daily Cashbook
+      </label>
+    </div>
 
-    <p class="credit-hint">Choose <strong>Mixed</strong> to enter cash and UPI separately. The remaining balance will be logged in the customer’s credit sheet automatically.</p>
+    <!-- Mixed payment separate sync options (only visible when MIXED is selected) -->
+    <div class="mixed-cashbook-sync" data-mixed-cashbook-sync style="display: none;">
+      <label class="cashbook-sync">
+        <input type="checkbox" name="syncCashCashbook" checked data-sync-cash>
+        Add Cash portion to Daily Cashbook
+      </label>
+      <label class="cashbook-sync">
+        <input type="checkbox" name="syncUpiCashbook" checked data-sync-upi>
+        Add UPI portion to Daily Cashbook
+      </label>
+    </div>
+
+    <p class="credit-hint">Choose <strong>Mixed</strong> to enter cash and UPI separately. Any remaining balance is automatically tracked in customer ledger.</p>
 
     <button class="button full large" type="submit">Generate bill →</button>
 

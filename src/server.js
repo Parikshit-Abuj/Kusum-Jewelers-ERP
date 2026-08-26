@@ -20,7 +20,14 @@ const { resolveTscPrinter, cachedTscPrinterStatus } = require('./lib/windows-pri
 const { provisionShopDatabase, enableNetworkSharing, updatePrinterConfiguration, parseDatabaseConnection, isLocalHost } = require('./lib/shop-provisioning');
 const { buildExcelExport } = require('./lib/excel-export');
 const { RESOURCE_LIST, resourceFor, parseDateRange, getExportPayload, archiveData } = require('./lib/data-lifecycle');
+const { generateSqlBackup, importSqlBackup } = require('./lib/sql-backup-restore');
 const { number, asArray, dateInput, startOfToday, dateTimeFromInput, money, grams, nextDocumentNumber, barcodePrefix, metalRateFromDailyRate, makingAmount } = require('./lib/helpers');
+const multer = require('multer');
+
+const sqlUpload = multer({
+  limits: { fileSize: 100 * 1024 * 1024 },
+  storage: multer.memoryStorage()
+});
 
 let prisma = createPrisma();
 let databaseHealth = { checkedAt: 0, error: null };
@@ -40,6 +47,10 @@ app.use(session({
   saveUninitialized: false,
   cookie: { httpOnly: true, sameSite: 'lax', maxAge: 8 * 60 * 60 * 1000 }
 }));
+
+app.locals.money = money;
+app.locals.grams = grams;
+app.locals.dateInput = dateInput;
 
 app.use((req, res, next) => {
   res.locals.currentPath = req.path;
@@ -101,7 +112,11 @@ async function nextBarcode(tx, metal, purity) {
 
 function requestedCashbookSync(body) {
   const paymentMethods = new Set(['CASH', 'UPI', 'CARD', 'BANK_TRANSFER', 'MIXED']);
-  return body.syncCashbook === 'on' && paymentMethods.has(body.paymentMethod);
+  if (!paymentMethods.has(body.paymentMethod)) return false;
+  if (body.paymentMethod === 'MIXED') {
+    return body.syncCashCashbook === 'on' || body.syncUpiCashbook === 'on' || body.syncCashbook === 'on';
+  }
+  return body.syncCashbook === 'on';
 }
 
 function salePaymentBreakdown(body) {
@@ -110,25 +125,32 @@ function salePaymentBreakdown(body) {
     : 'CASH';
   if (selectedMethod !== 'MIXED') {
     const paid = Math.max(0, number(body.paid));
+    const sync = body.syncCashbook === 'on';
     return {
       paid,
       cashPaid: selectedMethod === 'CASH' ? paid : 0,
       upiPaid: selectedMethod === 'UPI' ? paid : 0,
       paymentMethod: selectedMethod,
-      cashbookPayments: paid > 0 ? [{ method: selectedMethod, amount: paid }] : []
+      cashbookPayments: (sync && paid > 0) ? [{ method: selectedMethod, amount: paid }] : []
     };
   }
   const cashPaid = Math.max(0, number(body.cashPaid));
   const upiPaid = Math.max(0, number(body.upiPaid));
+  const syncCash = body.syncCashCashbook !== undefined ? body.syncCashCashbook === 'on' : body.syncCashbook === 'on';
+  const syncUpi = body.syncUpiCashbook !== undefined ? body.syncUpiCashbook === 'on' : body.syncUpiCashbook === 'on';
+  const cashbookPayments = [];
+  if (syncCash && cashPaid > 0) {
+    cashbookPayments.push({ method: 'CASH', amount: cashPaid });
+  }
+  if (syncUpi && upiPaid > 0) {
+    cashbookPayments.push({ method: 'UPI', amount: upiPaid });
+  }
   return {
     paid: cashPaid + upiPaid,
     cashPaid,
     upiPaid,
     paymentMethod: cashPaid > 0 && upiPaid > 0 ? 'MIXED' : cashPaid > 0 ? 'CASH' : upiPaid > 0 ? 'UPI' : 'MIXED',
-    cashbookPayments: [
-      { method: 'CASH', amount: cashPaid },
-      { method: 'UPI', amount: upiPaid }
-    ].filter((payment) => payment.amount > 0)
+    cashbookPayments
   };
 }
 
@@ -412,13 +434,43 @@ app.post('/data/archive', async (req, res) => {
   }
 });
 
+app.get('/data/backup-sql', async (req, res) => {
+  try {
+    const backup = await generateSqlBackup(process.env.DATABASE_URL);
+    res.setHeader('Content-Type', 'application/sql');
+    res.setHeader('Content-Disposition', `attachment; filename="${backup.filename}"`);
+    res.send(backup.sql);
+  } catch (error) {
+    redirectWith(res, '/data-management', 'error', `Could not generate SQL backup: ${error.message}`);
+  }
+});
+
+app.post('/data/restore-sql', sqlUpload.single('sqlFile'), async (req, res) => {
+  try {
+    if (!req.file || !req.file.buffer) {
+      throw new Error('Please choose a .sql backup file to upload.');
+    }
+    if (req.body.restoreAcknowledged !== 'on') {
+      throw new Error('Please tick the confirmation box to restore the database.');
+    }
+    const sqlText = req.file.buffer.toString('utf8');
+    const result = await importSqlBackup(process.env.DATABASE_URL, sqlText, appRoot);
+    // Refresh prisma client connection pool after restoring database
+    try { await prisma.$disconnect(); } catch { /* ignore */ }
+    prisma = createPrisma();
+    redirectWith(res, '/data-management', 'message', `Database backup imported successfully! Restored ${result.tableCount} tables (${result.executedStatements} SQL statements executed). All records are ready.`);
+  } catch (error) {
+    redirectWith(res, '/data-management', 'error', `Could not restore database from SQL backup: ${error.message}`);
+  }
+});
+
 app.get('/', async (req, res, next) => {
   try {
     const today = startOfToday();
     const todayKey = dateInput(today);
     const [productCount, stockProducts, todaySales, lowStock, recentSales, todayCashbook, customerDue] = await Promise.all([
       prisma.product.count({ where: { status: 'AVAILABLE' } }),
-      prisma.product.findMany({ where: { quantity: { gt: 0 }, status: 'AVAILABLE' }, select: { quantity: true, netWeight: true } }),
+      prisma.product.findMany({ where: { quantity: { gt: 0 }, status: 'AVAILABLE' }, select: { quantity: true, netWeight: true, grossWeight: true, metal: true, name: true, category: true } }),
       prisma.sale.aggregate({ where: { saleDate: { gte: today } }, _sum: { total: true, paid: true, balance: true, urdOffset: true }, _count: true }),
       prisma.product.findMany({ where: { quantity: { lte: 1 }, status: 'AVAILABLE' }, orderBy: { quantity: 'asc' }, take: 6 }),
       prisma.sale.findMany({ include: { customer: true }, orderBy: { saleDate: 'desc' }, take: 6 }),
@@ -430,12 +482,29 @@ app.get('/', async (req, res, next) => {
       if (entry.type === 'OUT') summary.out += Number(entry.amount);
       return summary;
     }, { in: 0, out: 0 });
+    // Compute per-metal weight totals and item-wise breakdown
+    const metalWeights = { GOLD: { pieces: 0, weight: 0 }, SILVER: { pieces: 0, weight: 0 }, OTHER: { pieces: 0, weight: 0 } };
+    const itemMap = new Map();
+    stockProducts.forEach((p) => {
+      const w = Number(p.netWeight) * p.quantity;
+      const bucket = p.metal === 'GOLD' ? metalWeights.GOLD : p.metal === 'SILVER' ? metalWeights.SILVER : metalWeights.OTHER;
+      bucket.pieces += p.quantity;
+      bucket.weight += w;
+      const key = `${p.name}|||${p.category}|||${p.metal}`;
+      const existing = itemMap.get(key);
+      if (existing) { existing.pieces += p.quantity; existing.weight += w; }
+      else itemMap.set(key, { name: p.name, category: p.category, metal: p.metal, pieces: p.quantity, weight: w });
+    });
+    const itemWeightBreakdown = [...itemMap.values()].sort((a, b) => b.weight - a.weight);
     res.render('dashboard', {
       title: 'Dashboard',
       stats: {
         productCount,
         stockPieces: stockProducts.reduce((total, product) => total + product.quantity, 0),
         stockWeight: stockProducts.reduce((total, product) => total + Number(product.netWeight) * product.quantity, 0),
+        goldPieces: metalWeights.GOLD.pieces, goldWeight: metalWeights.GOLD.weight,
+        silverPieces: metalWeights.SILVER.pieces, silverWeight: metalWeights.SILVER.weight,
+        otherPieces: metalWeights.OTHER.pieces, otherWeight: metalWeights.OTHER.weight,
         sales: todaySales._sum.total || 0,
         invoices: todaySales._count,
         cashIn: cashFlow.in,
@@ -444,7 +513,8 @@ app.get('/', async (req, res, next) => {
         customerDue: Math.max(0, Number(customerDue._sum.amount || 0))
       },
       lowStock,
-      recentSales
+      recentSales,
+      itemWeightBreakdown
     });
   } catch (error) { next(error); }
 });
@@ -536,7 +606,12 @@ app.get('/inventory/new', async (req, res, next) => {
 
 app.post('/inventory', async (req, res, next) => {
   try {
-    const quantity = Math.max(0, Math.floor(number(req.body.quantity, 1)));
+    const quantity = req.body.quantity !== undefined && req.body.quantity !== ''
+      ? Math.max(0, Math.floor(number(req.body.quantity, 1)))
+      : 1;
+    const reorderLevel = req.body.reorderLevel !== undefined && req.body.reorderLevel !== ''
+      ? Math.max(0, Math.floor(number(req.body.reorderLevel, 0)))
+      : 0;
     const product = await prisma.$transaction(async (tx) => {
       const rateInfo = await getRateForDate(tx);
       const metal = req.body.metal;
@@ -553,7 +628,7 @@ app.post('/inventory', async (req, res, next) => {
           sku: (req.body.sku || barcode.replaceAll(' ', '-')).trim().toUpperCase(), name: req.body.name.trim(), category: req.body.category.trim(),
           metal, purity,
           grossWeight: number(req.body.grossWeight), stoneWeight: number(req.body.stoneWeight), netWeight,
-          quantity, reorderLevel: Math.max(0, Math.floor(number(req.body.reorderLevel, 1))),
+          quantity, reorderLevel,
           purchasePrice: number(req.body.purchasePrice), sellingPrice: suggestedPrice,
           makingChargePerGram: makingChargeType === 'PER_GRAM' ? makingChargeValue : 0,
           makingChargeType, makingChargeValue, location: req.body.location || null,
@@ -561,6 +636,8 @@ app.post('/inventory', async (req, res, next) => {
         }
       });
       if (quantity) await tx.stockMovement.create({ data: { productId: product.id, type: 'OPENING', quantity, note: `Opening stock · ${barcode}` } });
+      // Auto-register item name in the master list for future autocomplete
+      await tx.itemName.upsert({ where: { name: req.body.name.trim() }, create: { name: req.body.name.trim(), category: req.body.category.trim() }, update: {} });
       return product;
     });
     redirectWith(res, '/inventory', 'message', `${product.barcode} saved to inventory.`);
@@ -583,10 +660,13 @@ app.get('/inventory/:id/edit', async (req, res, next) => {
 app.post('/inventory/:id', async (req, res, next) => {
   try {
     const id = Number(req.params.id);
+    const reorderLevel = req.body.reorderLevel !== undefined && req.body.reorderLevel !== ''
+      ? Math.max(0, Math.floor(number(req.body.reorderLevel, 0)))
+      : 0;
     await prisma.product.update({ where: { id }, data: {
        sku: req.body.sku.trim().toUpperCase(), name: req.body.name.trim(), category: req.body.category.trim(), metal: req.body.metal,
        purity: req.body.purity || null, grossWeight: number(req.body.grossWeight), stoneWeight: number(req.body.stoneWeight), netWeight: number(req.body.netWeight),
-       reorderLevel: Math.max(0, Math.floor(number(req.body.reorderLevel, 1))), purchasePrice: number(req.body.purchasePrice), sellingPrice: number(req.body.sellingPrice),
+       reorderLevel, purchasePrice: number(req.body.purchasePrice), sellingPrice: number(req.body.sellingPrice),
        makingChargePerGram: req.body.makingChargeType === 'PER_GRAM' ? number(req.body.makingChargeValue) : 0,
        makingChargeType: req.body.makingChargeType, makingChargeValue: number(req.body.makingChargeValue), location: req.body.location || null, notes: req.body.notes || null, status: req.body.status
     } });
@@ -706,10 +786,96 @@ app.post('/customers/:id/payments', async (req, res, next) => {
   } catch (error) { redirectWith(res, `/customers/${req.params.id}`, 'error', error.message || 'Could not record payment.'); }
 });
 
+// ── Item Names master list ──────────────────────────────────
+app.get('/api/item-names', async (req, res, next) => {
+  try {
+    const q = (req.query.q || '').trim();
+    const where = q ? { name: { contains: q } } : {};
+    const items = await prisma.itemName.findMany({ where, orderBy: { name: 'asc' }, take: 20 });
+    res.json(items);
+  } catch (error) { next(error); }
+});
+
+app.post('/api/item-names', express.json(), async (req, res, next) => {
+  try {
+    const name = (req.body.name || '').trim();
+    const category = (req.body.category || '').trim();
+    if (!name || !category) return res.status(400).json({ error: 'Name and category are required.' });
+    const item = await prisma.itemName.upsert({
+      where: { name },
+      create: { name, category },
+      update: { category }
+    });
+    res.json(item);
+  } catch (error) { next(error); }
+});
+
+app.get('/item-names', async (req, res, next) => {
+  try {
+    const items = await prisma.itemName.findMany({ orderBy: { name: 'asc' } });
+    res.render('item-names/index', { title: 'Item Names', items });
+  } catch (error) { next(error); }
+});
+
+app.post('/item-names/add', async (req, res, next) => {
+  try {
+    const name = (req.body.name || '').trim();
+    const category = (req.body.category || '').trim();
+    if (!name || !category) return redirectWith(res, '/item-names', 'error', 'Name and category are required.');
+    await prisma.itemName.upsert({ where: { name }, create: { name, category }, update: { category } });
+    redirectWith(res, '/item-names', 'message', `"${name}" added.`);
+  } catch (error) { next(error); }
+});
+
+app.post('/item-names/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    const name = (req.body.name || '').trim();
+    const category = (req.body.category || '').trim();
+    if (!name || !category) return redirectWith(res, '/item-names', 'error', 'Name and category are required.');
+    await prisma.itemName.update({ where: { id }, data: { name, category } });
+    redirectWith(res, '/item-names', 'message', `"${name}" updated.`);
+  } catch (error) {
+    if (error.code === 'P2002') return redirectWith(res, '/item-names', 'error', 'That item name already exists.');
+    next(error);
+  }
+});
+
+app.post('/item-names/:id/delete', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    const item = await prisma.itemName.delete({ where: { id } });
+    redirectWith(res, '/item-names', 'message', `"${item.name}" deleted.`);
+  } catch (error) { next(error); }
+});
+
 app.get('/sales', async (req, res, next) => {
   try {
-    const sales = await prisma.sale.findMany({ include: { customer: true, _count: { select: { items: true } } }, orderBy: { saleDate: 'desc' }, take: 100 });
-    res.render('sales/index', { title: 'Sales', sales });
+    const q = (req.query.q || '').trim();
+    const from = req.query.from || '';
+    const to = req.query.to || '';
+    const where = {};
+    // Text search: customer name OR invoice number
+    if (q) {
+      where.OR = [
+        { invoiceNumber: { contains: q } },
+        { customer: { name: { contains: q } } }
+      ];
+    }
+    // Date range filter on saleDate
+    if (from || to) {
+      where.saleDate = {};
+      if (from) where.saleDate.gte = new Date(from + 'T00:00:00');
+      if (to) where.saleDate.lte = new Date(to + 'T23:59:59');
+    }
+    const hasFilters = q || from || to;
+    const sales = await prisma.sale.findMany({
+      where,
+      include: { customer: true, _count: { select: { items: true } } },
+      orderBy: { saleDate: 'desc' },
+      take: hasFilters ? 500 : 100
+    });
+    res.render('sales/index', { title: 'Sales', sales, filters: { q, from, to } });
   } catch (error) { next(error); }
 });
 
@@ -1080,26 +1246,88 @@ app.get('/reports', async (req, res, next) => {
   try {
     const from = req.query.from ? new Date(req.query.from) : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
     const to = req.query.to ? new Date(`${req.query.to}T23:59:59`) : new Date();
-    const [sales, saleByMetal, stockProducts, receivables] = await Promise.all([
+    const [sales, saleItemsInPeriod, stockProducts, receivables] = await Promise.all([
       prisma.sale.aggregate({ where: { saleDate: { gte: from, lte: to } }, _sum: { subtotal: true, discount: true, gstAmount: true, total: true, paid: true, balance: true }, _count: true }),
-      prisma.saleItem.groupBy({ by: ['productId', 'productName', 'productSku'], _sum: { quantity: true, lineTotal: true }, orderBy: { _sum: { lineTotal: 'desc' } }, take: 5 }),
-      prisma.product.findMany({ select: { metal: true, quantity: true, netWeight: true } }),
+      prisma.saleItem.findMany({
+        where: { sale: { saleDate: { gte: from, lte: to } } },
+        select: {
+          productId: true, productName: true, productSku: true, productMetal: true, productPurity: true,
+          quantity: true, lineTotal: true, product: { select: { id: true, name: true, sku: true, metal: true, purity: true } }
+        }
+      }),
+      prisma.product.findMany({
+        where: { quantity: { gt: 0 }, status: 'AVAILABLE' },
+        select: { id: true, barcode: true, sku: true, name: true, category: true, metal: true, purity: true, grossWeight: true, netWeight: true, quantity: true, location: true },
+        orderBy: [{ metal: 'asc' }, { name: 'asc' }]
+      }),
       prisma.sale.aggregate({ _sum: { balance: true } })
     ]);
-    const topProductIds = saleByMetal.map((row) => row.productId).filter((id) => Number.isInteger(id));
-    const names = await prisma.product.findMany({ where: { id: { in: topProductIds } }, select: { id: true, sku: true, name: true } });
-    const topProducts = saleByMetal.map((row) => ({
-      ...row,
-      product: names.find((product) => product.id === row.productId)
-        || { name: row.productName || 'Jewellery item', sku: row.productSku || '' }
-    }));
+
+    const goldItemsMap = new Map();
+    const silverItemsMap = new Map();
+
+    for (const item of saleItemsInPeriod) {
+      const metal = (item.product?.metal || item.productMetal || 'GOLD').toUpperCase();
+      const name = item.product?.name || item.productName || 'Jewellery item';
+      const sku = item.product?.sku || item.productSku || '';
+      const purity = item.product?.purity || item.productPurity || '';
+      const key = `${name}|||${sku}|||${purity}`;
+      const amount = Number(item.lineTotal || 0);
+      const qty = Number(item.quantity || 0);
+
+      const targetMap = metal === 'GOLD' ? goldItemsMap : metal === 'SILVER' ? silverItemsMap : null;
+      if (targetMap) {
+        const existing = targetMap.get(key);
+        if (existing) {
+          existing.quantity += qty;
+          existing.billed += amount;
+        } else {
+          targetMap.set(key, { metal, name, sku, purity, quantity: qty, billed: amount });
+        }
+      }
+    }
+
+    const topGold = [...goldItemsMap.values()].sort((a, b) => b.billed - a.billed)[0] || null;
+    const topSilver = [...silverItemsMap.values()].sort((a, b) => b.billed - a.billed)[0] || null;
+    const topProducts = [topGold, topSilver].filter(Boolean);
     const stockByMetal = Object.values(stockProducts.reduce((summary, product) => {
-      if (!summary[product.metal]) summary[product.metal] = { metal: product.metal, quantity: 0, netWeight: 0 };
+      if (!summary[product.metal]) summary[product.metal] = { metal: product.metal, quantity: 0, netWeight: 0, grossWeight: 0 };
       summary[product.metal].quantity += product.quantity;
       summary[product.metal].netWeight += Number(product.netWeight) * product.quantity;
+      summary[product.metal].grossWeight += Number(product.grossWeight) * product.quantity;
       return summary;
     }, {})).sort((a, b) => a.metal.localeCompare(b.metal));
-    res.render('reports/index', { title: 'Reports', from, to, sales, stockByMetal, receivables: receivables._sum.balance || 0, topProducts });
+
+    const itemWiseStock = stockProducts.map((p) => {
+      const netWt = Number(p.netWeight);
+      const grossWt = Number(p.grossWeight);
+      return {
+        id: p.id,
+        barcode: p.barcode || '—',
+        sku: p.sku,
+        name: p.name,
+        category: p.category,
+        metal: p.metal,
+        purity: p.purity || '—',
+        quantity: p.quantity,
+        netWeight: netWt,
+        grossWeight: grossWt,
+        totalNetWeight: netWt * p.quantity,
+        totalGrossWeight: grossWt * p.quantity,
+        location: p.location || '—'
+      };
+    });
+
+    res.render('reports/index', {
+      title: 'Reports',
+      from,
+      to,
+      sales,
+      stockByMetal,
+      receivables: receivables._sum.balance || 0,
+      topProducts,
+      itemWiseStock
+    });
   } catch (error) { next(error); }
 });
 
@@ -1110,6 +1338,6 @@ app.use((error, req, res, next) => {
   res.status(500).render('error', { title: 'Something went wrong', detail: process.env.NODE_ENV === 'development' ? error.message : null });
 });
 
-app.listen(port, () => console.log(`Kusum Jewelers ERP running at http://localhost:${port}`));
+app.listen(port, () => console.log(`Kusum ERP running at http://localhost:${port}`));
 
 process.on('SIGINT', async () => { await prisma.$disconnect(); process.exit(0); });

@@ -6,3 +6,8 @@ outputs/
 output/
 .npm-cache/
 .pnpm-store/
+tmp/
+.kusumapp-gradle/
+.android-kusumapp/
+kusum-erp-mobile-apk/
+analytics.settings

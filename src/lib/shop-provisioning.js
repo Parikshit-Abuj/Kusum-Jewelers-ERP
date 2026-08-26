@@ -283,4 +283,4 @@ function updatePrinterConfiguration({ configPath, currentEnv, form }) {
   return config;
 }
 
-module.exports = { provisionShopDatabase, enableNetworkSharing, updatePrinterConfiguration, parseDatabaseConnection, isLocalHost };
+module.exports = { provisionShopDatabase, enableNetworkSharing, updatePrinterConfiguration, parseDatabaseConnection, isLocalHost, runBundledMigrations };

@@ -168,11 +168,39 @@ document.querySelectorAll('.flash').forEach((el) => {
     updateReadouts();
   }
 
+  const nameInput = form.querySelector('[data-item-name-input]');
+
+  function autoDetectMetal(nameText) {
+    if (!metalSel) return;
+    const clean = String(nameText || '').trim().toLowerCase();
+    if (!clean) return;
+    let targetMetal = null;
+    if (/\b(silver|chandi)\b/i.test(clean)) {
+      targetMetal = 'SILVER';
+    } else if (/\b(gold|sona)\b/i.test(clean)) {
+      targetMetal = 'GOLD';
+    } else if (/\b(platinum)\b/i.test(clean)) {
+      targetMetal = 'PLATINUM';
+    } else if (/\b(diamond|heera)\b/i.test(clean)) {
+      targetMetal = 'DIAMOND';
+    }
+    if (targetMetal && metalSel.value !== targetMetal) {
+      metalSel.value = targetMetal;
+      updatePurityOptions();
+      updateReadouts();
+    }
+  }
+
   if (metalSel) {
     metalSel.addEventListener('change', () => { updatePurityOptions(); updateReadouts(); });
   }
   if (puritySel) {
     puritySel.addEventListener('change', updateReadouts);
+  }
+  if (nameInput) {
+    nameInput.addEventListener('input', () => {
+      autoDetectMetal(nameInput.value);
+    });
   }
   if (grossWeightInput) grossWeightInput.addEventListener('input', updateNetWeight);
   if (stoneWeightInput) stoneWeightInput.addEventListener('input', updateNetWeight);
@@ -183,6 +211,9 @@ document.querySelectorAll('.flash').forEach((el) => {
   // Run on load
   updatePurityOptions();
   updateReadouts();
+  if (nameInput && nameInput.value) {
+    autoDetectMetal(nameInput.value);
+  }
 })();
 
 /* ═══════════════════════════════════════════════════════════════
@@ -531,6 +562,16 @@ document.querySelectorAll('.flash').forEach((el) => {
     if (cashPaidInput) cashPaidInput.disabled = !mixed;
     if (upiPaidInput) upiPaidInput.disabled = !mixed;
     if (paidInput) paidInput.disabled = mixed;
+    const singleSync = form.querySelector('[data-single-cashbook-sync]');
+    const mixedSync = form.querySelector('[data-mixed-cashbook-sync]');
+    if (singleSync) {
+      singleSync.hidden = mixed;
+      singleSync.style.display = mixed ? 'none' : 'block';
+    }
+    if (mixedSync) {
+      mixedSync.hidden = !mixed;
+      mixedSync.style.display = mixed ? 'flex' : 'none';
+    }
     updateFormTotals();
   });
 
@@ -588,12 +629,23 @@ document.querySelectorAll('.flash').forEach((el) => {
     const checkbox = control.querySelector('input[name="syncCashbook"]');
     const form = control.closest('form');
     const method = form?.querySelector('[data-payment-method]');
+    const singleSync = form?.querySelector('[data-single-cashbook-sync]');
+    const mixedSync = form?.querySelector('[data-mixed-cashbook-sync]');
     if (!checkbox || !method) return;
     function update() {
-      const canSync = ['CASH', 'UPI', 'CARD', 'BANK_TRANSFER', 'MIXED'].includes(method.value);
-      control.hidden = !canSync;
-      checkbox.disabled = !canSync;
-      if (!canSync) checkbox.checked = false;
+      const isMixed = method.value === 'MIXED';
+      const canSync = ['CASH', 'UPI', 'CARD', 'BANK_TRANSFER'].includes(method.value);
+      if (singleSync) {
+        singleSync.hidden = isMixed || !canSync;
+        singleSync.style.display = (isMixed || !canSync) ? 'none' : 'block';
+      }
+      if (mixedSync) {
+        mixedSync.hidden = !isMixed;
+        mixedSync.style.display = isMixed ? 'flex' : 'none';
+      }
+      control.hidden = isMixed || !canSync;
+      checkbox.disabled = isMixed || !canSync;
+      if (!canSync && !isMixed) checkbox.checked = false;
     }
     method.addEventListener('change', update);
     update();
@@ -660,3 +712,171 @@ document.querySelectorAll('.flash').forEach((el) => {
   selections.forEach((input) => input.addEventListener('change', update));
   update();
 })();
+
+/* ═══════════════════════════════════════════════════════════════
+   ITEM NAME AUTOCOMPLETE — inventory form
+   ═══════════════════════════════════════════════════════════════ */
+(function initItemNameAutocomplete() {
+  const nameInput = document.querySelector('[data-item-name-input]');
+  const listEl = document.querySelector('[data-item-name-list]');
+  const categoryInput = document.querySelector('[data-item-category-input]');
+  if (!nameInput || !listEl) return;
+
+  let debounceTimer = null;
+  let highlighted = -1;
+  let items = [];
+  let isSelecting = false;
+
+  function render() {
+    if (isSelecting || !items.length) {
+      close();
+      return;
+    }
+    listEl.innerHTML = items.map((item, i) =>
+      `<li data-index="${i}" class="${i === highlighted ? 'highlighted' : ''}">
+        <strong>${item.name}</strong><small>${item.category || ''}</small>
+      </li>`
+    ).join('');
+    listEl.classList.add('open');
+  }
+
+  function select(index) {
+    const item = items[index];
+    if (!item) return;
+    isSelecting = true;
+    nameInput.value = item.name;
+    if (categoryInput && item.category) {
+      categoryInput.value = item.category;
+    }
+    close();
+    // Dispatch input event to trigger autoDetectMetal and form calculators
+    nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+    setTimeout(() => { isSelecting = false; }, 200);
+  }
+
+  function close() {
+    items = [];
+    highlighted = -1;
+    listEl.classList.remove('open');
+    listEl.innerHTML = '';
+  }
+
+  async function search(query) {
+    if (isSelecting || query.length < 2) { close(); return; }
+    try {
+      const res = await fetch(`/api/item-names?q=${encodeURIComponent(query)}`);
+      if (!res.ok || isSelecting) return;
+      const data = await res.json();
+      if (isSelecting) return;
+      items = data;
+      highlighted = -1;
+      render();
+    } catch (err) { /* silently fail */ }
+  }
+
+  nameInput.addEventListener('input', () => {
+    if (isSelecting) return;
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      if (!isSelecting) search(nameInput.value.trim());
+    }, 200);
+  });
+
+  nameInput.addEventListener('keydown', (e) => {
+    if (!items.length) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      highlighted = Math.min(highlighted + 1, items.length - 1);
+      render();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      highlighted = Math.max(highlighted - 1, 0);
+      render();
+    } else if (e.key === 'Enter' && highlighted >= 0) {
+      e.preventDefault();
+      select(highlighted);
+    } else if (e.key === 'Escape') {
+      close();
+    }
+  });
+
+  listEl.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const li = e.target.closest('li');
+    if (!li) return;
+    select(Number(li.dataset.index));
+  });
+
+  listEl.addEventListener('click', (e) => {
+    const li = e.target.closest('li');
+    if (!li) return;
+    select(Number(li.dataset.index));
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!nameInput.contains(e.target) && !listEl.contains(e.target)) close();
+  });
+
+  nameInput.addEventListener('blur', () => {
+    setTimeout(close, 180);
+  });
+})();
+
+/* ═══════════════════════════════════════════════════════════════
+   7. REPORT ITEM-WISE WEIGHT SEARCH & LIVE TOTALS
+   ═══════════════════════════════════════════════════════════════ */
+(function initReportItemSearch() {
+  const searchInput = document.getElementById('reportItemSearchInput');
+  const table = document.getElementById('reportItemsTable');
+  const tbody = document.getElementById('reportItemsTbody');
+  const noMatches = document.getElementById('reportNoMatches');
+  const visibleCountEl = document.getElementById('reportVisibleCount');
+  const totalPiecesEl = document.getElementById('reportTotalPieces');
+  const totalNetEl = document.getElementById('reportTotalNet');
+  const totalGrossEl = document.getElementById('reportTotalGross');
+
+  if (!searchInput || !tbody) return;
+
+  const rows = Array.from(tbody.querySelectorAll('[data-item-row]'));
+
+  function fmtGrams(val) {
+    return Number(val || 0).toLocaleString('en-IN', {
+      minimumFractionDigits: 3,
+      maximumFractionDigits: 3
+    }) + ' g';
+  }
+
+  function filter() {
+    const q = searchInput.value.trim().toLowerCase();
+    let visibleCount = 0;
+    let totalPieces = 0;
+    let totalNet = 0;
+    let totalGross = 0;
+
+    rows.forEach((row) => {
+      const searchTarget = row.dataset.search || '';
+      const match = !q || searchTarget.includes(q);
+      row.style.display = match ? '' : 'none';
+      if (match) {
+        visibleCount++;
+        totalPieces += parseInt(row.dataset.pieces, 10) || 0;
+        totalNet += parseFloat(row.dataset.netTotal) || 0;
+        totalGross += parseFloat(row.dataset.grossTotal) || 0;
+      }
+    });
+
+    if (visibleCountEl) visibleCountEl.textContent = visibleCount;
+    if (totalPiecesEl) totalPiecesEl.textContent = totalPieces;
+    if (totalNetEl) totalNetEl.textContent = fmtGrams(totalNet);
+    if (totalGrossEl) totalGrossEl.textContent = fmtGrams(totalGross);
+
+    if (noMatches) noMatches.style.display = visibleCount === 0 ? '' : 'none';
+    if (table) {
+      const tfoot = table.querySelector('tfoot');
+      if (tfoot) tfoot.style.display = visibleCount === 0 ? 'none' : '';
+    }
+  }
+
+  searchInput.addEventListener('input', filter);
+})();
+

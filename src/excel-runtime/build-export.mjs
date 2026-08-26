@@ -10,7 +10,7 @@ const rows = payload.rows || [];
 if (!columns.length) throw new Error('Excel export needs at least one column.');
 
 const workbook = new ExcelJS.Workbook();
-workbook.creator = 'Kusum Jewelers ERP';
+workbook.creator = 'Kusum ERP';
 workbook.created = new Date();
 const sheet = workbook.addWorksheet('Data Export', {
   views: [{ state: 'frozen', ySplit: 4, showGridLines: false }]
@@ -50,7 +50,7 @@ function numberFormat(type) {
 
 sheet.mergeCells(1, 1, 1, lastColumn);
 const titleCell = sheet.getCell(1, 1);
-titleCell.value = payload.title || 'Kusum Jewelers ERP Data Export';
+titleCell.value = payload.title || 'Kusum ERP Data Export';
 titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF30251D' } };
 titleCell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 16 };
 titleCell.alignment = { horizontal: 'left', vertical: 'middle' };
@@ -58,7 +58,7 @@ sheet.getRow(1).height = 28;
 
 sheet.mergeCells(2, 1, 2, lastColumn);
 const subtitleCell = sheet.getCell(2, 1);
-subtitleCell.value = payload.subtitle || 'Exported from Kusum Jewelers ERP';
+subtitleCell.value = payload.subtitle || 'Exported from Kusum ERP';
 subtitleCell.font = { color: { argb: 'FF756F69' }, italic: true, size: 10 };
 
 const header = sheet.getRow(headerRow);

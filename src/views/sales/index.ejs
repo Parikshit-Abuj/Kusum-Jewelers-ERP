@@ -1,5 +1,34 @@
 <header class="page-header"><div><p class="eyebrow">Billing desk</p><h1>Sales</h1><p class="muted">Invoices automatically reduce piece-wise stock.</p></div><div class="header-actions"><a class="button ghost" href="/data-management?resource=sales">Export / archive</a><a class="button" href="/sales/new">+ Create invoice</a></div></header>
-<section class="panel"><div class="panel-heading"><div><h2>Recent invoices</h2><p>Most recent 100 counter sales.</p></div></div>
+<% const f = typeof filters !== 'undefined' && filters ? filters : {}; %>
+<section class="panel"><div class="panel-heading"><div><h2>Invoices</h2><p>Search by customer name, invoice number or date range.</p></div></div>
+  <!-- Search / filter bar -->
+  <div class="sales-filter">
+    <form method="get" action="/sales" id="salesFilterForm">
+      <label>
+        <span>Customer / Invoice #</span>
+        <input type="text" name="q" value="<%= f.q || '' %>" placeholder="e.g. Ravi or INV-0042" autocomplete="off">
+      </label>
+      <label>
+        <span>From date</span>
+        <input type="date" name="from" value="<%= f.from || '' %>">
+      </label>
+      <label>
+        <span>To date</span>
+        <input type="date" name="to" value="<%= f.to || '' %>">
+      </label>
+      <div class="sales-filter-actions">
+        <button type="submit" class="button small">Search</button>
+        <% if (f.q || f.from || f.to) { %>
+          <a class="button ghost small" href="/sales">Clear</a>
+        <% } %>
+      </div>
+    </form>
+  </div>
+
+  <% if (f.q || f.from || f.to) { %>
+    <p class="filter-result-count"><strong><%= (typeof sales !== 'undefined' && sales ? sales.length : 0) %></strong> invoice<%= (typeof sales !== 'undefined' && sales && sales.length === 1) ? '' : 's' %> found</p>
+  <% } %>
+
   <% if (sales.length) { %>
     <div class="table-wrap"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Date</th><th>Items</th><th>Payment</th><th class="right">Invoice total</th><th class="right">Net payable</th><th></th></tr></thead><tbody>
       <% sales.forEach((sale) => { const netPayable = Number(sale.total) - Number(sale.urdOffset); %>
@@ -7,6 +36,10 @@
       <% }) %>
     </tbody></table></div>
   <% } else { %>
-    <div class="empty-state"><span>₹</span><h3>No invoices yet</h3><p>Start your first sale - stock will update automatically.</p><a class="button" href="/sales/new">Create invoice</a></div>
+    <% if (f.q || f.from || f.to) { %>
+      <div class="empty-state"><span>🔍</span><h3>No invoices match your search</h3><p>Try a different name, invoice number, or date range.</p><a class="button" href="/sales">Clear filters</a></div>
+    <% } else { %>
+      <div class="empty-state"><span>₹</span><h3>No invoices yet</h3><p>Start your first sale - stock will update automatically.</p><a class="button" href="/sales/new">Create invoice</a></div>
+    <% } %>
   <% } %>
 </section>

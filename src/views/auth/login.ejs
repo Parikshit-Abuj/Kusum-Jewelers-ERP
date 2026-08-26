@@ -3,17 +3,17 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title><%= title %> · Kusum Jewelers ERP</title>
+    <title><%= title %> · Kusum ERP</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body class="login-page">
     <main class="login-card">
       <span class="brand-mark">KJ</span>
-      <p class="eyebrow">Kusum Jewelers</p>
+      <p class="eyebrow">Kusum ERP</p>
       <h1>Sign in to ERP</h1>
       <p class="muted">Use your shop login to continue.</p>
-      <% if (message) { %><div class="flash success"><span>✓</span><%= message %></div><% } %>
-      <% if (error) { %><div class="flash error"><span>!</span><%= error %></div><% } %>
+      <% if (typeof message !== 'undefined' && message) { %><div class="flash success"><span>✓</span><%= message %></div><% } %>
+      <% if (typeof error !== 'undefined' && error) { %><div class="flash error"><span>!</span><%= error %></div><% } %>
       <form method="post" action="/login">
         <label>Username<input name="username" autocomplete="username" required autofocus></label>
         <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
