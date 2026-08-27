@@ -222,6 +222,7 @@ async function runRealtimeTest() {
     } else {
       console.log(`⚠️ SYNC TESTS COMPLETED WITH ${errors.length} ERROR(S):`);
       errors.forEach(e => console.log(`   - ${e}`));
+      process.exitCode = 1;
     }
     console.log('================================================================\n');
 

@@ -30,10 +30,22 @@ async function generateSqlBackup(databaseUrl) {
     user: config.username,
     password: config.password,
     database: config.database,
-    charset: 'utf8mb4'
+    charset: 'utf8mb4',
+    // Keep DATETIME(3) values as their database text instead of converting
+    // through the computer's timezone and dropping milliseconds in JS Date.
+    // A restored shop backup should preserve record timestamps exactly.
+    dateStrings: true
   });
 
+  let snapshotStarted = false;
   try {
+    // Keep every table read at one point in time. Without a consistent snapshot,
+    // a sale completed while the backup is downloading could make related tables
+    // represent different moments and produce an incomplete recovery backup.
+    await connection.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+    await connection.query('START TRANSACTION WITH CONSISTENT SNAPSHOT');
+    snapshotStarted = true;
+
     const [tableRows] = await connection.query("SHOW FULL TABLES WHERE Table_type = 'BASE TABLE'");
     const tableKey = Object.keys(tableRows[0] || {})[0];
     const tables = tableRows.map((row) => row[tableKey]).filter(Boolean);
@@ -126,12 +138,16 @@ async function generateSqlBackup(databaseUrl) {
 
     sql += footer;
 
+    await connection.commit();
+    snapshotStarted = false;
+
     return {
       sql,
       filename: `kusum-erp-backup-${now.toISOString().slice(0, 10)}-${now.getHours()}${now.getMinutes()}${now.getSeconds()}.sql`,
       tableCount: tables.length
     };
   } finally {
+    if (snapshotStarted) await connection.rollback().catch(() => {});
     await connection.end();
   }
 }

@@ -132,13 +132,21 @@ nav a.active { box-shadow: inset 3px 0 0 #dfa437; }
 
 /* ── Table ────────────────────────────────────────────────── */
 .table-wrap {
-  overflow-x: auto;
+  /* Keep the horizontal scroll bar visible on every wide register, including
+     inventory, sales, cashbook and the load-batch popup. */
+  overflow-x: scroll;
   overflow-y: auto;
   max-height: 72vh;
   margin: 0 -20px -20px;
-  scrollbar-gutter: stable;
+  scrollbar-gutter: stable both-edges;
+  scrollbar-width: auto;
+  overscroll-behavior-inline: contain;
 }
 .table-wrap table { width: 100%; min-width: 620px; border-collapse: collapse; }
+.table-wrap::-webkit-scrollbar { height: 12px; width: 10px; }
+.table-wrap::-webkit-scrollbar-track { background: #f4eee3; border-top: 1px solid #dcd3c3; }
+.table-wrap::-webkit-scrollbar-thumb { background: #b47a21; border-radius: 6px; border: 2px solid #f4eee3; }
+.table-wrap::-webkit-scrollbar-thumb:hover { background: #84530c; }
 .table-wrap th { color: #776f67; background: #fcfbf9; text-transform: uppercase; font-size: 10px; font-weight: 800; letter-spacing: .065em; text-align: left; padding: 10px 20px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .table-wrap td { padding: 13px 20px; border-bottom: 1px solid #f0ede9; vertical-align: middle; white-space: nowrap; }
 .table-wrap tr:last-child td { border-bottom: 0; }
@@ -1044,7 +1052,8 @@ input:focus, select:focus, textarea:focus { border-color: #c08a32; box-shadow: 0
   flex-direction: row !important;
   gap: 16px !important;
   padding: 12px 18px !important;
-  overflow: hidden !important;
+  overflow: auto !important;
+  scrollbar-gutter: stable both-edges;
   flex: 1;
 }
 
@@ -1052,7 +1061,7 @@ input:focus, select:focus, textarea:focus { border-color: #c08a32; box-shadow: 0
   width: 360px;
   min-width: 330px;
   max-width: 370px;
-  overflow-y: auto;
+  overflow: auto;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -1468,4 +1477,3 @@ input:focus, select:focus, textarea:focus { border-color: #c08a32; box-shadow: 0
   -webkit-overflow-scrolling: touch;
   scrollbar-width: thin;
 }
-

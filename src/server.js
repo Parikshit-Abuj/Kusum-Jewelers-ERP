@@ -21,7 +21,9 @@ const { provisionShopDatabase, enableNetworkSharing, updatePrinterConfiguration,
 const { buildExcelExport } = require('./lib/excel-export');
 const { RESOURCE_LIST, resourceFor, parseDateRange, getExportPayload, archiveData } = require('./lib/data-lifecycle');
 const { generateSqlBackup, importSqlBackup } = require('./lib/sql-backup-restore');
-const { number, asArray, dateInput, startOfToday, dateTimeFromInput, money, grams, nextDocumentNumber, barcodePrefix, metalRateFromDailyRate, makingAmount } = require('./lib/helpers');
+const { number, asArray, dateInput, startOfToday, dateTimeFromInput, money, grams, nextDocumentNumber, metalRateFromDailyRate, makingAmount } = require('./lib/helpers');
+const { nextBarcode } = require('./lib/barcode-sequence');
+const { upsertItemName } = require('./lib/item-names');
 const multer = require('multer');
 
 const sqlUpload = multer({
@@ -159,16 +161,6 @@ async function getRateForDate(db, rateDate = dateInput()) {
   return { rate: latest, sourceDate: latest?.rateDate || null, isFallback: Boolean(latest) };
 }
 
-async function nextBarcode(tx, metal, purity) {
-  const prefix = barcodePrefix(metal, purity);
-  const sequence = await tx.barcodeSequence.upsert({
-    where: { prefix },
-    create: { prefix, lastNumber: 1 },
-    update: { lastNumber: { increment: 1 } }
-  });
-  return `${prefix} ${sequence.lastNumber}`;
-}
-
 function requestedCashbookSync(body) {
   const paymentMethods = new Set(['CASH', 'UPI', 'CARD', 'BANK_TRANSFER', 'MIXED']);
   if (!paymentMethods.has(body.paymentMethod)) return false;
@@ -196,7 +188,7 @@ function salePaymentBreakdown(body) {
   const cashPaid = Math.max(0, number(body.cashPaid));
   const upiPaid = Math.max(0, number(body.upiPaid));
   const syncCash = body.syncCashCashbook !== undefined ? body.syncCashCashbook === 'on' : body.syncCashbook === 'on';
-  const syncUpi = body.syncUpiCashbook !== undefined ? body.syncUpiCashbook === 'on' : body.syncUpiCashbook === 'on';
+  const syncUpi = body.syncUpiCashbook !== undefined ? body.syncUpiCashbook === 'on' : body.syncCashbook === 'on';
   const cashbookPayments = [];
   if (syncCash && cashPaid > 0) {
     cashbookPayments.push({ method: 'CASH', amount: cashPaid });
@@ -888,11 +880,7 @@ app.post('/api/inventory/batch-piece', express.json(), async (req, res, next) =>
         }
       });
       // Register in master autocomplete list
-      await tx.itemName.upsert({
-        where: { name },
-        create: { name, category },
-        update: {}
-      });
+      await upsertItemName(tx, name, category, { updateCategory: false });
       return {
         ...newProduct,
         formattedSellingPrice: money(suggestedPrice),
@@ -1022,7 +1010,7 @@ app.post('/inventory', async (req, res, next) => {
       });
       if (quantity) await tx.stockMovement.create({ data: { productId: product.id, type: 'OPENING', quantity, note: `Opening stock · ${barcode}` } });
       // Auto-register item name in the master list for future autocomplete
-      await tx.itemName.upsert({ where: { name: req.body.name.trim() }, create: { name: req.body.name.trim(), category: req.body.category.trim() }, update: {} });
+      await upsertItemName(tx, req.body.name.trim(), req.body.category.trim(), { updateCategory: false });
       return product;
     });
     broadcastSyncEvent('INVENTORY_CHANGED', { action: 'PRODUCT_CREATED', barcode: product.barcode, name: product.name });
@@ -1191,11 +1179,7 @@ app.post('/api/item-names', express.json(), async (req, res, next) => {
     const name = (req.body.name || '').trim();
     const category = (req.body.category || '').trim();
     if (!name || !category) return res.status(400).json({ error: 'Name and category are required.' });
-    const item = await prisma.itemName.upsert({
-      where: { name },
-      create: { name, category },
-      update: { category }
-    });
+    const item = await upsertItemName(prisma, name, category, { returnItem: true });
     broadcastSyncEvent('ITEM_NAMES_UPDATED', { name, category });
     res.json(item);
   } catch (error) { next(error); }
@@ -1213,7 +1197,7 @@ app.post('/item-names/add', async (req, res, next) => {
     const name = (req.body.name || '').trim();
     const category = (req.body.category || '').trim();
     if (!name || !category) return redirectWith(res, '/item-names', 'error', 'Name and category are required.');
-    await prisma.itemName.upsert({ where: { name }, create: { name, category }, update: { category } });
+    await upsertItemName(prisma, name, category);
     broadcastSyncEvent('ITEM_NAMES_UPDATED', { name, category });
     redirectWith(res, '/item-names', 'message', `"${name}" added.`);
   } catch (error) { next(error); }

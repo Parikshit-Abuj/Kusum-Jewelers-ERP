@@ -6,6 +6,7 @@ const { getExportPayload, RESOURCE_LIST, resourceFor, parseDateRange } = require
 const { buildExcelExport } = require('../src/lib/excel-export');
 const { generateSqlBackup, importSqlBackup } = require('../src/lib/sql-backup-restore');
 const { dateInput, startOfToday, money, grams } = require('../src/lib/helpers');
+const { nextBarcode } = require('../src/lib/barcode-sequence');
 
 async function runEndToEndVerification() {
   console.log('====================================================');
@@ -52,13 +53,7 @@ async function runEndToEndVerification() {
     const createdBatchBarcodes = [];
 
     await Promise.all(batchWeights.map(async (wt, idx) => {
-      const prefix = 'S';
-      const sequence = await db.barcodeSequence.upsert({
-        where: { prefix },
-        create: { prefix, lastNumber: 1 },
-        update: { lastNumber: { increment: 1 } }
-      });
-      const barcode = `${prefix} ${sequence.lastNumber}`;
+      const barcode = await db.$transaction((tx) => nextBarcode(tx, 'SILVER', '925'));
       createdBatchBarcodes.push({ idx, barcode, weight: wt });
     }));
 
@@ -336,9 +331,33 @@ async function runEndToEndVerification() {
       const payload = await getExportPayload(db, res.key, { from: '2020-01-01', to: '2030-01-01' });
       const buffer = await buildExcelExport(payload);
       console.log(`   ✔ Exported ${res.label} (.xlsx) — Size: ${buffer.length} bytes, Rows: ${payload.rows.length}, Title: "${payload.title}"`);
+
+      // Verify every sheet generates valid Excel data
+      if (payload.sheets && payload.sheets.length) {
+        const sheetNames = payload.sheets.map(s => s.name);
+        console.log(`     → Sheets: ${sheetNames.join(', ')}`);
+        for (const sheet of payload.sheets) {
+          if (!Array.isArray(sheet.rows) || !Array.isArray(sheet.columns) || sheet.columns.length === 0) {
+            throw new Error(`Sheet "${sheet.name}" in ${res.key} has invalid structure`);
+          }
+        }
+      }
+
+      if (res.key === 'sales') {
+        const sheetNames = (payload.sheets || []).map(s => s.name);
+        if (!sheetNames.includes('Invoice summary')) throw new Error('Sales export missing Invoice summary sheet');
+        if (!sheetNames.includes('Item-wise details')) throw new Error('Sales export missing Item-wise details sheet');
+      }
+      if (res.key === 'cashbook') {
+        const sheetNames = (payload.sheets || []).map(s => s.name);
+        if (sheetNames[0] !== 'All entries') throw new Error(`Cashbook first sheet should be "All entries" but got "${sheetNames[0]}"`);
+        const allSheet = payload.sheets.find(s => s.name === 'All entries');
+        if (!allSheet.columns.some(c => c.key === 'runningBalance')) throw new Error('Cashbook missing running balance column');
+      }
       if (res.key === 'inventory' && payload.rows.length > 1) {
-        console.log(`     → First inventory row metal: ${payload.rows[0].metal} (${payload.rows[0].itemName})`);
-        console.log(`     → Columns ordered: ${payload.columns.slice(0, 4).map(c => c.label).join(', ')}`);
+        const sheetNames = (payload.sheets || []).map(s => s.name);
+        if (sheetNames[0] !== 'All records') throw new Error(`Inventory first sheet should be "All records" but got "${sheetNames[0]}"`);
+        console.log(`     → First row: ${payload.rows[0].metal} ${payload.rows[0].itemName} (${payload.rows[0].barcode})`);
       }
     }
 
@@ -464,6 +483,7 @@ async function runEndToEndVerification() {
   } else {
     console.log(`⚠️ Completed with ${errors.length} error(s):`);
     errors.forEach(e => console.log('  -', e));
+    process.exitCode = 1;
   }
   console.log('====================================================\n');
 }

@@ -51,25 +51,42 @@ function grams(value) {
   return `${Number(value || 0).toFixed(3)} g`;
 }
 
-async function nextDocumentNumber(db, prefix, value = new Date()) {
+async function reserveDocumentNumber(tx, prefix, value = new Date()) {
   const day = dateInput(value).replaceAll('-', '');
   const key = `${prefix}-${day}`;
-  // MySQL atomically advances this shared counter, so every LAN client receives
-  // a short, sequential number without duplicate invoice numbers. The lookup
-  // also skips a matching number that may already exist from older ERP data.
+  // LAST_INSERT_ID(expr) is scoped to this MySQL connection. Combined with an
+  // interactive Prisma transaction, it atomically reserves a counter value
+  // for every LAN client, including the very first request of a new day.
   for (;;) {
-    const sequence = await db.documentSequence.upsert({
-      where: { key },
-      create: { key, lastNumber: 1 },
-      update: { lastNumber: { increment: 1 } }
-    });
-    const serial = String(sequence.lastNumber).padStart(4, '0');
+    await tx.$executeRaw`
+      INSERT INTO \`DocumentSequence\` (\`key\`, \`lastNumber\`, \`updatedAt\`)
+      VALUES (${key}, LAST_INSERT_ID(1), CURRENT_TIMESTAMP(3))
+      ON DUPLICATE KEY UPDATE
+        \`lastNumber\` = LAST_INSERT_ID(\`lastNumber\` + 1),
+        \`updatedAt\` = CURRENT_TIMESTAMP(3)
+    `;
+    const rows = await tx.$queryRaw`SELECT LAST_INSERT_ID() AS lastNumber`;
+    const lastNumber = Number(rows?.[0]?.lastNumber);
+    if (!Number.isInteger(lastNumber) || lastNumber < 1) {
+      throw new Error(`Could not reserve the next ${prefix} document number.`);
+    }
+    const serial = String(lastNumber).padStart(4, '0');
     const candidate = prefix === 'INV' ? `${day}${serial}` : `${prefix}-${day}-${serial}`;
     const existing = prefix === 'INV'
-      ? await db.sale.findUnique({ where: { invoiceNumber: candidate }, select: { id: true } })
-      : await db.urdPurchase.findUnique({ where: { purchaseNumber: candidate }, select: { id: true } });
+      ? await tx.sale.findUnique({ where: { invoiceNumber: candidate }, select: { id: true } })
+      : await tx.urdPurchase.findUnique({ where: { purchaseNumber: candidate }, select: { id: true } });
     if (!existing) return candidate;
   }
+}
+
+async function nextDocumentNumber(db, prefix, value = new Date()) {
+  // Prisma's root client has $transaction; its interactive transaction client
+  // intentionally does not. This permits the same helper in GET previews and
+  // inside sale/URD save transactions without nested transactions.
+  if (typeof db.$transaction === 'function') {
+    return db.$transaction((tx) => reserveDocumentNumber(tx, prefix, value));
+  }
+  return reserveDocumentNumber(db, prefix, value);
 }
 
 function barcodePrefix(metal, purity) {

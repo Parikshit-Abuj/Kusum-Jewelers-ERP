@@ -262,8 +262,32 @@ async function runDeepAudit() {
     console.log('\n7. Subsystem: Sales Billing Desk & Invoicing');
     
     // Pick an available inventory piece for sale
-    const invPiece = await db.product.findFirst({ where: { status: 'AVAILABLE', quantity: { gt: 0 } } });
-    if (!invPiece) throw new Error('No available product in inventory to test sale!');
+    let invPiece = await db.product.findFirst({ where: { status: 'AVAILABLE', quantity: { gt: 0 } } });
+    // The audit deletes its batch-edit test piece above. On a clean database,
+    // create a separate item here so the real billing/inventory-removal flow
+    // is always tested instead of depending on pre-existing shop stock.
+    if (!invPiece) {
+      const saleTestToken = Date.now().toString().slice(-8);
+      invPiece = await db.product.create({
+        data: {
+          barcode: `G22 AUDIT ${saleTestToken}`,
+          sku: `AUDIT-SALE-${saleTestToken}`,
+          name: 'Audit Sale Ring',
+          category: 'Ring',
+          metal: 'GOLD',
+          purity: '22K',
+          grossWeight: 4.25,
+          stoneWeight: 0,
+          netWeight: 4.25,
+          quantity: 1,
+          purchasePrice: 0,
+          sellingPrice: 40000,
+          makingChargeType: 'PER_GRAM',
+          makingChargeValue: 500,
+          status: 'AVAILABLE'
+        }
+      });
+    }
 
     const saleInvoiceNo = `INV-AUDIT-${Date.now().toString().slice(-4)}`;
     const salePostRes = await makeRequest('POST', '/sales', {
@@ -372,6 +396,29 @@ async function runDeepAudit() {
     for (const mod of modules) {
       const payload = await getExportPayload(db, mod, range);
       check(`Excel Export Payload for "${mod}"`, payload && payload.rows.length >= 0 && payload.columns.length > 0, `Rows: ${payload.rows.length}, Cols: ${payload.columns.length}`);
+
+      // Verify every sheet has valid rows array and columns
+      if (payload.sheets && payload.sheets.length) {
+        for (const sheet of payload.sheets) {
+          check(`Sheet "${sheet.name}" in ${mod} has valid structure`, Array.isArray(sheet.rows) && Array.isArray(sheet.columns) && sheet.columns.length > 0, `Rows: ${sheet.rows.length}, Cols: ${(sheet.columns || []).length}`);
+        }
+      }
+
+      if (mod === 'cashbook') {
+        const sheetNames = (payload.sheets || []).map((s) => s.name);
+        check('Cashbook Excel has detailed entries and summary', sheetNames.includes('All entries') && sheetNames.includes('Summary') && sheetNames[0] === 'All entries', `Sheets: ${sheetNames.join(', ')}`);
+        // Verify running balance column exists
+        const allSheet = payload.sheets.find((s) => s.name === 'All entries');
+        check('Cashbook has running balance column', allSheet && allSheet.columns.some((c) => c.key === 'runningBalance'), 'runningBalance column');
+      }
+      if (mod === 'sales') {
+        const sheetNames = (payload.sheets || []).map((s) => s.name);
+        check('Sales Excel has invoice summary and item details', sheetNames.includes('Invoice summary') && sheetNames.includes('Item-wise details'), `Sheets: ${sheetNames.join(', ')}`);
+      }
+      if (mod === 'inventory') {
+        const sheetNames = (payload.sheets || []).map((s) => s.name);
+        check('Inventory Excel has all records, summary, and metal sheets', sheetNames.includes('Item summary') && sheetNames.includes('All records') && sheetNames[0] === 'All records', `Sheets: ${sheetNames.join(', ')}`);
+      }
     }
 
     // ----------------------------------------------------------------
@@ -398,6 +445,7 @@ async function runDeepAudit() {
     } else {
       console.log(`⚠️ AUDIT COMPLETED WITH ${errors.length} ERROR(S):`);
       errors.forEach(e => console.log(`   - ${e}`));
+      process.exitCode = 1;
     }
     console.log('================================================================\n');
 

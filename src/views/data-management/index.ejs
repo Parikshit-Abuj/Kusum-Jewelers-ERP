@@ -20,7 +20,7 @@
     <article class="sql-box" style="padding: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px;">
       <h3 style="margin-top: 0; font-size: 14px;">Download SQL Backup</h3>
       <p style="font-size: 12px; color: var(--muted); margin: 6px 0 14px;">
-        Download a complete .sql backup of all shop data and tables.
+        Download a complete .sql backup of all ERP data, tables, invoices, ledgers, stock, rates and settings stored in the database.
       </p>
       <a class="button" href="/data/backup-sql">
         <span>⇩</span> Download .sql Backup
@@ -30,14 +30,17 @@
     <!-- Restore SQL Backup -->
     <article class="sql-box" style="padding: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px;">
       <h3 style="margin-top: 0; font-size: 14px;">Restore .sql Backup</h3>
-      <form method="post" action="/data/restore-sql" enctype="multipart/form-data" onsubmit="return confirm('Restore database from this backup file? Existing tables will be updated.');">
+      <p style="font-size: 12px; color: var(--muted); margin: 6px 0 10px;">
+        This replaces the current ERP database with the selected backup. On a replacement main PC, complete Main database PC setup first, then restore the backup.
+      </p>
+      <form method="post" action="/data/restore-sql" enctype="multipart/form-data" onsubmit="return confirm('Restore this backup? It will replace the current ERP database.');">
         <label style="display: block; font-size: 12px; font-weight: bold; margin-bottom: 6px;">
           Select .sql file
           <input type="file" name="sqlFile" accept=".sql,text/plain,application/sql" required style="margin-top: 4px; padding: 6px; font-size: 12px; width: 100%;">
         </label>
         <label class="archive-check" style="margin: 8px 0; font-size: 12px;">
           <input name="restoreAcknowledged" type="checkbox" required>
-          Confirm database restore
+          I understand that this replaces the current ERP data
         </label>
         <button class="button secondary" type="submit" style="margin-top: 4px;">
           <span>⟳</span> Upload &amp; Restore
