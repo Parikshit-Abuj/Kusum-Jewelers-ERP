@@ -72,7 +72,7 @@ function labelRequests(body) {
   return [...new Set(asArray(body.productId).map(Number).filter((id) => Number.isInteger(id) && id > 0))]
     .map((id) => ({
       id,
-      copies: Math.max(1, Math.min(50, Math.floor(number(body[`copy_${id}`], 1))))
+      copies: 1
     }));
 }
 

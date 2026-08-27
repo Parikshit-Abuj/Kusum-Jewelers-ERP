@@ -1248,7 +1248,9 @@ document.querySelectorAll('.flash').forEach((el) => {
     if (statsCountEl) statsCountEl.textContent = sessionPieces.length;
     if (statsWeightEl) statsWeightEl.textContent = totalWeight.toFixed(3);
     if (statsValueEl) statsValueEl.textContent = fmt(totalValue);
-    if (printBtn) printBtn.disabled = false;
+    modal.querySelectorAll('[data-batch-print-tspl]').forEach((btn) => {
+      btn.disabled = sessionPieces.length === 0;
+    });
   }
 
   // Select all checkbox
@@ -1260,22 +1262,25 @@ document.querySelectorAll('.flash').forEach((el) => {
   // Clear list
   clearListBtn?.addEventListener('click', () => {
     if (sessionPieces.length === 0) return;
-    if (confirm('Clear the session list from this screen? (Saved pieces will remain in your database).')) {
+    if (confirm('Clear the session list from this screen? (Saved pieces will remain safely in your database).')) {
       sessionPieces = [];
       renderTable();
     }
   });
 
-  // Direct TSPL Label Printing
-  printBtn?.addEventListener('click', async () => {
+  // Direct TSPL Label Printing for this session only
+  async function printSessionLabels() {
     const checked = Array.from(tbody.querySelectorAll('[data-batch-item-cb]:checked')).map((cb) => Number(cb.value));
     if (checked.length === 0) {
       alert('Please select at least one piece to print barcodes.');
       return;
     }
 
-    printBtn.disabled = true;
-    printBtn.textContent = 'Sending to printer...';
+    const printBtns = modal.querySelectorAll('[data-batch-print-tspl]');
+    printBtns.forEach((btn) => {
+      btn.disabled = true;
+      btn.textContent = 'Sending to printer...';
+    });
 
     try {
       const res = await fetch('/labels/print', {
@@ -1287,13 +1292,20 @@ document.querySelectorAll('.flash').forEach((el) => {
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Failed to print labels.');
       }
-      alert(`✓ ${data.message || `${checked.length} labels sent to printer!`}`);
+      alert(`✓ ${data.message || `${checked.length} barcode labels sent to TSC TTP-244 Pro!`}`);
     } catch (err) {
       alert(`Printer error: ${err.message}`);
     } finally {
-      printBtn.disabled = false;
-      printBtn.textContent = '▥ Print Selected Labels (TSPL)';
+      printBtns.forEach((btn) => {
+        btn.disabled = sessionPieces.length === 0;
+        btn.textContent = '▥ Print Barcode Labels';
+      });
     }
+  }
+
+  modal.querySelectorAll('[data-batch-print-tspl]').forEach((btn) => {
+    btn.addEventListener('click', printSessionLabels);
   });
 })();
+
 

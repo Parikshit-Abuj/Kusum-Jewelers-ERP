@@ -109,16 +109,16 @@
       <div class="batch-results-panel">
         <div class="batch-results-header">
           <div class="batch-stats-summary">
-            <strong>Pieces Added This Session: <span class="highlight" data-batch-stats-count>0</span></strong>
+            <strong>Pieces Added in This Session: <span class="highlight" data-batch-stats-count>0</span></strong>
             <span class="stat-sep">·</span>
             <span>Total Weight: <strong data-batch-stats-weight>0.000</strong> g</span>
             <span class="stat-sep">·</span>
-            <span>Total Suggested Value: <strong data-batch-stats-value>₹0.00</strong></span>
+            <span>Total Value: <strong data-batch-stats-value>₹0.00</strong></span>
           </div>
           <div class="batch-print-actions">
             <button type="button" class="button ghost small" data-batch-clear-list>Clear List</button>
-            <button type="button" class="button secondary small" id="batchPrintBtn" data-batch-print-tspl disabled>
-              ▥ Print Selected Labels (TSPL)
+            <button type="button" class="button accent small" id="batchPrintBtn" data-batch-print-tspl disabled style="background:#b47a21;color:#fff;border:none;font-weight:700;">
+              ▥ Print Barcode Labels for These Pieces
             </button>
           </div>
         </div>
@@ -154,11 +154,14 @@
 
     <footer class="modal-footer">
       <div class="modal-footer-hint">
-        <span>Labels will print serially in exact order so you can easily stick them piece-by-piece.</span>
+        <span style="color:#1f7651;font-weight:600;">✓ Isolated Session:</span>
+        <span>Only prints the barcodes added in this pop-up in exact serial order — safe for multiple people working simultaneously.</span>
       </div>
       <div class="modal-footer-actions">
-        <button type="button" class="button ghost" data-batch-modal-close>Close</button>
-        <button type="button" class="button primary" data-batch-close-refresh>Done & View in Inventory →</button>
+        <button type="button" class="button accent" id="batchPrintBtnFooter" data-batch-print-tspl disabled style="background:#b47a21;color:#fff;border:none;font-weight:700;">
+          ▥ Print Barcode Labels
+        </button>
+        <button type="button" class="button secondary" data-batch-close-refresh>Done (Close)</button>
       </div>
     </footer>
   </div>
