@@ -69,6 +69,83 @@ async function runEndToEndVerification() {
       throw new Error(`Barcode collision detected in concurrent batch creation! Set size: ${uniqueBarcodes.size}, Expected: ${batchWeights.length}`);
     }
 
+    // 2c. Simulating In-Popup Piece Edit & Delete
+    console.log('\n2c. Testing In-Popup Piece Weight Edit & Delete Workflow...');
+    const testPiece = await db.product.create({
+      data: {
+        barcode: 'TEST 999',
+        sku: 'TEST-999',
+        name: 'Test Payal Piece',
+        category: 'Payal',
+        metal: 'SILVER',
+        purity: '925',
+        grossWeight: 18.250,
+        stoneWeight: 0,
+        netWeight: 18.250,
+        quantity: 1,
+        reorderLevel: 0,
+        purchasePrice: 0,
+        sellingPrice: 1642.50,
+        status: 'AVAILABLE'
+      }
+    });
+    console.log(`   ✔ Created test piece: ${testPiece.barcode} (${testPiece.netWeight}g)`);
+
+    // In-popup user updates mistakenly entered weight to 19.500g
+    const updatedPiece = await db.product.update({
+      where: { id: testPiece.id },
+      data: {
+        grossWeight: 19.500,
+        netWeight: 19.500,
+        sellingPrice: 1755.00
+      }
+    });
+    console.log(`   ✔ Edited in-popup: ${updatedPiece.barcode} new weight is ${updatedPiece.netWeight}g (recalculated price: ₹${updatedPiece.sellingPrice})`);
+
+    // In-popup user deletes piece
+    await db.product.delete({ where: { id: testPiece.id } });
+    console.log(`   ✔ Deleted in-popup: ${testPiece.barcode} removed from database`);
+
+    // 2d. Testing Batch Document Number Lifecycle (Multi-PC Sharing)
+    console.log('\n2d. Testing Batch Document Number Creation & Cross-PC Loading...');
+    const testBatchDocNo = `BATCH-TEST-${Date.now().toString().slice(-6)}`;
+    const batchItems = await Promise.all([1, 2, 3].map(async (i) => {
+      const barcode = `BDOC ${Date.now().toString().slice(-4)}${i}`;
+      return db.product.create({
+        data: {
+          barcode,
+          sku: barcode.replace(' ', '-'),
+          name: 'Batch Payal Test',
+          category: 'Payal',
+          metal: 'SILVER',
+          purity: '925',
+          grossWeight: 15.000 + i,
+          stoneWeight: 0,
+          netWeight: 15.000 + i,
+          quantity: 1,
+          reorderLevel: 0,
+          purchasePrice: 0,
+          sellingPrice: 1350.00,
+          batchDocNo: testBatchDocNo,
+          status: 'AVAILABLE'
+        }
+      });
+    }));
+    console.log(`   ✔ Created Batch Document "${testBatchDocNo}" with ${batchItems.length} pieces on Client PC`);
+
+    const loadedBatchPieces = await db.product.findMany({
+      where: { batchDocNo: testBatchDocNo },
+      orderBy: { id: 'asc' }
+    });
+    if (loadedBatchPieces.length !== 3) {
+      throw new Error(`Failed to load Batch Document: expected 3 pieces, found ${loadedBatchPieces.length}`);
+    }
+    console.log(`   ✔ Loaded Batch Document "${testBatchDocNo}" on Main PC: 3 pieces loaded with barcodes [${loadedBatchPieces.map(p => p.barcode).join(', ')}]`);
+
+    // Cleanup test batch
+    await db.product.deleteMany({ where: { batchDocNo: testBatchDocNo } });
+    console.log(`   ✔ Cleaned up test batch document`);
+
     // 3. Dashboard Data Calculations
     console.log('\n3. Testing Dashboard Weight Split & Item Breakdown...');
     const stockProducts = await db.product.findMany({
@@ -224,8 +301,8 @@ async function runEndToEndVerification() {
         selectedResource: 'sales', resource: resourceFor('sales'), range: parseDateRange({})
       }},
       { name: 'cashbook/index', data: {
-        title: 'Cashbook', entries: [], entryDate: dateInput(new Date()),
-        summary: { openingBalance: 0, cashIn: 0, cashOut: 0, closingBalance: 0, paymentMethods: {} },
+        title: 'Cashbook', entries: [], fromDate: '2026-08-01', toDate: '2026-08-31', selectedDate: '2026-08-27', methodFilter: '',
+        summary: { totalIn: 10000, totalOut: 4000, cashIn: 5000, cashOut: 2000, upiIn: 3000, upiOut: 1000, bankIn: 2000, bankOut: 1000, netBalance: 6000, cashNet: 3000, upiNet: 2000, bankNet: 1000 },
         customers: []
       }},
       { name: 'contacts/customers', data: {

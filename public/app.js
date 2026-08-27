@@ -937,6 +937,23 @@ document.querySelectorAll('.flash').forEach((el) => {
   let sessionPieces = [];
   let liveRates = null;
   let isSelectingAutocomplete = false;
+  let editingPieceId = null;
+
+  // Batch doc elements
+  const docNoInput = document.getElementById('batchDocNoInput');
+  const newDocBtn = document.getElementById('batchNewDocBtn');
+  const loadDocBtn = document.getElementById('batchLoadDocBtn');
+  const loadModal = document.getElementById('batchLoadDocModal');
+  const loadModalCloseBtn = document.getElementById('batchLoadDocCloseBtn');
+  const loadModalCancelBtn = document.getElementById('batchLoadDocCancelBtn');
+  const docListTbody = document.getElementById('batchDocListTbody');
+
+  const entryPanel = document.getElementById('batchEntryPanel');
+  const entryTitle = document.getElementById('batchEntryTitle');
+  const entrySubtitle = document.getElementById('batchEntrySubtitle');
+  const editingBanner = document.getElementById('batchEditingBanner');
+  const editingBarcodeEl = document.getElementById('batchEditingBarcode');
+  const cancelEditBtn = document.getElementById('batchCancelEditBtn');
 
   // Fetch rates
   async function fetchLiveRates() {
@@ -946,6 +963,17 @@ document.querySelectorAll('.flash').forEach((el) => {
         const data = await res.json();
         liveRates = data.rate;
         updateRateDisplay();
+      }
+    } catch (_) {}
+  }
+
+  // Fetch next Batch Doc No
+  async function fetchNextBatchDocNo() {
+    try {
+      const res = await fetch('/api/inventory/batch-docs/next');
+      if (res.ok) {
+        const data = await res.json();
+        if (docNoInput) docNoInput.value = data.batchDocNo;
       }
     } catch (_) {}
   }
@@ -1073,12 +1101,52 @@ document.querySelectorAll('.flash').forEach((el) => {
   grossWeightInput?.addEventListener('input', syncWeights);
   stoneWeightInput?.addEventListener('input', syncWeights);
 
+  // Edit mode helpers
+  function enterEditMode(piece) {
+    editingPieceId = piece.id;
+    if (editingBanner) {
+      editingBanner.style.display = 'flex';
+      if (editingBarcodeEl) editingBarcodeEl.textContent = piece.barcode;
+    }
+    if (entryPanel) entryPanel.classList.add('is-editing');
+    if (entryTitle) entryTitle.textContent = 'Edit Piece Details';
+    if (entrySubtitle) entrySubtitle.textContent = '(Update weight and press Enter ↵ to save)';
+    if (addPieceBtn) addPieceBtn.textContent = '💾 Save Updates ↵';
+
+    grossWeightInput.value = Number(piece.grossWeight || piece.netWeight).toFixed(3);
+    stoneWeightInput.value = Number(piece.stoneWeight || 0).toFixed(3);
+    netWeightInput.value = Number(piece.netWeight).toFixed(3);
+
+    if (makingTypeSel && piece.makingChargeType) makingTypeSel.value = piece.makingChargeType;
+    if (makingValueInput && piece.makingChargeValue !== undefined) makingValueInput.value = piece.makingChargeValue;
+
+    grossWeightInput.focus();
+    grossWeightInput.select();
+  }
+
+  function exitEditMode() {
+    editingPieceId = null;
+    if (editingBanner) editingBanner.style.display = 'none';
+    if (entryPanel) entryPanel.classList.remove('is-editing');
+    if (entryTitle) entryTitle.textContent = 'Weight Entry';
+    if (addPieceBtn) addPieceBtn.textContent = '+ Add Piece ↵';
+
+    grossWeightInput.value = '';
+    netWeightInput.value = '';
+    grossWeightInput.focus();
+  }
+
+  cancelEditBtn?.addEventListener('click', exitEditMode);
+
   // Open modal
   function openModal() {
     modal.style.display = 'flex';
     modal.setAttribute('aria-hidden', 'false');
     fetchLiveRates();
     updatePurities();
+    if (!docNoInput.value || docNoInput.value === 'BATCH-...') {
+      fetchNextBatchDocNo();
+    }
     setTimeout(() => {
       if (nameInput && !nameInput.value) {
         nameInput.focus();
@@ -1091,6 +1159,7 @@ document.querySelectorAll('.flash').forEach((el) => {
   function closeModal() {
     modal.style.display = 'none';
     modal.setAttribute('aria-hidden', 'true');
+    if (editingPieceId) exitEditMode();
   }
 
   openBtns.forEach((btn) => btn.addEventListener('click', openModal));
@@ -1104,13 +1173,125 @@ document.querySelectorAll('.flash').forEach((el) => {
   });
 
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && modal.style.display === 'flex') {
-      closeModal();
+    if (e.key === 'Escape') {
+      if (loadModal && loadModal.style.display === 'flex') {
+        closeLoadDocModal();
+      } else if (modal.style.display === 'flex') {
+        if (editingPieceId) {
+          exitEditMode();
+        } else {
+          closeModal();
+        }
+      }
     }
   });
 
-  // Add piece AJAX
-  async function addPiece() {
+  // Start new Batch Document
+  newDocBtn?.addEventListener('click', () => {
+    if (sessionPieces.length > 0) {
+      if (!confirm(`Start a fresh Batch Document? All ${sessionPieces.length} items are safely saved under ${docNoInput.value}.`)) return;
+    }
+    sessionPieces = [];
+    if (editingPieceId) exitEditMode();
+    fetchNextBatchDocNo();
+    renderTable();
+  });
+
+  // Load Batch Doc Modal controls
+  function openLoadDocModal() {
+    if (!loadModal) return;
+    loadModal.style.display = 'flex';
+    loadModal.setAttribute('aria-hidden', 'false');
+    fetchBatchDocsList();
+  }
+
+  function closeLoadDocModal() {
+    if (!loadModal) return;
+    loadModal.style.display = 'none';
+    loadModal.setAttribute('aria-hidden', 'true');
+  }
+
+  loadDocBtn?.addEventListener('click', openLoadDocModal);
+  loadModalCloseBtn?.addEventListener('click', closeLoadDocModal);
+  loadModalCancelBtn?.addEventListener('click', closeLoadDocModal);
+
+  async function fetchBatchDocsList() {
+    if (!docListTbody) return;
+    docListTbody.innerHTML = '<tr><td colspan="6" class="center muted" style="padding: 24px;">Loading batch documents...</td></tr>';
+    try {
+      const res = await fetch('/api/inventory/batch-docs');
+      if (!res.ok) throw new Error('Failed to load batch list');
+      const data = await res.json();
+      if (!data.docs || data.docs.length === 0) {
+        docListTbody.innerHTML = '<tr><td colspan="6" class="center muted" style="padding: 28px;">No Batch Documents found yet. Create one by adding pieces!</td></tr>';
+        return;
+      }
+      docListTbody.innerHTML = data.docs.map((d) => `
+        <tr>
+          <td><strong style="font-family:monospace;font-size:13px;color:#825512;">${d.batchDocNo}</strong></td>
+          <td><strong>${d.name || 'Jewellery Pieces'}</strong><small>${d.metal || ''} ${d.purity || ''}</small></td>
+          <td class="right"><strong>${d.pieceCount}</strong></td>
+          <td class="right">${Number(d.totalWeight).toFixed(3)}g</td>
+          <td class="right">${fmt(d.totalValue)}</td>
+          <td class="center">
+            <button type="button" class="button small accent" data-load-batch-btn="${d.batchDocNo}" style="padding:3px 10px;font-size:11px;background:#b47a21;color:#fff;border:none;">
+              Load &amp; Print →
+            </button>
+          </td>
+        </tr>
+      `).join('');
+
+      docListTbody.querySelectorAll('[data-load-batch-btn]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const docNo = btn.dataset.loadBatchBtn;
+          loadBatchDocument(docNo);
+        });
+      });
+
+    } catch (err) {
+      docListTbody.innerHTML = `<tr><td colspan="6" class="center text-danger" style="padding: 20px;">Error loading batches: ${err.message}</td></tr>`;
+    }
+  }
+
+  async function loadBatchDocument(batchDocNo) {
+    try {
+      const res = await fetch(`/api/inventory/batch-docs/${encodeURIComponent(batchDocNo)}`);
+      if (!res.ok) throw new Error('Failed to load batch details');
+      const data = await res.json();
+      sessionPieces = data.products || [];
+      if (docNoInput) docNoInput.value = batchDocNo;
+
+      if (sessionPieces.length > 0) {
+        const first = sessionPieces[0];
+        if (nameInput && first.name) nameInput.value = first.name;
+        if (categoryInput && first.category) categoryInput.value = first.category;
+        if (metalSel && first.metal) {
+          metalSel.value = first.metal;
+          updatePurities();
+          if (puritySel && first.purity) puritySel.value = first.purity;
+        }
+        if (makingTypeSel && first.makingChargeType) makingTypeSel.value = first.makingChargeType;
+        if (makingValueInput && first.makingChargeValue !== undefined) makingValueInput.value = first.makingChargeValue;
+        if (locationInput && first.location) locationInput.value = first.location;
+      }
+
+      closeLoadDocModal();
+      renderTable();
+      updateRateDisplay();
+
+      if (feedbackEl) {
+        feedbackEl.style.display = 'inline-block';
+        feedbackEl.textContent = `✓ Loaded ${sessionPieces.length} pieces from ${batchDocNo}`;
+        setTimeout(() => { feedbackEl.style.display = 'none'; }, 4000);
+      }
+
+    } catch (err) {
+      alert(`Could not load batch: ${err.message}`);
+    }
+  }
+
+  // Save piece (Add new or Update existing)
+  async function savePiece() {
     const name = nameInput.value.trim();
     const category = categoryInput.value.trim();
     const metal = metalSel.value;
@@ -1124,6 +1305,7 @@ document.querySelectorAll('.flash').forEach((el) => {
     const makingChargeType = makingTypeSel.value;
     const makingChargeValue = parseFloat(makingValueInput.value) || 0;
     const location = locationInput ? locationInput.value.trim() : '';
+    const batchDocNo = docNoInput ? docNoInput.value.trim() : '';
 
     if (!name) {
       alert('Please enter an item name.');
@@ -1142,68 +1324,128 @@ document.querySelectorAll('.flash').forEach((el) => {
     }
 
     addPieceBtn.disabled = true;
-    addPieceBtn.textContent = 'Saving...';
+    addPieceBtn.textContent = editingPieceId ? 'Updating...' : 'Saving...';
 
     try {
-      const res = await fetch('/api/inventory/batch-piece', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name,
-          category,
-          metal,
-          purity,
-          grossWeight,
-          stoneWeight,
-          netWeight,
-          makingChargeType,
-          makingChargeValue,
-          location
-        })
-      });
+      if (editingPieceId) {
+        // Update existing piece
+        const res = await fetch(`/api/inventory/batch-piece/${editingPieceId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name,
+            category,
+            metal,
+            purity,
+            grossWeight,
+            stoneWeight,
+            netWeight,
+            makingChargeType,
+            makingChargeValue,
+            location
+          })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed to update piece.');
 
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Failed to add piece.');
+        const idx = sessionPieces.findIndex((p) => p.id === editingPieceId);
+        if (idx !== -1) {
+          sessionPieces[idx] = { ...data.product, isUpdated: true };
+        }
+        renderTable();
+
+        if (feedbackEl) {
+          feedbackEl.style.display = 'inline-block';
+          feedbackEl.textContent = `✓ ${data.product.barcode} updated (${netWeight.toFixed(3)}g)`;
+          setTimeout(() => { feedbackEl.style.display = 'none'; }, 3500);
+        }
+
+        exitEditMode();
+
+      } else {
+        // Create new piece
+        const res = await fetch('/api/inventory/batch-piece', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name,
+            category,
+            metal,
+            purity,
+            grossWeight,
+            stoneWeight,
+            netWeight,
+            makingChargeType,
+            makingChargeValue,
+            location,
+            batchDocNo
+          })
+        });
+
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed to add piece.');
+
+        const p = data.product;
+        sessionPieces.unshift(p);
+        renderTable();
+
+        if (feedbackEl) {
+          feedbackEl.style.display = 'inline-block';
+          feedbackEl.textContent = `✓ ${p.barcode} added (${netWeight.toFixed(3)}g)`;
+          setTimeout(() => { feedbackEl.style.display = 'none'; }, 3500);
+        }
+
+        grossWeightInput.value = '';
+        netWeightInput.value = '';
+        grossWeightInput.focus();
       }
-
-      const p = data.product;
-      sessionPieces.unshift(p);
-      renderTable();
-
-      // Visual feedback
-      if (feedbackEl) {
-        feedbackEl.style.display = 'inline-block';
-        feedbackEl.textContent = `✓ ${p.barcode} added (${netWeight.toFixed(3)}g)`;
-        setTimeout(() => { feedbackEl.style.display = 'none'; }, 3500);
-      }
-
-      // Reset weight input for next piece and keep focus
-      grossWeightInput.value = '';
-      netWeightInput.value = '';
-      grossWeightInput.focus();
 
     } catch (err) {
-      alert(err.message || 'Could not add piece.');
+      alert(err.message || 'Could not save piece.');
     } finally {
       addPieceBtn.disabled = false;
-      addPieceBtn.textContent = '+ Add Piece ↵';
+      addPieceBtn.textContent = editingPieceId ? '💾 Save Updates ↵' : '+ Add Piece ↵';
     }
   }
 
-  addPieceBtn?.addEventListener('click', addPiece);
+  addPieceBtn?.addEventListener('click', savePiece);
   grossWeightInput?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      addPiece();
+      savePiece();
     }
   });
   netWeightInput?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      addPiece();
+      savePiece();
     }
   });
+
+  // Delete piece
+  async function deletePiece(id) {
+    const p = sessionPieces.find((item) => item.id === id);
+    if (!p) return;
+    if (!confirm(`Delete piece ${p.barcode} (${Number(p.netWeight).toFixed(3)}g) from inventory?`)) return;
+
+    try {
+      const res = await fetch(`/api/inventory/batch-piece/${id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Failed to delete piece.');
+
+      sessionPieces = sessionPieces.filter((item) => item.id !== id);
+      if (editingPieceId === id) exitEditMode();
+      renderTable();
+
+      if (feedbackEl) {
+        feedbackEl.style.display = 'inline-block';
+        feedbackEl.textContent = `✓ ${p.barcode} deleted`;
+        setTimeout(() => { feedbackEl.style.display = 'none'; }, 3000);
+      }
+    } catch (err) {
+      alert(err.message || 'Could not delete piece.');
+    }
+  }
 
   // Render added pieces table
   function renderTable() {
@@ -1212,14 +1454,16 @@ document.querySelectorAll('.flash').forEach((el) => {
     if (sessionPieces.length === 0) {
       tbody.innerHTML = `
         <tr class="batch-empty-row">
-          <td colspan="9" class="center muted" style="padding: 28px;">
-            No pieces added in this session yet. Enter a weight above and press Enter ↵ to begin!
+          <td colspan="9" class="center muted" style="padding: 36px 16px;">
+            No pieces in this Batch Document yet.<br>Enter Gross Weight on the left and press <strong>Enter ↵</strong> to begin!
           </td>
         </tr>`;
       if (statsCountEl) statsCountEl.textContent = '0';
       if (statsWeightEl) statsWeightEl.textContent = '0.000';
       if (statsValueEl) statsValueEl.textContent = '₹0.00';
-      if (printBtn) printBtn.disabled = true;
+      modal.querySelectorAll('[data-batch-print-tspl]').forEach((btn) => {
+        btn.disabled = true;
+      });
       return;
     }
 
@@ -1229,19 +1473,26 @@ document.querySelectorAll('.flash').forEach((el) => {
     tbody.innerHTML = sessionPieces.map((p) => {
       totalWeight += Number(p.netWeight) || 0;
       totalValue += Number(p.sellingPrice) || 0;
+      const statusHtml = p.isUpdated
+        ? '<span class="pill warning" style="font-size:11px;padding:2px 6px;">Updated ✓</span>'
+        : '<span class="pill success" style="font-size:11px;padding:2px 6px;">Saved ✓</span>';
+
       return `
         <tr data-piece-id="${p.id}">
           <td class="label-select" style="text-align:center;">
             <input type="checkbox" data-batch-item-cb value="${p.id}" checked>
           </td>
           <td><span class="batch-barcode-pill">${p.barcode}</span></td>
-          <td><strong>${p.name}</strong><small>${p.category}</small></td>
-          <td><span class="metal-dot ${(p.metal || '').toLowerCase()}"></span>${p.metal} ${p.purity || ''}</td>
-          <td class="right">${Number(p.grossWeight || p.netWeight).toFixed(3)}g</td>
+          <td><strong>${p.name}</strong></td>
+          <td><span class="metal-dot ${(p.metal || '').toLowerCase()}"></span>${p.metal}</td>
           <td class="right"><strong>${Number(p.netWeight).toFixed(3)}g</strong></td>
           <td><small>${p.makingChargeType === 'PERCENTAGE' ? `${p.makingChargeValue}%` : `₹${p.makingChargeValue}/g`}</small></td>
           <td class="right"><strong>${p.formattedSellingPrice || fmt(p.sellingPrice)}</strong></td>
-          <td class="center"><span class="pill success" style="font-size:11px;padding:2px 6px;">Saved ✓</span></td>
+          <td class="center">${statusHtml}</td>
+          <td class="center" style="white-space:nowrap;">
+            <button type="button" class="batch-action-btn" data-batch-edit-btn="${p.id}" title="Edit weight or details">✎ Edit</button>
+            <button type="button" class="batch-action-btn delete" data-batch-delete-btn="${p.id}" title="Delete piece">✕</button>
+          </td>
         </tr>`;
     }).join('');
 
@@ -1250,6 +1501,22 @@ document.querySelectorAll('.flash').forEach((el) => {
     if (statsValueEl) statsValueEl.textContent = fmt(totalValue);
     modal.querySelectorAll('[data-batch-print-tspl]').forEach((btn) => {
       btn.disabled = sessionPieces.length === 0;
+    });
+
+    // Wire action buttons
+    tbody.querySelectorAll('[data-batch-edit-btn]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = Number(btn.dataset.batchEditBtn);
+        const piece = sessionPieces.find((item) => item.id === id);
+        if (piece) enterEditMode(piece);
+      });
+    });
+
+    tbody.querySelectorAll('[data-batch-delete-btn]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = Number(btn.dataset.batchDeleteBtn);
+        deletePiece(id);
+      });
     });
   }
 
@@ -1264,6 +1531,7 @@ document.querySelectorAll('.flash').forEach((el) => {
     if (sessionPieces.length === 0) return;
     if (confirm('Clear the session list from this screen? (Saved pieces will remain safely in your database).')) {
       sessionPieces = [];
+      if (editingPieceId) exitEditMode();
       renderTable();
     }
   });
@@ -1307,5 +1575,6 @@ document.querySelectorAll('.flash').forEach((el) => {
     btn.addEventListener('click', printSessionLabels);
   });
 })();
+
 
 

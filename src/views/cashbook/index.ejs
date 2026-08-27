@@ -18,18 +18,18 @@
 <div class="cashbook-summary">
   <article class="stat-card accent-gold">
     <span class="stat-label">Total in</span>
-    <strong style="color:#1f7651"><%- money(s.totalIn) %></strong>
+    <strong class="stat-positive"><%- money(s.totalIn) %></strong>
     <p>Cash <%- money(s.cashIn) %> &nbsp;·&nbsp; UPI <%- money(s.upiIn) %> &nbsp;·&nbsp; Bank <%- money(s.bankIn) %></p>
   </article>
   <article class="stat-card">
     <span class="stat-label">Total out</span>
-    <strong style="color:#b53d36"><%- money(s.totalOut) %></strong>
+    <strong class="stat-negative"><%- money(s.totalOut) %></strong>
     <p>Cash <%- money(s.cashOut) %> &nbsp;·&nbsp; UPI <%- money(s.upiOut) %> &nbsp;·&nbsp; Bank <%- money(s.bankOut) %></p>
   </article>
   <article class="stat-card <%= s.netBalance >= 0 ? 'accent-gold' : '' %>">
     <span class="stat-label">Net balance</span>
-    <strong style="color:<%= s.netBalance >= 0 ? '#1f7651' : '#b53d36' %>"><%- money(s.netBalance) %></strong>
-    <p>For the selected period</p>
+    <strong class="<%= s.netBalance >= 0 ? 'stat-positive' : 'stat-negative' %>"><%- money(s.netBalance) %></strong>
+    <p>Cash <%- money(s.cashNet !== undefined ? s.cashNet : (s.cashIn - s.cashOut)) %> &nbsp;·&nbsp; UPI <%- money(s.upiNet !== undefined ? s.upiNet : (s.upiIn - s.upiOut)) %> &nbsp;·&nbsp; Bank <%- money(s.bankNet !== undefined ? s.bankNet : (s.bankIn - s.bankOut)) %></p>
   </article>
 </div>
 

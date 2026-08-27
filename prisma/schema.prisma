@@ -87,12 +87,15 @@ model Product {
   makingChargeType    MakingChargeType @default(PER_GRAM)
   makingChargeValue   Decimal       @default(0) @db.Decimal(12, 2)
   location            String?
+  batchDocNo          String?
   notes               String?       @db.Text
   status              ProductStatus @default(AVAILABLE)
   createdAt           DateTime      @default(now())
   updatedAt           DateTime      @updatedAt
   saleItems           SaleItem[]
   movements           StockMovement[]
+
+  @@index([batchDocNo])
 }
 
 model StockMovement {

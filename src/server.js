@@ -577,7 +577,13 @@ app.post('/labels/print', express.json(), async (req, res, next) => {
   const isJson = req.is('json') || req.headers['content-type']?.includes('application/json') || req.body?.isJson;
   try {
     let requests;
-    if (Array.isArray(req.body.productIds)) {
+    if (req.body.batchDocNo) {
+      const batchDocProducts = await prisma.product.findMany({
+        where: { batchDocNo: String(req.body.batchDocNo).trim() },
+        orderBy: { id: 'asc' }
+      });
+      requests = batchDocProducts.map(p => ({ id: p.id, copies: 1 }));
+    } else if (Array.isArray(req.body.productIds)) {
       requests = req.body.productIds.map(id => ({ id: Number(id), copies: Number(req.body.copies || 1) }));
     } else {
       requests = labelRequests(req.body);
@@ -618,6 +624,77 @@ app.post('/labels/print', express.json(), async (req, res, next) => {
   }
 });
 
+app.get('/api/inventory/batch-docs/next', async (req, res, next) => {
+  try {
+    const today = dateInput().replace(/-/g, '');
+    const prefix = `BATCH-${today}`;
+    const latest = await prisma.product.findFirst({
+      where: { batchDocNo: { startsWith: prefix } },
+      orderBy: { batchDocNo: 'desc' },
+      select: { batchDocNo: true }
+    });
+    let nextSeq = 1;
+    if (latest?.batchDocNo) {
+      const parts = latest.batchDocNo.split('-');
+      const lastNum = parseInt(parts[parts.length - 1], 10);
+      if (!isNaN(lastNum)) nextSeq = lastNum + 1;
+    }
+    const batchDocNo = `${prefix}-${String(nextSeq).padStart(2, '0')}`;
+    res.json({ batchDocNo });
+  } catch (error) { next(error); }
+});
+
+app.get('/api/inventory/batch-docs', async (req, res, next) => {
+  try {
+    const batchGroups = await prisma.product.groupBy({
+      by: ['batchDocNo'],
+      where: { batchDocNo: { not: null } },
+      _count: { id: true },
+      _sum: { netWeight: true, sellingPrice: true },
+      orderBy: { batchDocNo: 'desc' },
+      take: 30
+    });
+    const docs = await Promise.all(batchGroups.map(async (bg) => {
+      const sample = await prisma.product.findFirst({
+        where: { batchDocNo: bg.batchDocNo },
+        select: { name: true, category: true, metal: true, purity: true, createdAt: true, makingChargeType: true, makingChargeValue: true, location: true }
+      });
+      return {
+        batchDocNo: bg.batchDocNo,
+        pieceCount: bg._count.id,
+        totalWeight: Number(bg._sum.netWeight || 0),
+        totalValue: Number(bg._sum.sellingPrice || 0),
+        createdAt: sample?.createdAt,
+        name: sample?.name,
+        category: sample?.category,
+        metal: sample?.metal,
+        purity: sample?.purity,
+        makingChargeType: sample?.makingChargeType,
+        makingChargeValue: sample?.makingChargeValue,
+        location: sample?.location
+      };
+    }));
+    res.json({ docs });
+  } catch (error) { next(error); }
+});
+
+app.get('/api/inventory/batch-docs/:batchDocNo', async (req, res, next) => {
+  try {
+    const batchDocNo = req.params.batchDocNo.trim();
+    const products = await prisma.product.findMany({
+      where: { batchDocNo },
+      orderBy: { id: 'asc' }
+    });
+    const formatted = products.map((p) => ({
+      ...p,
+      formattedSellingPrice: money(Number(p.sellingPrice || 0)),
+      formattedNetWeight: grams(Number(p.netWeight || 0)),
+      formattedGrossWeight: grams(Number(p.grossWeight || p.netWeight || 0))
+    }));
+    res.json({ batchDocNo, products: formatted, count: formatted.length });
+  } catch (error) { next(error); }
+});
+
 app.post('/api/inventory/batch-piece', express.json(), async (req, res, next) => {
   try {
     const name = String(req.body.name || '').trim();
@@ -630,6 +707,7 @@ app.post('/api/inventory/batch-piece', express.json(), async (req, res, next) =>
     const makingChargeType = ['FIXED', 'PER_GRAM', 'PERCENTAGE'].includes(req.body.makingChargeType) ? req.body.makingChargeType : 'PER_GRAM';
     const makingChargeValue = number(req.body.makingChargeValue);
     const location = req.body.location ? String(req.body.location).trim() : null;
+    const batchDocNo = req.body.batchDocNo ? String(req.body.batchDocNo).trim() : null;
     const notes = req.body.notes ? String(req.body.notes).trim() : null;
 
     if (!name) return res.status(400).json({ error: 'Item name is required.' });
@@ -660,6 +738,7 @@ app.post('/api/inventory/batch-piece', express.json(), async (req, res, next) =>
           makingChargeType,
           makingChargeValue,
           location,
+          batchDocNo,
           notes,
           status: 'AVAILABLE'
         }
@@ -669,7 +748,7 @@ app.post('/api/inventory/batch-piece', express.json(), async (req, res, next) =>
           productId: newProduct.id,
           type: 'OPENING',
           quantity: 1,
-          note: `Batch opening stock · ${barcode}`
+          note: `Batch opening stock · ${barcode}${batchDocNo ? ` · ${batchDocNo}` : ''}`
         }
       });
       // Register in master autocomplete list
@@ -690,6 +769,74 @@ app.post('/api/inventory/batch-piece', express.json(), async (req, res, next) =>
   } catch (error) {
     console.error('Batch piece addition error:', error);
     res.status(500).json({ error: error.message || 'Failed to create piece.' });
+  }
+});
+
+app.put('/api/inventory/batch-piece/:id', express.json(), async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid piece ID.' });
+    const grossWeight = Math.max(0, number(req.body.grossWeight));
+    const stoneWeight = Math.max(0, number(req.body.stoneWeight));
+    const netWeight = number(req.body.netWeight) > 0 ? number(req.body.netWeight) : Math.max(0, grossWeight - stoneWeight);
+    if (netWeight <= 0) return res.status(400).json({ error: 'Net weight must be greater than 0.' });
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const existing = await tx.product.findUniqueOrThrow({ where: { id } });
+      const rateInfo = await getRateForDate(tx);
+      const metal = req.body.metal || existing.metal;
+      const purity = req.body.purity !== undefined ? req.body.purity : existing.purity;
+      const name = req.body.name ? String(req.body.name).trim() : existing.name;
+      const category = req.body.category ? String(req.body.category).trim() : existing.category;
+      const makingChargeType = ['FIXED', 'PER_GRAM', 'PERCENTAGE'].includes(req.body.makingChargeType) ? req.body.makingChargeType : existing.makingChargeType;
+      const makingChargeValue = req.body.makingChargeValue !== undefined ? number(req.body.makingChargeValue) : Number(existing.makingChargeValue);
+      const location = req.body.location !== undefined ? (req.body.location ? String(req.body.location).trim() : null) : existing.location;
+
+      const metalAmount = metalRateFromDailyRate({ metal, purity }, rateInfo.rate) * netWeight;
+      const suggestedPrice = metalAmount + makingAmount(makingChargeType, makingChargeValue, metalAmount, netWeight);
+
+      const product = await tx.product.update({
+        where: { id },
+        data: {
+          name, category, metal, purity,
+          grossWeight: grossWeight || netWeight,
+          stoneWeight,
+          netWeight,
+          sellingPrice: suggestedPrice,
+          makingChargePerGram: makingChargeType === 'PER_GRAM' ? makingChargeValue : 0,
+          makingChargeType,
+          makingChargeValue,
+          location
+        }
+      });
+
+      return {
+        ...product,
+        formattedSellingPrice: money(suggestedPrice),
+        formattedNetWeight: grams(netWeight),
+        formattedGrossWeight: grams(grossWeight || netWeight)
+      };
+    });
+
+    res.json({ success: true, product: updated });
+  } catch (error) {
+    console.error('Batch piece update error:', error);
+    res.status(500).json({ error: error.message || 'Failed to update piece.' });
+  }
+});
+
+app.delete('/api/inventory/batch-piece/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid piece ID.' });
+    await prisma.$transaction(async (tx) => {
+      await tx.stockMovement.deleteMany({ where: { productId: id } });
+      await tx.product.delete({ where: { id } });
+    });
+    res.json({ success: true, id });
+  } catch (error) {
+    console.error('Batch piece delete error:', error);
+    res.status(500).json({ error: error.message || 'Failed to delete piece.' });
   }
 });
 
@@ -1190,6 +1337,9 @@ app.get('/cashbook', async (req, res, next) => {
       else summary[key + 'Out'] = (summary[key + 'Out'] || 0) + amt;
     });
     summary.netBalance = summary.totalIn - summary.totalOut;
+    summary.cashNet = (summary.cashIn || 0) - (summary.cashOut || 0);
+    summary.upiNet = (summary.upiIn || 0) - (summary.upiOut || 0);
+    summary.bankNet = (summary.bankIn || 0) - (summary.bankOut || 0);
     res.render('cashbook/index', { title: 'Cashbook', entries, summary, fromDate, toDate, selectedDate, methodFilter, customers });
   } catch (error) { next(error); }
 });

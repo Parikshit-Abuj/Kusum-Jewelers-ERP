@@ -1,41 +1,33 @@
 <header class="page-header">
-  <div><p class="eyebrow">Shared shop data</p><h1>Network PC setup</h1><p class="muted">Every PC uses one shared ERP database on the main PC through your private LAN or Wi-Fi router; client PCs do not have their own database.</p></div>
-  <a class="button ghost" href="/connection-repair">Change this PC connection</a>
+  <div><p class="eyebrow">Shared shop data</p><h1>Network PC setup</h1></div>
+  <a class="button ghost" href="/connection-repair">Change connection</a>
 </header>
 
 <% if (!canEnableSharing) { %>
-  <article class="panel"><div class="empty-state compact"><span>i</span><h3>This is a client PC</h3><p>Its ERP is already connected to the main database at <strong><%= connection.host %>:<%= connection.port %></strong>. Open this page only on the main database PC to create or change client database access.</p></div></article>
+  <article class="panel"><div class="empty-state compact"><span>i</span><h3>Client PC</h3><p>Connected to main database at <strong><%= connection.host %>:<%= connection.port %></strong>.</p></div></article>
 <% } else { %>
   <section class="content-grid two-thirds">
     <article class="panel">
-      <div class="panel-heading"><div><h2>Enable client PCs</h2><p>Create or reset the one shared MySQL login that can use only this ERP database.</p></div></div>
+      <div class="panel-heading"><div><h2>Enable client PCs</h2></div></div>
       <form method="post" action="/network-setup" class="stack-form">
         <div class="form-grid two compact-fields">
           <label>Database name<input value="<%= connection.database %>" disabled></label>
           <label>MySQL port<input value="<%= connection.port %>" disabled></label>
         </div>
         <div class="form-grid two compact-fields">
-          <label>MySQL administrator user<input name="mysqlUser" required value="root" autocomplete="username"></label>
-          <label>MySQL administrator password<input name="mysqlPassword" type="password" autocomplete="current-password" placeholder="Leave blank only if MySQL has no password"></label>
+          <label>MySQL admin user<input name="mysqlUser" required value="root" autocomplete="username"></label>
+          <label>MySQL admin password<input name="mysqlPassword" type="password" autocomplete="current-password" placeholder="Leave blank if none"></label>
         </div>
         <div class="form-grid two compact-fields">
-          <label>Shared ERP database username<input name="databaseUser" required value="kusum_erp_shared" minlength="3" autocomplete="off"></label>
-          <label>Shared ERP database password<input name="databasePassword" type="password" required minlength="12" autocomplete="new-password" placeholder="At least 12 characters"></label>
+          <label>Shared ERP username<input name="databaseUser" required value="kusum_erp_shared" minlength="3" autocomplete="off"></label>
+          <label>Shared ERP password<input name="databasePassword" type="password" required minlength="8" autocomplete="new-password"></label>
         </div>
-        <p class="form-hint">Choose and safely note this one shared ERP database username and password. Enter these exact values on every client PC. This is not a second database and it is not the MySQL root account.</p>
-        <button class="button" type="submit">Enable client PC access</button>
+        <button class="button" type="submit">Save client PC access</button>
       </form>
     </article>
     <aside class="panel network-info">
-      <h2>Use on client PCs</h2>
-      <ol>
-        <li>Connect both PCs to the same router, switch, or direct LAN cable.</li>
-        <li>Use one of this main PC’s LAN IP addresses below as the MySQL server name.</li>
-        <li>Enter the same MySQL port <strong><%= connection.port %></strong>, database <strong><%= connection.database %></strong>, and shared ERP database login created here.</li>
-      </ol>
-      <h3>Main PC LAN address</h3>
-      <% if (addresses.length) { %><div class="network-addresses"><% addresses.forEach((address) => { %><code><%= address %></code><% }) %></div><% } else { %><p class="muted">No LAN address detected. Connect this PC to the shop network, then reopen this page.</p><% } %>
-      <p class="form-hint">Allow the selected MySQL port through Windows Firewall only on Private networks / Local subnet. Do not expose it to the internet.</p>
+      <h2>Main PC LAN IP</h2>
+      <% if (addresses.length) { %><div class="network-addresses"><% addresses.forEach((address) => { %><code><%= address %></code><% }) %></div><% } else { %><p class="muted">No LAN address detected.</p><% } %>
     </aside>
   </section>
 <% } %>

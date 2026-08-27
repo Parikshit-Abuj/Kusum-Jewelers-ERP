@@ -86,13 +86,13 @@
         </select>
       </label>
       <label>Gross weight (g)
-        <input name="grossWeight" data-weight-gross type="number" step="0.001" min="0" value="<%= product?.grossWeight || 0 %>">
+        <input name="grossWeight" data-weight-gross type="number" step="0.001" min="0" placeholder="0.000" value="<%= product ? product.grossWeight : '' %>">
       </label>
       <label>Stone weight (g)
-        <input name="stoneWeight" data-weight-stone type="number" step="0.001" min="0" value="<%= product?.stoneWeight || 0 %>">
+        <input name="stoneWeight" data-weight-stone type="number" step="0.001" min="0" placeholder="0.000" value="<%= product ? product.stoneWeight : '' %>">
       </label>
       <label>Net weight (g) *
-        <input name="netWeight" data-weight-net type="number" step="0.001" min="0" required value="<%= product?.netWeight || 0 %>">
+        <input name="netWeight" data-weight-net type="number" step="0.001" min="0" required placeholder="0.000" value="<%= product ? product.netWeight : '' %>">
       </label>
     </div>
   </section>
@@ -104,7 +104,6 @@
       <div class="rate-readout">
         <span>Today's metal rate</span>
         <strong data-product-rate>₹ — / g</strong>
-        <small>Applied automatically during billing</small>
       </div>
       <label>Making charge method
         <select name="makingChargeType" data-making-type>
@@ -114,12 +113,11 @@
         </select>
       </label>
       <label>Making charge value (₹ or %)
-        <input name="makingChargeValue" data-making-value type="number" step="0.01" min="0" value="<%= product?.makingChargeValue || 0 %>">
+        <input name="makingChargeValue" data-making-value type="number" step="0.01" min="0" placeholder="0.00" value="<%= product ? product.makingChargeValue : '' %>">
       </label>
       <div class="rate-readout accent">
         <span>Suggested total (ex. GST)</span>
         <strong data-product-suggested>₹0.00</strong>
-        <small>Metal value + making charge</small>
       </div>
     </div>
   </section>
@@ -129,7 +127,7 @@
     <h2>Stock &amp; details</h2>
     <div class="form-grid <%= product ? 'three' : 'two' %>">
       <label>Purchase cost (₹)
-        <input name="purchasePrice" type="number" step="0.01" min="0" value="<%= product?.purchasePrice || 0 %>">
+        <input name="purchasePrice" type="number" step="0.01" min="0" placeholder="0.00" value="<%= product ? product.purchasePrice : '' %>">
       </label>
       <label>Storage / counter location
         <input name="location" placeholder="e.g. Gold Tray A, Safe 3" value="<%= product?.location || '' %>">
