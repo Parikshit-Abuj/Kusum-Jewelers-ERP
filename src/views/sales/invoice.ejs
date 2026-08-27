@@ -67,7 +67,7 @@
         <td><%= index + 1 %></td>
         <td>
           <strong><%= product.name || 'Jewellery item' %></strong>
-          <small><%= product.barcode || product.sku || 'Sold item' %><%= product.category ? ` · ${product.category}` : '' %></small>
+          <small><%= product.barcode || product.sku || 'Sold item' %><%= product.category ? ` · ${product.category}` : '' %><% if (item.hsnCode || item.huidCode) { %> · <% if (item.hsnCode) { %>HSN: <%= item.hsnCode %><% } %><% if (item.hsnCode && item.huidCode) { %> | <% } %><% if (item.huidCode) { %>HUID: <%= item.huidCode %><% } %><% } %></small>
         </td>
         <td><%= product.purity || product.metal || '—' %></td>
         <td><%= grams(item.weight || product.netWeight) %></td>

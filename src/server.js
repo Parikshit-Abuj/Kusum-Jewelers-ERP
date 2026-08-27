@@ -83,13 +83,17 @@ function saleRows(body) {
   const makingTypes = asArray(body.makingChargeType);
   const makingValues = asArray(body.makingChargeValue);
   const taxableAmounts = asArray(body.taxableAmount);
+  const hsnCodes = asArray(body.hsnCode);
+  const huidCodes = asArray(body.huidCode);
   return productIds.map((productId, index) => ({
     productId: Number(productId),
     quantity: Math.max(1, Math.floor(number(quantities[index], 1))),
     metalRate: number(metalRates[index]),
     makingChargeType: ['FIXED', 'PER_GRAM', 'PERCENTAGE'].includes(makingTypes[index]) ? makingTypes[index] : null,
     makingChargeValue: makingValues[index] === undefined || makingValues[index] === '' ? null : number(makingValues[index]),
-    taxableAmount: taxableAmounts[index] === '' || taxableAmounts[index] === undefined ? null : Math.max(0, number(taxableAmounts[index]))
+    taxableAmount: taxableAmounts[index] === '' || taxableAmounts[index] === undefined ? null : Math.max(0, number(taxableAmounts[index])),
+    hsnCode: (hsnCodes[index] || '').trim() || null,
+    huidCode: (huidCodes[index] || '').trim() || null
   })).filter((item) => item.productId > 0);
 }
 
@@ -547,9 +551,74 @@ app.get('/inventory', async (req, res, next) => {
   try {
     const q = (req.query.q || '').trim();
     const availableStock = { status: 'AVAILABLE', quantity: { gt: 0 } };
-    const where = q ? { AND: [availableStock, { OR: [
-      { barcode: { contains: q } }, { sku: { contains: q } }, { name: { contains: q } }, { category: { contains: q } }
-    ] }] } : availableStock;
+    let where = availableStock;
+    if (q) {
+      // Clean unit suffixes like "g", "gm", "gms", "gram", "grams"
+      const cleanQ = q.replace(/(\d+(?:\.\d+)?)\s*(?:g|gm|gms|gram|grams)\b/gi, '$1');
+      const tokens = cleanQ.split(/\s+/).filter(Boolean);
+      const numTokens = [];
+      const textTokens = [];
+      for (const token of tokens) {
+        if (/^\d+(?:\.\d+)?$/.test(token)) {
+          numTokens.push(parseFloat(token));
+        } else {
+          textTokens.push(token);
+        }
+      }
+
+      const conditions = [availableStock];
+      if (numTokens.length > 0 && textTokens.length > 0) {
+        // Both weight and text (e.g. "payal 18.25" or "18.25 silver chain")
+        const textStr = textTokens.join(' ');
+        const weightVal = numTokens[0];
+        conditions.push({
+          AND: [
+            {
+              OR: [
+                { name: { contains: textStr } },
+                { category: { contains: textStr } },
+                { barcode: { contains: textStr } },
+                { sku: { contains: textStr } }
+              ]
+            },
+            {
+              netWeight: {
+                gte: weightVal - 0.005,
+                lte: weightVal + 0.005
+              }
+            }
+          ]
+        });
+      } else if (numTokens.length > 0) {
+        // Search by numeric value: matches netWeight tolerance OR barcode / sku / name text containing the query
+        const weightVal = numTokens[0];
+        conditions.push({
+          OR: [
+            { barcode: { contains: q } },
+            { sku: { contains: q } },
+            { name: { contains: q } },
+            { category: { contains: q } },
+            {
+              netWeight: {
+                gte: weightVal - 0.005,
+                lte: weightVal + 0.005
+              }
+            }
+          ]
+        });
+      } else {
+        // Pure text search (e.g. "payal" or "silver")
+        conditions.push({
+          OR: [
+            { barcode: { contains: q } },
+            { sku: { contains: q } },
+            { name: { contains: q } },
+            { category: { contains: q } }
+          ]
+        });
+      }
+      where = { AND: conditions };
+    }
     const products = await prisma.product.findMany({ where, orderBy: [{ status: 'asc' }, { updatedAt: 'desc' }] });
     const printerStatus = await resolveLabelPrinter(req.query.checkPrinter === '1');
     const printerTransport = configuredLabelPrinter();
@@ -1098,11 +1167,12 @@ app.get('/sales', async (req, res, next) => {
     const from = req.query.from || '';
     const to = req.query.to || '';
     const where = {};
-    // Text search: customer name OR invoice number
+    // Text search: customer name OR customer phone OR invoice number
     if (q) {
       where.OR = [
         { invoiceNumber: { contains: q } },
-        { customer: { name: { contains: q } } }
+        { customer: { name: { contains: q } } },
+        { customer: { phone: { contains: q } } }
       ];
     }
     // Date range filter on saleDate
@@ -1253,7 +1323,9 @@ app.post('/sales', async (req, res, next) => {
           grossWeight: row.product.grossWeight, quantity: row.quantity, weight: row.weight, unitPrice: row.metalRate,
           metalRate: row.metalRate, metalAmount: row.metalAmount, makingCharge: row.makingCharge,
           makingChargeType: row.makingChargeType, makingChargeValue: row.makingChargeValue,
-          taxableAmount: row.taxableAmount, lineTotal: row.taxableAmount
+          taxableAmount: row.taxableAmount, lineTotal: row.taxableAmount,
+          hsnCode: row.hsnCode || null,
+          huidCode: row.huidCode || null
         })) }
       } });
       if (balance > 0) await tx.customerLedger.create({
@@ -1419,8 +1491,19 @@ app.post('/cashbook/:id/delete', async (req, res, next) => {
 /* ── URD Purchases (old gold/silver from customers) ────── */
 app.get('/urd-purchases', async (req, res, next) => {
   try {
-    const purchases = await prisma.urdPurchase.findMany({ include: { customer: true }, orderBy: { purchaseDate: 'desc' } });
-    res.render('urd-purchases/index', { title: 'URD Purchases', purchases });
+    const q = (req.query.q || '').trim();
+    const where = {};
+    if (q) {
+      where.OR = [
+        { purchaseNumber: { contains: q } },
+        { customer: { name: { contains: q } } },
+        { customer: { phone: { contains: q } } },
+        { metal: { contains: q } },
+        { description: { contains: q } }
+      ];
+    }
+    const purchases = await prisma.urdPurchase.findMany({ where, include: { customer: true }, orderBy: { purchaseDate: 'desc' } });
+    res.render('urd-purchases/index', { title: 'URD Purchases', purchases, q });
   } catch (error) { next(error); }
 });
 

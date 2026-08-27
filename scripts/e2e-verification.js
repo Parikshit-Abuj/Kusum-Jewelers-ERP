@@ -146,6 +146,117 @@ async function runEndToEndVerification() {
     await db.product.deleteMany({ where: { batchDocNo: testBatchDocNo } });
     console.log(`   ✔ Cleaned up test batch document`);
 
+    // 2e. Testing New Search Filters & HSN / HUID PDF Integration
+    console.log('\n2e. Testing New Search Filters & HSN/HUID Integration...');
+    
+    // (a) URD Purchases Search
+    const sampleCustomer = await db.customer.findFirst({ where: { phone: { not: null } } });
+    if (sampleCustomer) {
+      const phoneDigits = sampleCustomer.phone.slice(-4);
+      const urdByPhone = await db.urdPurchase.findMany({
+        where: {
+          OR: [
+            { customer: { phone: { contains: phoneDigits } } },
+            { customer: { name: { contains: sampleCustomer.name } } }
+          ]
+        },
+        include: { customer: true }
+      });
+      console.log(`   ✔ URD Search by customer name "${sampleCustomer.name}" / phone suffix "${phoneDigits}" returned ${urdByPhone.length} purchases`);
+    }
+
+    // (b) Sales Search by Customer Mobile
+    if (sampleCustomer) {
+      const phoneQuery = sampleCustomer.phone.slice(-5);
+      const salesByPhone = await db.sale.findMany({
+        where: {
+          OR: [
+            { customer: { phone: { contains: phoneQuery } } },
+            { customer: { name: { contains: sampleCustomer.name } } }
+          ]
+        },
+        include: { customer: true }
+      });
+      console.log(`   ✔ Sales Search by customer phone "${phoneQuery}" returned ${salesByPhone.length} invoices`);
+    }
+
+    // (c) Inventory Search by Net Weight / Item Name
+    const testInvProduct = await db.product.findFirst({ where: { quantity: { gt: 0 } } });
+    if (testInvProduct) {
+      const wt = Number(testInvProduct.netWeight);
+      const nameToken = testInvProduct.name.split(' ')[0];
+      
+      // Search by exact weight
+      const weightMatches = await db.product.findMany({
+        where: {
+          quantity: { gt: 0 },
+          netWeight: { gte: wt - 0.005, lte: wt + 0.005 }
+        }
+      });
+      console.log(`   ✔ Inventory Search by Net Weight (${wt}g): found ${weightMatches.length} items (including ${testInvProduct.barcode || testInvProduct.sku})`);
+
+      // Search by name and net weight
+      const combinedMatches = await db.product.findMany({
+        where: {
+          quantity: { gt: 0 },
+          name: { contains: nameToken },
+          netWeight: { gte: wt - 0.005, lte: wt + 0.005 }
+        }
+      });
+      console.log(`   ✔ Inventory Search by Name & Weight ("${nameToken}" + ${wt}g): found ${combinedMatches.length} items`);
+    }
+
+    // (d) Sale with HSN Code & HUID Code + PDF test
+    const testSale = await db.sale.create({
+      data: {
+        invoiceNumber: `INV-TEST-${Date.now().toString().slice(-4)}`,
+        subtotal: 5000,
+        discount: 0,
+        gstRate: 3,
+        gstAmount: 150,
+        total: 5150,
+        paid: 5150,
+        balance: 0,
+        paymentMethod: 'CASH',
+        items: {
+          create: [{
+            productBarcode: 'TEST-HSN-HUID',
+            productSku: 'TEST-SKU',
+            productName: 'Gold Necklace with Hallmark',
+            productMetal: 'GOLD',
+            productPurity: '22K',
+            grossWeight: 8.500,
+            quantity: 1,
+            weight: 8.500,
+            unitPrice: 6500,
+            metalRate: 6500,
+            metalAmount: 55250,
+            makingCharge: 2000,
+            makingChargeType: 'FIXED',
+            makingChargeValue: 2000,
+            taxableAmount: 57250,
+            lineTotal: 57250,
+            hsnCode: '71131910',
+            huidCode: 'HD892K'
+          }]
+        }
+      },
+      include: { items: true, customer: true }
+    });
+    console.log(`   ✔ Created Test Sale ${testSale.invoiceNumber} with HSN: ${testSale.items[0].hsnCode}, HUID: ${testSale.items[0].huidCode}`);
+
+    // Verify PDF generation does not throw
+    const { writeSaleInvoice } = require('../src/lib/sale-invoice-pdf');
+    const stream = require('stream');
+    const mockRes = new stream.PassThrough();
+    mockRes.setHeader = () => {};
+    writeSaleInvoice(mockRes, testSale);
+    console.log(`   ✔ Generated PDF invoice with HSN & HUID successfully`);
+
+    // Clean up test sale
+    await db.sale.delete({ where: { id: testSale.id } });
+    console.log(`   ✔ Cleaned up test sale`);
+
     // 3. Dashboard Data Calculations
     console.log('\n3. Testing Dashboard Weight Split & Item Breakdown...');
     const stockProducts = await db.product.findMany({

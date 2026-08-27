@@ -139,9 +139,9 @@ function drawItem(doc, item, y) {
   const metalRate = Number(item.metalRate || 0) > 0 ? item.metalRate : item.unitPrice;
   const lineAmount = Number(item.taxableAmount || 0) > 0 ? item.taxableAmount : item.lineTotal;
   doc.fillColor('#111').font('Helvetica').fontSize(8.1);
-  doc.text('', 22, textY, { width: 37, align: 'center' }); // HSN is intentionally blank: ERP has no HSN master field.
+  doc.text(item.hsnCode || '', 22, textY, { width: 37, align: 'center', ellipsis: true });
   doc.font('Helvetica-Bold').fontSize(8.1).text(product.name || 'Jewellery item', 66, textY, { width: 107, ellipsis: true });
-  doc.font('Helvetica').fontSize(7.8).text('', 180, textY, { width: 46, align: 'center' }); // HUID is not stored in ERP.
+  doc.font('Helvetica').fontSize(7.8).text(item.huidCode || '', 180, textY, { width: 46, align: 'center', ellipsis: true });
   doc.text(product.purity || product.metal || '-', 232, textY, { width: 31, align: 'center', ellipsis: true });
   doc.text(String(item.quantity || 1), 269, textY, { width: 21, align: 'center' });
   doc.text(weight(product.grossWeight), 296, textY, { width: 47, align: 'right' });

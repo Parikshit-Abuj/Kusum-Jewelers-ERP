@@ -157,6 +157,8 @@ model SaleItem {
   makingChargeValue Decimal @default(0) @db.Decimal(12, 2)
   taxableAmount Decimal @default(0) @db.Decimal(12, 2)
   lineTotal   Decimal @db.Decimal(12, 2)
+  hsnCode     String? @db.VarChar(50)
+  huidCode    String? @db.VarChar(50)
   sale        Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
   product     Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
 }
