@@ -1,0 +1,165 @@
+<!-- Batch Inventory Piece Addition Modal -->
+<div class="modal-overlay" id="batchPieceModal" style="display:none;" aria-hidden="true">
+  <div class="modal-card batch-modal-card">
+    <header class="modal-header">
+      <div>
+        <div class="batch-badge">⚡ FAST-TRACK BATCH ENTRY</div>
+        <h2>Batch Add Jewellery Pieces</h2>
+        <p class="muted">Add 20, 50, or 100+ pieces of the same item. Set details once, then simply enter weight for each piece.</p>
+      </div>
+      <button type="button" class="modal-close-btn" data-batch-modal-close aria-label="Close modal">✕</button>
+    </header>
+
+    <div class="modal-body">
+      <!-- Section 1: Item Template (Configured Once) -->
+      <div class="batch-config-panel">
+        <div class="batch-section-title">
+          <span>1</span>
+          <strong>Item Template & Making Charges</strong>
+          <small>(Applied automatically to all pieces in this batch)</small>
+        </div>
+        <div class="form-grid four compact-fields">
+          <label>
+            <span>Item Name *</span>
+            <div class="autocomplete-wrap">
+              <input type="text" id="batchItemName" placeholder="e.g. Silver Payal Chain" autocomplete="off" data-batch-name-input required>
+              <ul class="autocomplete-list" data-batch-name-list></ul>
+            </div>
+          </label>
+          <label>
+            <span>Category *</span>
+            <input type="text" id="batchCategory" placeholder="e.g. Payal, Ring, Chain" data-batch-category-input required>
+          </label>
+          <label>
+            <span>Metal *</span>
+            <select id="batchMetal" data-batch-metal>
+              <option value="GOLD">Gold</option>
+              <option value="SILVER" selected>Silver</option>
+              <option value="PLATINUM">Platinum</option>
+              <option value="OTHER">Other</option>
+            </select>
+          </label>
+          <label>
+            <span>Purity *</span>
+            <select id="batchPurity" data-batch-purity>
+              <option value="925" selected>Silver 925</option>
+              <option value="PURE">Pure Silver</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="form-grid three compact-fields" style="margin-top: 10px;">
+          <label>
+            <span>Making Charge Type</span>
+            <select id="batchMakingType" data-batch-making-type>
+              <option value="PER_GRAM" selected>Per Gram (₹ / g)</option>
+              <option value="PERCENTAGE">Percentage (%)</option>
+              <option value="FIXED">Fixed per Piece (₹)</option>
+            </select>
+          </label>
+          <label>
+            <span>Making Charge Value *</span>
+            <input type="number" id="batchMakingValue" min="0" step="0.01" value="0" placeholder="e.g. 15 or 10%" data-batch-making-value required>
+          </label>
+          <label>
+            <span>Location / Tray (optional)</span>
+            <input type="text" id="batchLocation" placeholder="e.g. Tray 1, Shelf B" data-batch-location>
+          </label>
+        </div>
+        <div class="batch-rate-indicator" data-batch-rate-badge>
+          <span class="dot">●</span>
+          <span data-batch-rate-text>Live Rate: ₹90.00/g</span>
+        </div>
+      </div>
+
+      <!-- Section 2: Rapid Weight Stream Entry -->
+      <div class="batch-entry-panel">
+        <div class="batch-section-title">
+          <span>2</span>
+          <strong>Rapid Weight Entry</strong>
+          <small>(Type weight and hit Enter ↵ to add piece immediately)</small>
+        </div>
+
+        <form id="batchWeightForm" class="batch-weight-form" onsubmit="return false;">
+          <div class="weight-input-group">
+            <label class="weight-label primary-weight">
+              <span>Gross Weight (g) *</span>
+              <input type="number" id="batchGrossWeight" step="0.001" min="0.001" placeholder="0.000" required autocomplete="off" autofocus data-batch-gross-weight>
+            </label>
+            <label class="weight-label">
+              <span>Stone Wt (g)</span>
+              <input type="number" id="batchStoneWeight" step="0.001" min="0" value="0" placeholder="0.000" autocomplete="off" data-batch-stone-weight>
+            </label>
+            <label class="weight-label primary-weight">
+              <span>Net Weight (g) *</span>
+              <input type="number" id="batchNetWeight" step="0.001" min="0.001" placeholder="0.000" required autocomplete="off" data-batch-net-weight>
+            </label>
+            <button type="submit" class="button accent batch-add-btn" id="batchAddPieceBtn" data-batch-add-btn>
+              + Add Piece ↵
+            </button>
+          </div>
+          <div class="batch-live-hint">
+            <span>💡 <strong>Pro Tip:</strong> Enter Gross Weight and press <kbd>Enter</kbd>. Net weight auto-fills and barcode is generated instantly!</span>
+            <span id="batchFeedback" class="batch-feedback" style="display:none;"></span>
+          </div>
+        </form>
+      </div>
+
+      <!-- Section 3: Added Pieces Table & Direct Barcode Printing -->
+      <div class="batch-results-panel">
+        <div class="batch-results-header">
+          <div class="batch-stats-summary">
+            <strong>Pieces Added This Session: <span class="highlight" data-batch-stats-count>0</span></strong>
+            <span class="stat-sep">·</span>
+            <span>Total Weight: <strong data-batch-stats-weight>0.000</strong> g</span>
+            <span class="stat-sep">·</span>
+            <span>Total Suggested Value: <strong data-batch-stats-value>₹0.00</strong></span>
+          </div>
+          <div class="batch-print-actions">
+            <button type="button" class="button ghost small" data-batch-clear-list>Clear List</button>
+            <button type="button" class="button secondary small" id="batchPrintBtn" data-batch-print-tspl disabled>
+              ▥ Print Selected Labels (TSPL)
+            </button>
+          </div>
+        </div>
+
+        <div class="table-wrap batch-table-wrap">
+          <table class="batch-items-table">
+            <thead>
+              <tr>
+                <th class="label-select" style="width:40px;">
+                  <input type="checkbox" data-batch-select-all checked title="Select all added barcodes">
+                </th>
+                <th>Barcode</th>
+                <th>Item Name</th>
+                <th>Metal / Purity</th>
+                <th class="right">Gross Wt</th>
+                <th class="right">Net Wt</th>
+                <th>Making</th>
+                <th class="right">Suggested Value</th>
+                <th class="center">Status</th>
+              </tr>
+            </thead>
+            <tbody data-batch-items-tbody>
+              <tr class="batch-empty-row">
+                <td colspan="9" class="center muted" style="padding: 28px;">
+                  No pieces added in this session yet. Enter a weight above and press Enter ↵ to begin!
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <footer class="modal-footer">
+      <div class="modal-footer-hint">
+        <span>Labels will print serially in exact order so you can easily stick them piece-by-piece.</span>
+      </div>
+      <div class="modal-footer-actions">
+        <button type="button" class="button ghost" data-batch-modal-close>Close</button>
+        <button type="button" class="button primary" data-batch-close-refresh>Done & View in Inventory →</button>
+      </div>
+    </footer>
+  </div>
+</div>

@@ -573,27 +573,123 @@ app.post('/labels/test-print', async (req, res) => {
   }
 });
 
-app.post('/labels/print', async (req, res, next) => {
+app.post('/labels/print', express.json(), async (req, res, next) => {
+  const isJson = req.is('json') || req.headers['content-type']?.includes('application/json') || req.body?.isJson;
   try {
-    const requests = labelRequests(req.body);
-    if (!requests.length) return redirectWith(res, '/inventory', 'error', 'Select at least one inventory item to print labels.');
+    let requests;
+    if (Array.isArray(req.body.productIds)) {
+      requests = req.body.productIds.map(id => ({ id: Number(id), copies: Number(req.body.copies || 1) }));
+    } else {
+      requests = labelRequests(req.body);
+    }
+    if (!requests.length) {
+      if (isJson) return res.status(400).json({ error: 'Select at least one inventory item to print labels.' });
+      return redirectWith(res, '/inventory', 'error', 'Select at least one inventory item to print labels.');
+    }
     const printerTransport = configuredLabelPrinter();
-    if (printerTransport.mode === 'WINDOWS' && !printerTransport.name) return redirectWith(res, '/inventory', 'error', 'Set the installed Windows printer name before sending labels.');
+    if (printerTransport.mode === 'WINDOWS' && !printerTransport.name) {
+      if (isJson) return res.status(400).json({ error: 'Set the installed Windows printer name before sending labels.' });
+      return redirectWith(res, '/inventory', 'error', 'Set the installed Windows printer name before sending labels.');
+    }
     const printerStatus = await resolveLabelPrinter(true);
     if (!printerStatus.available) throw new Error(printerStatus.message);
     const printerName = printerStatus.name;
     const products = await prisma.product.findMany({ where: { id: { in: requests.map((row) => row.id) } } });
-    if (products.length !== requests.length) return redirectWith(res, '/inventory', 'error', 'One or more selected inventory items could not be found.');
+    if (products.length !== requests.length) {
+      if (isJson) return res.status(400).json({ error: 'One or more selected inventory items could not be found.' });
+      return redirectWith(res, '/inventory', 'error', 'One or more selected inventory items could not be found.');
+    }
+    const orderedProducts = requests.map(r => products.find(p => p.id === r.id)).filter(Boolean);
     const labels = requests.flatMap(({ id, copies }) => {
-      const product = products.find((item) => item.id === id);
+      const product = orderedProducts.find((item) => item.id === id);
       if (!product.barcode) throw new Error(`${product.name} has no barcode yet.`);
       return Array.from({ length: copies }, (_, copyIndex) => ({ product, copyIndex: copyIndex + 1, copies }));
     });
     const tspl = buildTsplJob(labels);
     const result = await sendTsplToPrinter(printerTransport.mode === 'TCP' ? printerTransport : { mode: 'WINDOWS', name: printerName }, tspl);
-    redirectWith(res, '/inventory', 'message', `${labels.length} native TSPL label${labels.length === 1 ? '' : 's'} ${printerTransport.mode === 'TCP' ? 'sent to' : 'queued to'} ${printerName}. ${result}`);
+    const successMsg = `${labels.length} native TSPL label${labels.length === 1 ? '' : 's'} ${printerTransport.mode === 'TCP' ? 'sent to' : 'queued to'} ${printerName}. ${result}`;
+    if (isJson) {
+      return res.json({ success: true, message: successMsg, count: labels.length });
+    }
+    redirectWith(res, '/inventory', 'message', successMsg);
   } catch (error) {
+    if (isJson) return res.status(500).json({ error: error.message || 'Could not send native TSPL labels to the printer.' });
     redirectWith(res, '/inventory', 'error', error.message || 'Could not send native TSPL labels to the printer.');
+  }
+});
+
+app.post('/api/inventory/batch-piece', express.json(), async (req, res, next) => {
+  try {
+    const name = String(req.body.name || '').trim();
+    const category = String(req.body.category || '').trim();
+    const metal = req.body.metal || 'SILVER';
+    const purity = req.body.purity || null;
+    const grossWeight = Math.max(0, number(req.body.grossWeight));
+    const stoneWeight = Math.max(0, number(req.body.stoneWeight));
+    const netWeight = number(req.body.netWeight) > 0 ? number(req.body.netWeight) : Math.max(0, grossWeight - stoneWeight);
+    const makingChargeType = ['FIXED', 'PER_GRAM', 'PERCENTAGE'].includes(req.body.makingChargeType) ? req.body.makingChargeType : 'PER_GRAM';
+    const makingChargeValue = number(req.body.makingChargeValue);
+    const location = req.body.location ? String(req.body.location).trim() : null;
+    const notes = req.body.notes ? String(req.body.notes).trim() : null;
+
+    if (!name) return res.status(400).json({ error: 'Item name is required.' });
+    if (!category) return res.status(400).json({ error: 'Category is required.' });
+    if (netWeight <= 0) return res.status(400).json({ error: 'Net weight must be greater than 0.' });
+
+    const product = await prisma.$transaction(async (tx) => {
+      const rateInfo = await getRateForDate(tx);
+      const metalAmount = metalRateFromDailyRate({ metal, purity }, rateInfo.rate) * netWeight;
+      const suggestedPrice = metalAmount + makingAmount(makingChargeType, makingChargeValue, metalAmount, netWeight);
+      const barcode = await nextBarcode(tx, metal, purity);
+      const newProduct = await tx.product.create({
+        data: {
+          barcode,
+          sku: barcode.replaceAll(' ', '-').toUpperCase(),
+          name,
+          category,
+          metal,
+          purity,
+          grossWeight: grossWeight || netWeight,
+          stoneWeight,
+          netWeight,
+          quantity: 1,
+          reorderLevel: 0,
+          purchasePrice: 0,
+          sellingPrice: suggestedPrice,
+          makingChargePerGram: makingChargeType === 'PER_GRAM' ? makingChargeValue : 0,
+          makingChargeType,
+          makingChargeValue,
+          location,
+          notes,
+          status: 'AVAILABLE'
+        }
+      });
+      await tx.stockMovement.create({
+        data: {
+          productId: newProduct.id,
+          type: 'OPENING',
+          quantity: 1,
+          note: `Batch opening stock · ${barcode}`
+        }
+      });
+      // Register in master autocomplete list
+      await tx.itemName.upsert({
+        where: { name },
+        create: { name, category },
+        update: {}
+      });
+      return {
+        ...newProduct,
+        formattedSellingPrice: money(suggestedPrice),
+        formattedNetWeight: grams(netWeight),
+        formattedGrossWeight: grams(grossWeight || netWeight)
+      };
+    });
+
+    res.json({ success: true, product });
+  } catch (error) {
+    console.error('Batch piece addition error:', error);
+    res.status(500).json({ error: error.message || 'Failed to create piece.' });
   }
 });
 

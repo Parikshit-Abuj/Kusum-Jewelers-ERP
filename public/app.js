@@ -880,3 +880,420 @@ document.querySelectorAll('.flash').forEach((el) => {
   searchInput.addEventListener('input', filter);
 })();
 
+/* ═══════════════════════════════════════════════════════════════
+   8. FAST BATCH INVENTORY PIECE ADDER MODAL
+   ═══════════════════════════════════════════════════════════════ */
+(function initBatchInventoryModal() {
+  const modal = document.getElementById('batchPieceModal');
+  if (!modal) return;
+
+  const openBtns = document.querySelectorAll('[data-open-batch-modal]');
+  const closeBtns = modal.querySelectorAll('[data-batch-modal-close]');
+  const closeRefreshBtn = modal.querySelector('[data-batch-close-refresh]');
+
+  // Inputs & elements
+  const nameInput = document.getElementById('batchItemName');
+  const nameList = modal.querySelector('[data-batch-name-list]');
+  const categoryInput = document.getElementById('batchCategory');
+  const metalSel = document.getElementById('batchMetal');
+  const puritySel = document.getElementById('batchPurity');
+  const makingTypeSel = document.getElementById('batchMakingType');
+  const makingValueInput = document.getElementById('batchMakingValue');
+  const locationInput = document.getElementById('batchLocation');
+  const rateTextEl = modal.querySelector('[data-batch-rate-text]');
+
+  const grossWeightInput = document.getElementById('batchGrossWeight');
+  const stoneWeightInput = document.getElementById('batchStoneWeight');
+  const netWeightInput = document.getElementById('batchNetWeight');
+  const addPieceBtn = document.getElementById('batchAddPieceBtn');
+  const feedbackEl = document.getElementById('batchFeedback');
+
+  const statsCountEl = modal.querySelector('[data-batch-stats-count]');
+  const statsWeightEl = modal.querySelector('[data-batch-stats-weight]');
+  const statsValueEl = modal.querySelector('[data-batch-stats-value]');
+  const selectAllCb = modal.querySelector('[data-batch-select-all]');
+  const clearListBtn = modal.querySelector('[data-batch-clear-list]');
+  const printBtn = document.getElementById('batchPrintBtn');
+  const tbody = modal.querySelector('[data-batch-items-tbody]');
+
+  // Purity options
+  const purityOptions = {
+    GOLD: [
+      { value: '22K', label: '22K Gold' },
+      { value: '24K', label: '24K Gold' },
+    ],
+    SILVER: [
+      { value: '925', label: 'Silver 925' },
+      { value: 'PURE', label: 'Pure Silver' },
+    ],
+    PLATINUM: [
+      { value: 'PT950', label: 'Platinum 950' },
+    ],
+    OTHER: [
+      { value: '', label: 'Standard / None' },
+    ],
+  };
+
+  let sessionPieces = [];
+  let liveRates = null;
+  let isSelectingAutocomplete = false;
+
+  // Fetch rates
+  async function fetchLiveRates() {
+    try {
+      const res = await fetch('/api/rates');
+      if (res.ok) {
+        const data = await res.json();
+        liveRates = data.rate;
+        updateRateDisplay();
+      }
+    } catch (_) {}
+  }
+
+  function updatePurities() {
+    const metal = metalSel.value;
+    const opts = purityOptions[metal] || purityOptions.OTHER;
+    puritySel.innerHTML = '';
+    opts.forEach((o, i) => {
+      const opt = document.createElement('option');
+      opt.value = o.value;
+      opt.textContent = o.label;
+      if (i === 0) opt.selected = true;
+      puritySel.appendChild(opt);
+    });
+    updateRateDisplay();
+  }
+
+  function updateRateDisplay() {
+    if (!rateTextEl) return;
+    if (!liveRates) {
+      rateTextEl.textContent = 'Live Rate: Check daily rates';
+      return;
+    }
+    const metal = metalSel.value;
+    const purity = puritySel.value;
+    let rate = 0;
+    if (metal === 'GOLD') {
+      rate = purity === '24K' ? Number(liveRates.gold24k) : Number(liveRates.gold22k);
+    } else if (metal === 'SILVER') {
+      rate = Number(liveRates.silver);
+    }
+    rateTextEl.textContent = rate > 0
+      ? `Live Rate (${metal} ${purity}): ₹${rate.toFixed(2)}/g`
+      : `Live Rate: Custom metal pricing`;
+  }
+
+  function autoDetectMetal(nameText) {
+    if (!nameText || !metalSel) return;
+    const lower = nameText.toLowerCase();
+    if (lower.includes('silver') || lower.includes('chandi')) {
+      if (metalSel.value !== 'SILVER') {
+        metalSel.value = 'SILVER';
+        updatePurities();
+      }
+    } else if (lower.includes('gold') || lower.includes('sona')) {
+      if (metalSel.value !== 'GOLD') {
+        metalSel.value = 'GOLD';
+        updatePurities();
+      }
+    } else if (lower.includes('platinum')) {
+      if (metalSel.value !== 'PLATINUM') {
+        metalSel.value = 'PLATINUM';
+        updatePurities();
+      }
+    }
+  }
+
+  // Autocomplete for master item names
+  let debounceTimer = null;
+  function searchItemNames(q) {
+    clearTimeout(debounceTimer);
+    if (!q || q.length < 1) {
+      if (nameList) { nameList.innerHTML = ''; nameList.classList.remove('open'); }
+      return;
+    }
+    debounceTimer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/item-names?q=${encodeURIComponent(q)}`);
+        if (!res.ok) return;
+        const items = await res.json();
+        if (!nameList) return;
+        nameList.innerHTML = '';
+        if (items.length === 0) {
+          nameList.classList.remove('open');
+          return;
+        }
+        items.forEach((item) => {
+          const li = document.createElement('li');
+          li.className = 'autocomplete-item';
+          li.innerHTML = `<strong>${item.name}</strong><small>${item.category}</small>`;
+          li.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            isSelectingAutocomplete = true;
+            nameInput.value = item.name;
+            if (categoryInput && item.category) categoryInput.value = item.category;
+            autoDetectMetal(item.name);
+            nameList.innerHTML = '';
+            nameList.classList.remove('open');
+            setTimeout(() => { isSelectingAutocomplete = false; }, 150);
+            if (grossWeightInput) grossWeightInput.focus();
+          });
+          nameList.appendChild(li);
+        });
+        nameList.classList.add('open');
+      } catch (_) {}
+    }, 180);
+  }
+
+  if (nameInput) {
+    nameInput.addEventListener('input', () => {
+      if (!isSelectingAutocomplete) {
+        searchItemNames(nameInput.value.trim());
+      }
+      autoDetectMetal(nameInput.value);
+    });
+    nameInput.addEventListener('blur', () => {
+      setTimeout(() => {
+        if (nameList) nameList.classList.remove('open');
+      }, 200);
+    });
+  }
+
+  metalSel?.addEventListener('change', updatePurities);
+  puritySel?.addEventListener('change', updateRateDisplay);
+
+  // Weight auto-sync
+  function syncWeights() {
+    const gross = parseFloat(grossWeightInput.value) || 0;
+    const stone = parseFloat(stoneWeightInput.value) || 0;
+    const net = Math.max(0, gross - stone);
+    netWeightInput.value = net > 0 ? net.toFixed(3) : '';
+  }
+
+  grossWeightInput?.addEventListener('input', syncWeights);
+  stoneWeightInput?.addEventListener('input', syncWeights);
+
+  // Open modal
+  function openModal() {
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    fetchLiveRates();
+    updatePurities();
+    setTimeout(() => {
+      if (nameInput && !nameInput.value) {
+        nameInput.focus();
+      } else if (grossWeightInput) {
+        grossWeightInput.focus();
+      }
+    }, 100);
+  }
+
+  function closeModal() {
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+  }
+
+  openBtns.forEach((btn) => btn.addEventListener('click', openModal));
+  closeBtns.forEach((btn) => btn.addEventListener('click', closeModal));
+
+  closeRefreshBtn?.addEventListener('click', () => {
+    closeModal();
+    if (sessionPieces.length > 0) {
+      window.location.href = '/inventory';
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal.style.display === 'flex') {
+      closeModal();
+    }
+  });
+
+  // Add piece AJAX
+  async function addPiece() {
+    const name = nameInput.value.trim();
+    const category = categoryInput.value.trim();
+    const metal = metalSel.value;
+    const purity = puritySel.value;
+    const grossWeight = parseFloat(grossWeightInput.value) || 0;
+    const stoneWeight = parseFloat(stoneWeightInput.value) || 0;
+    let netWeight = parseFloat(netWeightInput.value) || 0;
+    if (netWeight <= 0 && grossWeight > 0) {
+      netWeight = Math.max(0, grossWeight - stoneWeight);
+    }
+    const makingChargeType = makingTypeSel.value;
+    const makingChargeValue = parseFloat(makingValueInput.value) || 0;
+    const location = locationInput ? locationInput.value.trim() : '';
+
+    if (!name) {
+      alert('Please enter an item name.');
+      nameInput.focus();
+      return;
+    }
+    if (!category) {
+      alert('Please enter a category.');
+      categoryInput.focus();
+      return;
+    }
+    if (netWeight <= 0) {
+      alert('Please enter a valid weight.');
+      grossWeightInput.focus();
+      return;
+    }
+
+    addPieceBtn.disabled = true;
+    addPieceBtn.textContent = 'Saving...';
+
+    try {
+      const res = await fetch('/api/inventory/batch-piece', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          category,
+          metal,
+          purity,
+          grossWeight,
+          stoneWeight,
+          netWeight,
+          makingChargeType,
+          makingChargeValue,
+          location
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to add piece.');
+      }
+
+      const p = data.product;
+      sessionPieces.unshift(p);
+      renderTable();
+
+      // Visual feedback
+      if (feedbackEl) {
+        feedbackEl.style.display = 'inline-block';
+        feedbackEl.textContent = `✓ ${p.barcode} added (${netWeight.toFixed(3)}g)`;
+        setTimeout(() => { feedbackEl.style.display = 'none'; }, 3500);
+      }
+
+      // Reset weight input for next piece and keep focus
+      grossWeightInput.value = '';
+      netWeightInput.value = '';
+      grossWeightInput.focus();
+
+    } catch (err) {
+      alert(err.message || 'Could not add piece.');
+    } finally {
+      addPieceBtn.disabled = false;
+      addPieceBtn.textContent = '+ Add Piece ↵';
+    }
+  }
+
+  addPieceBtn?.addEventListener('click', addPiece);
+  grossWeightInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addPiece();
+    }
+  });
+  netWeightInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addPiece();
+    }
+  });
+
+  // Render added pieces table
+  function renderTable() {
+    if (!tbody) return;
+
+    if (sessionPieces.length === 0) {
+      tbody.innerHTML = `
+        <tr class="batch-empty-row">
+          <td colspan="9" class="center muted" style="padding: 28px;">
+            No pieces added in this session yet. Enter a weight above and press Enter ↵ to begin!
+          </td>
+        </tr>`;
+      if (statsCountEl) statsCountEl.textContent = '0';
+      if (statsWeightEl) statsWeightEl.textContent = '0.000';
+      if (statsValueEl) statsValueEl.textContent = '₹0.00';
+      if (printBtn) printBtn.disabled = true;
+      return;
+    }
+
+    let totalWeight = 0;
+    let totalValue = 0;
+
+    tbody.innerHTML = sessionPieces.map((p) => {
+      totalWeight += Number(p.netWeight) || 0;
+      totalValue += Number(p.sellingPrice) || 0;
+      return `
+        <tr data-piece-id="${p.id}">
+          <td class="label-select" style="text-align:center;">
+            <input type="checkbox" data-batch-item-cb value="${p.id}" checked>
+          </td>
+          <td><span class="batch-barcode-pill">${p.barcode}</span></td>
+          <td><strong>${p.name}</strong><small>${p.category}</small></td>
+          <td><span class="metal-dot ${(p.metal || '').toLowerCase()}"></span>${p.metal} ${p.purity || ''}</td>
+          <td class="right">${Number(p.grossWeight || p.netWeight).toFixed(3)}g</td>
+          <td class="right"><strong>${Number(p.netWeight).toFixed(3)}g</strong></td>
+          <td><small>${p.makingChargeType === 'PERCENTAGE' ? `${p.makingChargeValue}%` : `₹${p.makingChargeValue}/g`}</small></td>
+          <td class="right"><strong>${p.formattedSellingPrice || fmt(p.sellingPrice)}</strong></td>
+          <td class="center"><span class="pill success" style="font-size:11px;padding:2px 6px;">Saved ✓</span></td>
+        </tr>`;
+    }).join('');
+
+    if (statsCountEl) statsCountEl.textContent = sessionPieces.length;
+    if (statsWeightEl) statsWeightEl.textContent = totalWeight.toFixed(3);
+    if (statsValueEl) statsValueEl.textContent = fmt(totalValue);
+    if (printBtn) printBtn.disabled = false;
+  }
+
+  // Select all checkbox
+  selectAllCb?.addEventListener('change', () => {
+    const cbs = tbody.querySelectorAll('[data-batch-item-cb]');
+    cbs.forEach((cb) => { cb.checked = selectAllCb.checked; });
+  });
+
+  // Clear list
+  clearListBtn?.addEventListener('click', () => {
+    if (sessionPieces.length === 0) return;
+    if (confirm('Clear the session list from this screen? (Saved pieces will remain in your database).')) {
+      sessionPieces = [];
+      renderTable();
+    }
+  });
+
+  // Direct TSPL Label Printing
+  printBtn?.addEventListener('click', async () => {
+    const checked = Array.from(tbody.querySelectorAll('[data-batch-item-cb]:checked')).map((cb) => Number(cb.value));
+    if (checked.length === 0) {
+      alert('Please select at least one piece to print barcodes.');
+      return;
+    }
+
+    printBtn.disabled = true;
+    printBtn.textContent = 'Sending to printer...';
+
+    try {
+      const res = await fetch('/labels/print', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productIds: checked, copies: 1, isJson: true })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to print labels.');
+      }
+      alert(`✓ ${data.message || `${checked.length} labels sent to printer!`}`);
+    } catch (err) {
+      alert(`Printer error: ${err.message}`);
+    } finally {
+      printBtn.disabled = false;
+      printBtn.textContent = '▥ Print Selected Labels (TSPL)';
+    }
+  });
+})();
+

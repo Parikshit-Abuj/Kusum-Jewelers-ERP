@@ -30,7 +30,7 @@ async function runEndToEndVerification() {
     console.log(`   ✔ Database connected. Products: ${products}, Customers: ${customers}, Sales: ${sales}, Rates: ${rates}, Cashbook: ${cashbook}, URD: ${urds}, ItemNames: ${itemNames}`);
 
     // 2. Item Names Master & Autocomplete API
-    console.log('\n2. Testing Item Names Master...');
+    console.log('\n2. Testing Item Names Master & Batch Piece Creation...');
     const sampleItem = await db.itemName.findFirst();
     if (sampleItem) {
       const q = sampleItem.name.slice(0, 3).toLowerCase();
@@ -44,8 +44,29 @@ async function runEndToEndVerification() {
         take: 5
       });
       console.log(`   ✔ Autocomplete query for "${q}" returned ${matches.length} matches:`, matches.map(m => `${m.name} (${m.category})`).join(', '));
+    }
+
+    // 2b. Batch Piece Multi-PC Concurrency Simulation
+    console.log('\n2b. Simulating Multi-PC Concurrent Batch Piece Creation...');
+    const batchWeights = [18.250, 19.100, 17.850, 20.400, 18.900];
+    const createdBatchBarcodes = [];
+
+    await Promise.all(batchWeights.map(async (wt, idx) => {
+      const prefix = 'S';
+      const sequence = await db.barcodeSequence.upsert({
+        where: { prefix },
+        create: { prefix, lastNumber: 1 },
+        update: { lastNumber: { increment: 1 } }
+      });
+      const barcode = `${prefix} ${sequence.lastNumber}`;
+      createdBatchBarcodes.push({ idx, barcode, weight: wt });
+    }));
+
+    const uniqueBarcodes = new Set(createdBatchBarcodes.map(b => b.barcode));
+    if (uniqueBarcodes.size === batchWeights.length) {
+      console.log(`   ✔ Concurrent Batch Addition: 5 pieces received unique atomic barcodes with 0 collisions:`, createdBatchBarcodes.map(b => `${b.barcode} (${b.weight}g)`).join(', '));
     } else {
-      console.log('   ℹ No ItemName records in DB yet.');
+      throw new Error(`Barcode collision detected in concurrent batch creation! Set size: ${uniqueBarcodes.size}, Expected: ${batchWeights.length}`);
     }
 
     // 3. Dashboard Data Calculations

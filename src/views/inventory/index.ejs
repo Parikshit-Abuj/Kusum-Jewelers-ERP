@@ -1,14 +1,21 @@
 <header class="page-header">
   <div><p class="eyebrow">Stock control</p><h1>Inventory</h1><p class="muted">Track pieces, purity, weight, value and location.</p></div>
-  <div class="header-actions"><a class="button ghost" href="/data-management?resource=inventory">Export / archive</a><a class="button ghost" href="/printer-setup">Printer setup</a><button class="button ghost" type="submit" form="label-test-form">Test TSC</button><button class="button secondary" type="submit" form="label-print-form" data-label-print-button disabled>▥ Send TSPL labels</button><a class="button" href="/inventory/new">+ Add jewellery item</a></div>
+  <div class="header-actions">
+    <a class="button ghost" href="/data-management?resource=inventory">Export / archive</a>
+    <a class="button ghost" href="/printer-setup">Printer setup</a>
+    <button class="button ghost" type="submit" form="label-test-form">Test TSC</button>
+    <button class="button secondary" type="submit" form="label-print-form" data-label-print-button disabled>▥ Send TSPL labels</button>
+    <button type="button" class="button accent" data-open-batch-modal style="background:#b47a21;color:#fff;border:none;box-shadow:0 2px 6px rgba(180,122,33,.3);">⚡ Batch Add Pieces</button>
+    <a class="button" href="/inventory/new">+ Add single item</a>
+  </div>
 </header>
 <form id="label-test-form" method="post" action="/labels/test-print"></form>
 <section class="panel">
-  <form class="search-bar" method="get"><input name="q" value="<%= typeof q !== 'undefined' ? q : '' %>" placeholder="Search barcode, SKU, item name or category"><button class="button secondary" type="submit">Search</button><% if (typeof q !== 'undefined' && q) { %><a class="button ghost" href="/inventory">Clear</a><% } %></form>
+  <form class="search-bar" method="get"><input name="q" value="<%= typeof q !== 'undefined' ? q : '' %>" placeholder="Search barcode, item name or category"><button class="button secondary" type="submit">Search</button><% if (typeof q !== 'undefined' && q) { %><a class="button ghost" href="/inventory">Clear</a><% } %></form>
   <% if (products.length) { %><form id="label-print-form" class="label-batch-toolbar" method="post" action="/labels/print"><div><strong data-label-count>0 selected</strong><span>Uses the supplied GOLD.PRN and SILVER.PRN layouts and sends native TSPL only—never a barcode PDF.</span><% if (typeof printerStatus !== 'undefined' && printerStatus) { %><div class="printer-status <%= printerStatus.available ? 'is-ready' : 'is-missing' %>"><span><%= printerStatus.available ? '●' : '!' %></span><%= printerStatus.message %><a href="/inventory?<%= typeof q !== 'undefined' && q ? `q=${encodeURIComponent(q)}&` : '' %>checkPrinter=1">Recheck printer</a></div><% } %></div><label class="printer-name"><%= (typeof printerTransport !== 'undefined' && printerTransport?.mode === 'TCP') ? 'Direct TCP printer' : 'Windows printer queue' %><input name="printerName" readonly value="<%= typeof printerName !== 'undefined' ? printerName : '' %>"></label><button class="button small" type="submit" data-label-print-button disabled>Send to TSC TTP-244 Pro</button></form><div class="table-wrap"><table class="inventory-table"><thead><tr><th class="label-select"><input type="checkbox" data-label-select-all title="Select all visible items"></th><th>Barcode / item</th><th>Metal / purity</th><th>Weight</th><th>Stock</th><th>Making</th><th class="right">Suggested value</th><th>Location</th><th></th></tr></thead><tbody>
   <% products.forEach((product) => { %><tr>
     <td class="label-select"><input form="label-print-form" type="checkbox" name="productId" value="<%= product.id %>" data-label-select <%= product.barcode ? '' : 'disabled' %>><label class="label-copies">Copies<input form="label-print-form" name="copy_<%= product.id %>" type="number" min="1" max="50" value="1" aria-label="Label copies for <%= product.name %>"></label></td>
-    <td><strong class="barcode-label"><%= product.barcode || 'No barcode' %></strong><small><%= product.name %> · <%= product.category %> · <%= product.sku %></small></td>
+    <td><strong class="barcode-label"><%= product.barcode || 'No barcode' %></strong><small><%= product.name %> · <%= product.category %></small></td>
     <td><span class="metal-dot <%= product.metal.toLowerCase() %>"></span><%= product.metal %><small><%= product.purity || '—' %></small></td>
     <td><strong><%= grams(product.netWeight) %></strong><small>Gross: <%= grams(product.grossWeight) %></small></td>
     <td><span class="pill <%= product.quantity <= product.reorderLevel ? 'warning' : 'success' %>"><%= product.quantity %> piece<%= product.quantity === 1 ? '' : 's' %></span><small>Reorder at <%= product.reorderLevel %></small></td>
@@ -17,5 +24,8 @@
     <td><%= product.location || '—' %></td>
     <td class="actions"><a class="icon-button" title="Edit item" href="/inventory/<%= product.id %>/edit">✎</a></td>
   </tr><% }) %>
-  </tbody></table></div><% } else { %><div class="empty-state"><span>◇</span><h3>No jewellery items found</h3><p>Add stock to start billing and tracking inventory.</p><a class="button" href="/inventory/new">Add first item</a></div><% } %>
+  </tbody></table></div><% } else { %><div class="empty-state"><span>◇</span><h3>No jewellery items found</h3><p>Add stock to start billing and tracking inventory.</p><button type="button" class="button" data-open-batch-modal>⚡ Batch Add Pieces</button></div><% } %>
 </section>
+
+<%- include('_batch_modal') %>
+

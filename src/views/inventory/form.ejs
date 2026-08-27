@@ -4,7 +4,12 @@
     <h1><%= product ? 'Edit jewellery item' : 'Add jewellery item' %></h1>
     <p class="muted">Set the weight once — billing picks up the day's live metal rate automatically.</p>
   </div>
-  <a class="button ghost" href="/inventory">Cancel</a>
+  <div class="header-actions">
+    <% if (!product) { %>
+    <button type="button" class="button accent" data-open-batch-modal style="background:#b47a21;color:#fff;border:none;box-shadow:0 2px 6px rgba(180,122,33,.3);">⚡ Fast Batch Add (100+ pcs)</button>
+    <% } %>
+    <a class="button ghost" href="/inventory">Cancel</a>
+  </div>
 </header>
 
 <% if (!rateInfo.rate) { %>
@@ -31,6 +36,7 @@
   <!-- Section 1: Identity -->
   <section class="form-section">
     <h2>Item identity</h2>
+    <input type="hidden" name="sku" value="<%= product?.sku || '' %>">
     <div class="form-grid three">
       <% if (product) { %>
       <label>Barcode number
@@ -43,9 +49,6 @@
         <small>Generated automatically when you save</small>
       </div>
       <% } %>
-      <label>Item code (SKU)
-        <input name="sku" placeholder="Defaults to barcode if left blank" value="<%= product?.sku || '' %>">
-      </label>
       <label>Item name *
         <div class="autocomplete-wrap">
           <input name="name" required placeholder="e.g. Gold bridal necklace" value="<%= product?.name || '' %>" data-item-name-input autocomplete="off">
@@ -158,3 +161,6 @@
     </button>
   </footer>
 </form>
+
+<%- include('_batch_modal') %>
+
