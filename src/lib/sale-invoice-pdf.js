@@ -91,9 +91,17 @@ function invoiceHeader(doc, sale, continuation = false) {
   box(doc, page.left, y, page.right - page.left, height);
   line(doc, split, y, split, y + height, 0.45);
 
-  labelValue(doc, 'Name', sale.customer?.name || 'Walk-in customer', 27, 105, y + 10, 192, 9.2);
-  labelValue(doc, 'Address', sale.customer?.address || '-', 27, 105, y + 29, 192, 8.5);
-  labelValue(doc, 'Mob.', sale.customer?.phone || '-', 27, 105, y + 57, 192, 8.8);
+  const pan = (sale.customerPan || sale.customer?.panNumber || '').trim();
+  if (pan) {
+    labelValue(doc, 'Name', sale.customer?.name || 'Walk-in customer', 27, 105, y + 8, 192, 9.0);
+    labelValue(doc, 'Address', sale.customer?.address || '-', 27, 105, y + 24, 192, 8.2);
+    labelValue(doc, 'Mob.', sale.customer?.phone || '-', 27, 105, y + 43, 192, 8.5);
+    labelValue(doc, 'PAN', pan, 27, 105, y + 59, 192, 8.5);
+  } else {
+    labelValue(doc, 'Name', sale.customer?.name || 'Walk-in customer', 27, 105, y + 10, 192, 9.2);
+    labelValue(doc, 'Address', sale.customer?.address || '-', 27, 105, y + 29, 192, 8.5);
+    labelValue(doc, 'Mob.', sale.customer?.phone || '-', 27, 105, y + 57, 192, 8.8);
+  }
 
   labelValue(doc, 'Invoice No.', sale.invoiceNumber, 326, 410, y + 10, 148, 9.2);
   labelValue(doc, 'Date & Time', formattedDateTime(sale.saleDate), 326, 410, y + 31, 148, 8.5);

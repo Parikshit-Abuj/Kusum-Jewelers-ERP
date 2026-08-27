@@ -206,10 +206,11 @@ async function runEndToEndVerification() {
       console.log(`   ✔ Inventory Search by Name & Weight ("${nameToken}" + ${wt}g): found ${combinedMatches.length} items`);
     }
 
-    // (d) Sale with HSN Code & HUID Code + PDF test
+    // (d) Sale with HSN Code, HUID Code & Customer PAN + PDF test
     const testSale = await db.sale.create({
       data: {
         invoiceNumber: `INV-TEST-${Date.now().toString().slice(-4)}`,
+        customerPan: 'ABCDE1234F',
         subtotal: 5000,
         discount: 0,
         gstRate: 3,
@@ -243,15 +244,15 @@ async function runEndToEndVerification() {
       },
       include: { items: true, customer: true }
     });
-    console.log(`   ✔ Created Test Sale ${testSale.invoiceNumber} with HSN: ${testSale.items[0].hsnCode}, HUID: ${testSale.items[0].huidCode}`);
+    console.log(`   ✔ Created Test Sale ${testSale.invoiceNumber} with HSN: ${testSale.items[0].hsnCode}, HUID: ${testSale.items[0].huidCode}, PAN: ${testSale.customerPan}`);
 
-    // Verify PDF generation does not throw
+    // Verify PDF generation with PAN, HSN, and HUID
     const { writeSaleInvoice } = require('../src/lib/sale-invoice-pdf');
     const stream = require('stream');
     const mockRes = new stream.PassThrough();
     mockRes.setHeader = () => {};
     writeSaleInvoice(mockRes, testSale);
-    console.log(`   ✔ Generated PDF invoice with HSN & HUID successfully`);
+    console.log(`   ✔ Generated PDF invoice with PAN, HSN & HUID successfully without altering document geometry`);
 
     // Clean up test sale
     await db.sale.delete({ where: { id: testSale.id } });

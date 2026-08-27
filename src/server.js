@@ -63,6 +63,61 @@ app.use((req, res, next) => {
   next();
 });
 
+// ── Real-Time Multi-PC Synchronization Hub (SSE) ─────────────
+const sseClients = new Set();
+
+function broadcastSyncEvent(type, payload = {}) {
+  const data = JSON.stringify({ type, payload, timestamp: Date.now() });
+  const msg = `event: message\ndata: ${data}\n\n`;
+  for (const client of sseClients) {
+    try {
+      client.write(msg);
+    } catch (_) {
+      sseClients.delete(client);
+    }
+  }
+}
+
+// 25-second keep-alive heartbeat
+setInterval(() => {
+  for (const client of sseClients) {
+    try {
+      client.write(': keep-alive\n\n');
+    } catch (_) {
+      sseClients.delete(client);
+    }
+  }
+}, 25000);
+
+app.get('/favicon.ico', (req, res) => res.status(204).end());
+
+app.get('/api/realtime-events', (req, res) => {
+  if (req.socket) {
+    req.socket.setKeepAlive(true);
+    req.socket.setNoDelay(true);
+  }
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform, no-store',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+  if (res.flushHeaders) res.flushHeaders();
+  res.write(`event: connected\ndata: ${JSON.stringify({ status: 'connected', activeClients: sseClients.size + 1 })}\n\n`);
+  sseClients.add(res);
+
+  const cleanup = () => {
+    sseClients.delete(res);
+    try { res.end(); } catch (_) {}
+  };
+
+  req.on('close', cleanup);
+  req.on('end', cleanup);
+  res.on('close', cleanup);
+  res.on('finish', cleanup);
+  res.on('error', cleanup);
+});
+
 function redirectWith(res, route, type, message) {
   const separator = route.includes('?') ? '&' : '?';
   res.redirect(`${route}${separator}${type}=${encodeURIComponent(message)}`);
@@ -179,13 +234,21 @@ function validCustomerPhone(phone) {
 async function resolveBillingCustomer(tx, body) {
   const phone = normalizePhone(body.customerPhone);
   if (!validCustomerPhone(phone)) throw new Error('Enter a valid customer mobile number (10 to 15 digits) before billing.');
+  const panNumber = String(body.customerPan || body.existingCustomerPan || '').trim().toUpperCase() || null;
   const existing = await tx.customer.findUnique({ where: { phone } });
-  if (existing) return existing;
+  if (existing) {
+    if (panNumber && existing.panNumber !== panNumber) {
+      await tx.customer.update({ where: { id: existing.id }, data: { panNumber } });
+      existing.panNumber = panNumber;
+    }
+    return existing;
+  }
   const name = String(body.customerName || '').trim();
   if (!name) throw new Error('This mobile number is new. Enter the customer name to create their customer ledger.');
   return tx.customer.create({ data: {
     phone, name, email: String(body.customerEmail || '').trim() || null,
-    address: String(body.customerAddress || '').trim() || null
+    address: String(body.customerAddress || '').trim() || null,
+    panNumber
   } });
 }
 
@@ -538,11 +601,15 @@ app.get('/rates', async (req, res, next) => {
 app.post('/rates', async (req, res, next) => {
   try {
     const rateDate = req.body.rateDate || dateInput();
+    const gold22k = number(req.body.gold22k);
+    const gold24k = number(req.body.gold24k);
+    const silver = number(req.body.silver);
     await prisma.dailyRate.upsert({
       where: { rateDate },
-      create: { rateDate, gold22k: number(req.body.gold22k), gold24k: number(req.body.gold24k), silver: number(req.body.silver), note: req.body.note || null },
-      update: { gold22k: number(req.body.gold22k), gold24k: number(req.body.gold24k), silver: number(req.body.silver), note: req.body.note || null }
+      create: { rateDate, gold22k, gold24k, silver, note: req.body.note || null },
+      update: { gold22k, gold24k, silver, note: req.body.note || null }
     });
+    broadcastSyncEvent('RATES_UPDATED', { date: rateDate, gold22k, gold24k, silver });
     redirectWith(res, `/rates?date=${rateDate}`, 'message', `Rates saved for ${rateDate}.`);
   } catch (error) { next(error); }
 });
@@ -834,6 +901,7 @@ app.post('/api/inventory/batch-piece', express.json(), async (req, res, next) =>
       };
     });
 
+    broadcastSyncEvent('INVENTORY_CHANGED', { action: 'BATCH_PIECE_ADDED', batchDocNo: product.batchDocNo, product });
     res.json({ success: true, product });
   } catch (error) {
     console.error('Batch piece addition error:', error);
@@ -887,6 +955,7 @@ app.put('/api/inventory/batch-piece/:id', express.json(), async (req, res, next)
       };
     });
 
+    broadcastSyncEvent('INVENTORY_CHANGED', { action: 'PIECE_UPDATED', id, product: updated, batchDocNo: updated.batchDocNo });
     res.json({ success: true, product: updated });
   } catch (error) {
     console.error('Batch piece update error:', error);
@@ -898,10 +967,14 @@ app.delete('/api/inventory/batch-piece/:id', async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid piece ID.' });
+    let batchDocNo = null;
     await prisma.$transaction(async (tx) => {
+      const prod = await tx.product.findUnique({ where: { id }, select: { batchDocNo: true } });
+      batchDocNo = prod?.batchDocNo || null;
       await tx.stockMovement.deleteMany({ where: { productId: id } });
       await tx.product.delete({ where: { id } });
     });
+    broadcastSyncEvent('INVENTORY_CHANGED', { action: 'PIECE_DELETED', id, batchDocNo });
     res.json({ success: true, id });
   } catch (error) {
     console.error('Batch piece delete error:', error);
@@ -952,6 +1025,7 @@ app.post('/inventory', async (req, res, next) => {
       await tx.itemName.upsert({ where: { name: req.body.name.trim() }, create: { name: req.body.name.trim(), category: req.body.category.trim() }, update: {} });
       return product;
     });
+    broadcastSyncEvent('INVENTORY_CHANGED', { action: 'PRODUCT_CREATED', barcode: product.barcode, name: product.name });
     redirectWith(res, '/inventory', 'message', `${product.barcode} saved to inventory.`);
   } catch (error) {
     if (error.code === 'P2002') return redirectWith(res, '/inventory/new', 'error', 'SKU already exists.');
@@ -982,6 +1056,7 @@ app.post('/inventory/:id', async (req, res, next) => {
        makingChargePerGram: req.body.makingChargeType === 'PER_GRAM' ? number(req.body.makingChargeValue) : 0,
        makingChargeType: req.body.makingChargeType, makingChargeValue: number(req.body.makingChargeValue), location: req.body.location || null, notes: req.body.notes || null, status: req.body.status
     } });
+    broadcastSyncEvent('INVENTORY_CHANGED', { action: 'PRODUCT_UPDATED', id });
     redirectWith(res, '/inventory', 'message', 'Item details updated.');
   } catch (error) { next(error); }
 });
@@ -998,6 +1073,7 @@ app.post('/inventory/:id/adjust', async (req, res, next) => {
       await tx.product.update({ where: { id }, data: { quantity: nextQuantity, status: nextQuantity ? 'AVAILABLE' : 'SOLD_OUT' } });
       await tx.stockMovement.create({ data: { productId: id, type: delta > 0 ? 'ADJUSTMENT_IN' : 'ADJUSTMENT_OUT', quantity: delta, note: req.body.note || 'Manual stock adjustment' } });
     });
+    broadcastSyncEvent('INVENTORY_CHANGED', { action: 'STOCK_ADJUSTED', id, delta });
     redirectWith(res, '/inventory', 'message', 'Stock adjustment recorded.');
   } catch (error) { redirectWith(res, '/inventory', 'error', error.message || 'Could not adjust stock.'); }
 });
@@ -1094,6 +1170,8 @@ app.post('/customers/:id/payments', async (req, res, next) => {
         } });
       }
     });
+    broadcastSyncEvent('CUSTOMER_UPDATED', { customerId, action: 'PAYMENT_RECEIVED', amount });
+    if (syncCashbook) broadcastSyncEvent('CASHBOOK_UPDATED', { type: 'IN', amount });
     redirectWith(res, `/customers/${customerId}`, 'message', 'Payment received and customer credit updated.');
   } catch (error) { redirectWith(res, `/customers/${req.params.id}`, 'error', error.message || 'Could not record payment.'); }
 });
@@ -1118,6 +1196,7 @@ app.post('/api/item-names', express.json(), async (req, res, next) => {
       create: { name, category },
       update: { category }
     });
+    broadcastSyncEvent('ITEM_NAMES_UPDATED', { name, category });
     res.json(item);
   } catch (error) { next(error); }
 });
@@ -1135,6 +1214,7 @@ app.post('/item-names/add', async (req, res, next) => {
     const category = (req.body.category || '').trim();
     if (!name || !category) return redirectWith(res, '/item-names', 'error', 'Name and category are required.');
     await prisma.itemName.upsert({ where: { name }, create: { name, category }, update: { category } });
+    broadcastSyncEvent('ITEM_NAMES_UPDATED', { name, category });
     redirectWith(res, '/item-names', 'message', `"${name}" added.`);
   } catch (error) { next(error); }
 });
@@ -1241,7 +1321,7 @@ app.get('/api/customers/phone/:phone', async (req, res, next) => {
     const outstanding = customer.ledger.reduce((total, entry) => total + Number(entry.amount), 0);
     res.json({
       found: true,
-      customer: { id: customer.id, name: customer.name, phone: customer.phone, email: customer.email, address: customer.address, outstanding, recentSales: customer.sales.map((sale) => ({ ...sale, total: Number(sale.total), balance: Number(sale.balance) })) }
+      customer: { id: customer.id, name: customer.name, phone: customer.phone, email: customer.email, address: customer.address, panNumber: customer.panNumber, outstanding, recentSales: customer.sales.map((sale) => ({ ...sale, total: Number(sale.total), balance: Number(sale.balance) })) }
     });
   } catch (error) { next(error); }
 });
@@ -1300,6 +1380,7 @@ app.post('/sales', async (req, res, next) => {
       const total = taxable + gstAmount;
       const customer = await resolveBillingCustomer(tx, req.body);
       const customerId = customer.id;
+      const customerPan = String(req.body.customerPan || req.body.existingCustomerPan || customer.panNumber || '').trim().toUpperCase() || null;
       const urdAmount = includeUrdPurchase ? Math.max(0, number(req.body.urdTotalAmount)) : 0;
       if (includeUrdPurchase) {
         if (!customerId) throw new Error('Select the customer before settling their URD purchase against this bill.');
@@ -1313,7 +1394,7 @@ app.post('/sales', async (req, res, next) => {
       const acceptedPaid = payment.paid;
       const balance = Math.max(0, netPayable - acceptedPaid);
       const sale = await tx.sale.create({ data: {
-        invoiceNumber: req.body.invoiceNumber || await nextDocumentNumber(tx, 'INV', saleDate), customerId, saleDate,
+        invoiceNumber: req.body.invoiceNumber || await nextDocumentNumber(tx, 'INV', saleDate), customerId, customerPan, saleDate,
         subtotal, discount: Math.min(discount, subtotal), gstRate, gstAmount, total, urdOffset: urdAmount, paid: acceptedPaid,
         cashPaid: payment.cashPaid, upiPaid: payment.upiPaid, balance,
         paymentMethod: payment.paymentMethod, notes: req.body.notes || null,
@@ -1361,6 +1442,15 @@ app.post('/sales', async (req, res, next) => {
       }
       return sale;
     });
+    broadcastSyncEvent('SALE_COMPLETED', {
+      invoiceNumber: sale.invoiceNumber,
+      customerId: sale.customerId,
+      total: Number(sale.total),
+      paid: Number(sale.paid),
+      balance: Number(sale.balance)
+    });
+    broadcastSyncEvent('INVENTORY_CHANGED', { action: 'ITEMS_SOLD', count: rows.length });
+    if (syncCashbook) broadcastSyncEvent('CASHBOOK_UPDATED', { type: 'IN', amount: Number(sale.paid) });
     redirectWith(res, `/sales/${sale.id}`, 'message', 'Sale saved, stock removed and customer credit updated.');
   } catch (error) { redirectWith(res, '/sales/new', 'error', error.message || 'Could not save sale.'); }
 });
@@ -1475,6 +1565,7 @@ app.post('/cashbook', async (req, res, next) => {
         }
       }
     });
+    broadcastSyncEvent('CASHBOOK_UPDATED', { entryDate: req.body.entryDate, type: req.body.type, amount: Number(req.body.amount) });
     const label = req.body.type === 'OUT' ? 'Cash out' : 'Cash in';
     const syncNote = syncLedger ? ' Customer ledger updated.' : '';
     redirectWith(res, '/cashbook', 'message', `${label} entry saved.${syncNote}`);
@@ -1484,6 +1575,7 @@ app.post('/cashbook', async (req, res, next) => {
 app.post('/cashbook/:id/delete', async (req, res, next) => {
   try {
     await prisma.cashbookEntry.delete({ where: { id: Number(req.params.id) } });
+    broadcastSyncEvent('CASHBOOK_UPDATED', { action: 'DELETED' });
     redirectWith(res, '/cashbook', 'message', 'Entry deleted.');
   } catch (error) { next(error); }
 });
@@ -1520,6 +1612,15 @@ app.get('/urd-purchases/new', async (req, res, next) => {
 
 app.post('/urd-purchases', async (req, res, next) => {
   try {
+    let customerId = Number(req.body.customerId);
+    if (!Number.isInteger(customerId) || customerId <= 0) {
+      if (req.body.customerPhone) {
+        const cust = await resolveBillingCustomer(prisma, req.body);
+        customerId = cust.id;
+      } else {
+        return redirectWith(res, '/urd-purchases/new', 'error', 'Select a customer for this URD purchase.');
+      }
+    }
     const totalAmount = number(req.body.totalAmount);
     const paid = Math.min(Math.max(0, number(req.body.paid)), totalAmount);
     const paymentMethod = req.body.paymentMethod || 'CASH';
@@ -1529,7 +1630,7 @@ app.post('/urd-purchases', async (req, res, next) => {
       const record = await tx.urdPurchase.create({
         data: {
           purchaseNumber: req.body.purchaseNumber || await nextDocumentNumber(tx, 'URD', purchaseDate),
-          customerId: Number(req.body.customerId),
+          customerId,
           purchaseDate,
           metal: req.body.metal || 'GOLD', purity: req.body.purity || null,
           grossWeight: number(req.body.grossWeight), netWeight: number(req.body.netWeight), ratePerGram: number(req.body.ratePerGram),
@@ -1545,6 +1646,12 @@ app.post('/urd-purchases', async (req, res, next) => {
       }
       return record;
     });
+    broadcastSyncEvent('URD_COMPLETED', {
+      purchaseNumber: purchase.purchaseNumber,
+      totalAmount: Number(purchase.totalAmount),
+      paid: Number(purchase.paid)
+    });
+    if (syncCashbook && paid > 0) broadcastSyncEvent('CASHBOOK_UPDATED', { type: 'OUT', amount: paid });
     redirectWith(res, '/urd-purchases', 'message', `URD Purchase ${purchase.purchaseNumber} saved.`);
   } catch (error) { next(error); }
 });

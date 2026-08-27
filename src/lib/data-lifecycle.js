@@ -72,11 +72,20 @@ async function getExportPayload(db, key, range) {
       });
       const rows = sales.flatMap((sale) => sale.items.map((item) => ({
         saleDate: sale.saleDate, invoiceNumber: sale.invoiceNumber, customerPhone: sale.customer?.phone || '', customerName: sale.customer?.name || 'Walk-in customer',
-        barcode: item.product?.barcode || item.productBarcode || item.product?.sku || item.productSku, itemName: item.product?.name || item.productName, metal: item.product?.metal || item.productMetal || '', purity: item.product?.purity || item.productPurity || '', quantity: item.quantity,
+        customerPan: sale.customerPan || sale.customer?.panNumber || '',
+        barcode: item.product?.barcode || item.productBarcode || item.product?.sku || item.productSku, itemName: item.product?.name || item.productName, metal: item.product?.metal || item.productMetal || '', purity: item.product?.purity || item.productPurity || '',
+        hsnCode: item.hsnCode || '', huidCode: item.huidCode || '',
+        quantity: item.quantity,
         weight: amount(item.weight), metalRate: amount(item.metalRate), makingCharge: amount(item.makingCharge), taxableAmount: amount(item.taxableAmount),
         invoiceTotal: amount(sale.total), urdOffset: amount(sale.urdOffset), paid: amount(sale.paid), balance: amount(sale.balance), paymentMethod: sale.paymentMethod, notes: description(sale.notes)
       })));
-      return exportEnvelope(resource, range, [common.date('saleDate', 'Invoice date'), common.text('invoiceNumber', 'Invoice no.'), common.text('customerPhone', 'Customer phone', 16), common.text('customerName', 'Customer name'), common.text('barcode', 'Barcode', 14), common.text('itemName', 'Item'), common.text('metal', 'Metal', 12), common.text('purity', 'Purity', 10), common.number('quantity', 'Qty'), common.weight('weight', 'Weight (g)'), common.currency('metalRate', 'Rate / g'), common.currency('makingCharge', 'Making'), common.currency('taxableAmount', 'Amount ex. GST'), common.currency('invoiceTotal', 'Invoice total'), common.currency('urdOffset', 'URD adjustment'), common.currency('paid', 'Paid'), common.currency('balance', 'Balance'), common.text('paymentMethod', 'Payment method', 16), common.text('notes', 'Notes', 30)], rows);
+      return exportEnvelope(resource, range, [
+        common.date('saleDate', 'Invoice date'), common.text('invoiceNumber', 'Invoice no.'), common.text('customerPhone', 'Customer phone', 16), common.text('customerName', 'Customer name'),
+        common.text('customerPan', 'Customer PAN', 14),
+        common.text('barcode', 'Barcode', 14), common.text('itemName', 'Item'), common.text('metal', 'Metal', 12), common.text('purity', 'Purity', 10),
+        common.text('hsnCode', 'HSN Code', 12), common.text('huidCode', 'HUID', 12),
+        common.number('quantity', 'Qty'), common.weight('weight', 'Weight (g)'), common.currency('metalRate', 'Rate / g'), common.currency('makingCharge', 'Making'), common.currency('taxableAmount', 'Amount ex. GST'), common.currency('invoiceTotal', 'Invoice total'), common.currency('urdOffset', 'URD adjustment'), common.currency('paid', 'Paid'), common.currency('balance', 'Balance'), common.text('paymentMethod', 'Payment method', 16), common.text('notes', 'Notes', 30)
+      ], rows);
     }
     case 'urd': {
       const purchases = await db.urdPurchase.findMany({ where: { purchaseDate: dateTimeRange(range) }, orderBy: [{ purchaseDate: 'asc' }, { id: 'asc' }], include: { customer: true, sale: true } });
@@ -138,14 +147,40 @@ async function getExportPayload(db, key, range) {
       ], rows);
     }
     case 'stock-movements': {
-      const movements = await db.stockMovement.findMany({ where: { createdAt: dateTimeRange(range) }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], include: { product: true } });
-      const rows = movements.map((movement) => ({ createdAt: movement.createdAt, barcode: movement.product.barcode || '', sku: movement.product.sku, itemName: movement.product.name, type: movement.type, quantity: movement.quantity, note: description(movement.note) }));
-      return exportEnvelope(resource, range, [common.date('createdAt', 'Movement date'), common.text('barcode', 'Barcode', 16), common.text('sku', 'SKU', 16), common.text('itemName', 'Item'), common.text('type', 'Movement type', 18), common.number('quantity', 'Qty change'), common.text('note', 'Note', 34)], rows);
+      const movements = await db.stockMovement.findMany({
+        where: { createdAt: dateTimeRange(range) },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        include: { product: true }
+      });
+      const rows = movements.map((movement) => ({
+        createdAt: movement.createdAt,
+        type: movement.type,
+        barcode: movement.product.barcode || '',
+        sku: movement.product.sku,
+        itemName: movement.product.name,
+        metal: movement.product.metal,
+        purity: movement.product.purity || '',
+        quantity: movement.quantity,
+        netWeight: amount(movement.product.netWeight),
+        note: description(movement.note)
+      }));
+      return exportEnvelope(resource, range, [
+        common.date('createdAt', 'Movement date'),
+        common.text('type', 'Movement type', 16),
+        common.text('barcode', 'Barcode', 16),
+        common.text('sku', 'SKU', 16),
+        common.text('itemName', 'Item name', 24),
+        common.text('metal', 'Metal', 12),
+        common.text('purity', 'Purity', 10),
+        common.number('quantity', 'Qty change'),
+        common.weight('netWeight', 'Net wt. (g)'),
+        common.text('note', 'Note', 32)
+      ], rows);
     }
     case 'customers': {
       const customers = await db.customer.findMany({ where: { createdAt: dateTimeRange(range) }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], include: { ledger: { select: { amount: true } }, _count: { select: { sales: true, urdPurchases: true } } } });
-      const rows = customers.map((customer) => ({ createdAt: customer.createdAt, customerPhone: customer.phone || '', customerName: customer.name, email: customer.email || '', address: customer.address || '', salesCount: customer._count.sales, urdCount: customer._count.urdPurchases, outstanding: customer.ledger.reduce((total, entry) => total + amount(entry.amount), 0) }));
-      return exportEnvelope(resource, range, [common.date('createdAt', 'Created date'), common.text('customerPhone', 'Customer phone / ID', 18), common.text('customerName', 'Customer'), common.text('email', 'Email', 24), common.text('address', 'Address', 34), common.number('salesCount', 'Sales'), common.number('urdCount', 'URD purchases'), common.currency('outstanding', 'Outstanding due')], rows);
+      const rows = customers.map((customer) => ({ createdAt: customer.createdAt, customerPhone: customer.phone || '', customerName: customer.name, panNumber: customer.panNumber || '', email: customer.email || '', address: customer.address || '', salesCount: customer._count.sales, urdCount: customer._count.urdPurchases, outstanding: customer.ledger.reduce((total, entry) => total + amount(entry.amount), 0) }));
+      return exportEnvelope(resource, range, [common.date('createdAt', 'Created date'), common.text('customerPhone', 'Customer phone / ID', 18), common.text('customerName', 'Customer'), common.text('panNumber', 'PAN No.', 14), common.text('email', 'Email', 24), common.text('address', 'Address', 34), common.number('salesCount', 'Sales'), common.number('urdCount', 'URD purchases'), common.currency('outstanding', 'Outstanding due')], rows);
     }
     case 'customer-ledger': {
       const entries = await db.customerLedger.findMany({ where: { createdAt: dateTimeRange(range) }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], include: { customer: true, sale: true } });

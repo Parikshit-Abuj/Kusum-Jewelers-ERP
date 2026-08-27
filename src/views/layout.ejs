@@ -8,7 +8,22 @@
   </head>
   <body>
     <div class="app-shell">
-      <aside class="sidebar">
+      <!-- Mobile Responsive Top Bar -->
+      <div class="mobile-top-bar">
+        <button type="button" class="mobile-menu-toggle" id="mobileMenuToggle" aria-label="Toggle navigation menu">
+          <span>☰</span>
+        </button>
+        <a class="mobile-brand" href="/">
+          <span class="brand-mark-sm">KJ</span>
+          <strong>Kusum ERP</strong>
+        </a>
+        <div class="mobile-live-indicator" title="Real-time sync active">
+          <span class="live-sync-dot online"></span>
+        </div>
+      </div>
+      <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+      <aside class="sidebar" id="appSidebar">
         <a class="brand" href="/">
           <span class="brand-mark">KJ</span>
           <span>Kusum ERP<small>Jewelry Management</small></span>
@@ -27,7 +42,14 @@
           <a class="<%= currentPath.startsWith('/network-setup') ? 'active' : '' %>" href="/network-setup"><span>⌁</span> Network PCs</a>
           <a class="<%= currentPath.startsWith('/printer-setup') ? 'active' : '' %>" href="/printer-setup"><span>▥</span> Barcode printer</a>
         </nav>
-        <div class="sidebar-foot">Signed in as <strong><%= loggedInUser %></strong><br><span>Track every gram.</span><form method="post" action="/logout"><button class="sidebar-logout" type="submit">Sign out</button></form></div>
+        <div class="sidebar-foot">
+          <div class="live-sync-badge is-connected" id="liveSyncStatus" title="Real-time multi-PC synchronization active">
+            <span class="live-sync-dot online"></span>
+            <span class="live-sync-label">Realtime Sync Active</span>
+          </div>
+          Signed in as <strong><%= loggedInUser %></strong><br><span>Track every gram.</span>
+          <form method="post" action="/logout"><button class="sidebar-logout" type="submit">Sign out</button></form>
+        </div>
       </aside>
       <main class="main-content">
         <% if (message) { %><div class="flash success"><span>✓</span><%= message %></div><% } %>

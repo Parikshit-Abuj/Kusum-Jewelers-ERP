@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog } = require('electron');
+const { app, BrowserWindow, dialog, shell } = require('electron');
 const fs = require('fs');
 const http = require('http');
 const net = require('net');
@@ -105,6 +105,15 @@ async function openErpWindow() {
       title: 'Kusum ERP',
       webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: false }
     });
+
+    erpWindow.webContents.setWindowOpenHandler(({ url }) => {
+      if (url.startsWith('https://') || url.startsWith('http://') && !url.includes(`127.0.0.1:${localPort}`)) {
+        shell.openExternal(url);
+        return { action: 'deny' };
+      }
+      return { action: 'allow' };
+    });
+
     await erpWindow.loadURL(`http://127.0.0.1:${localPort}`);
   } catch (error) {
     writeStartupLog(error);

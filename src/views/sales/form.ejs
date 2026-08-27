@@ -41,12 +41,21 @@
       <input type="hidden" name="customerId" data-customer-id>
       <div class="customer-lookup-status" data-customer-status>Enter the customer’s mobile number to load their ledger details.</div>
       <div class="customer-existing" data-existing-customer hidden>
-        <strong data-existing-name></strong>
-        <span data-existing-details></span>
-        <a class="button ghost small" data-existing-ledger href="#" hidden>Open customer ledger</a>
+        <div>
+          <strong data-existing-name></strong>
+          <span data-existing-details></span>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <label style="margin:0; font-size:11px; display:inline-flex; align-items:center; gap:5px; font-weight:700; color:#776f67;">
+            <span>PAN (opt):</span>
+            <input name="existingCustomerPan" data-existing-pan placeholder="e.g. ABCDE1234F" maxlength="10" autocomplete="off" style="padding:4px 8px; font-size:12px; width:125px; text-transform:uppercase;">
+          </label>
+          <a class="button ghost small" data-existing-ledger href="#" hidden>Open customer ledger</a>
+        </div>
       </div>
-      <div class="form-grid three compact-fields" data-new-customer-fields hidden>
+      <div class="form-grid four compact-fields" data-new-customer-fields hidden>
         <label>New customer name *<input name="customerName" disabled data-customer-name placeholder="Customer name"></label>
+        <label>PAN No. (optional)<input name="customerPan" disabled data-customer-pan placeholder="e.g. ABCDE1234F" maxlength="10" autocomplete="off" style="text-transform:uppercase;"></label>
         <label>Email (optional)<input name="customerEmail" type="email" disabled data-customer-email placeholder="Email address"></label>
         <label>Address (optional)<input name="customerAddress" disabled data-customer-address placeholder="Address"></label>
       </div>
@@ -236,3 +245,29 @@
   </aside>
 
 </form>
+
+<!-- Customer Outstanding Balance Alert Pop-up -->
+<div class="modal-overlay" id="customerBalanceAlertModal" style="display:none; z-index:9999;" aria-hidden="true">
+  <div class="modal-card" style="max-width: 460px; text-align: center; padding: 26px 22px;">
+    <div style="font-size: 38px; line-height: 1; margin-bottom: 8px;">⚠️</div>
+    <h2 style="font-size: 19px; margin: 0 0 8px; color: #a06010;">Outstanding Balance Notice</h2>
+    <p style="font-size: 13.5px; color: #3d352e; line-height: 1.5; margin-bottom: 14px;">
+      Customer <strong id="balanceAlertCustName">Customer</strong> (<span id="balanceAlertCustPhone">9876543210</span>) has an outstanding credit / loan balance of:
+    </p>
+    <div style="background: #fff8e8; border: 1.5px solid #dfa437; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px;">
+      <span style="font-size: 11px; font-weight: 700; color: #84530c; text-transform: uppercase; letter-spacing: 0.05em; display: block;">Credit Due on Ledger</span>
+      <strong id="balanceAlertCustAmount" style="font-size: 26px; color: #b47a21; display: block; margin-top: 2px;">₹0.00</strong>
+    </div>
+    <p style="font-size: 12px; color: #776f67; margin-bottom: 20px;">
+      This is an informational notice and will not interfere with your billing.
+    </p>
+    <div style="display: flex; gap: 10px; justify-content: center;">
+      <button type="button" class="button" id="balanceAlertOkBtn" style="min-width: 140px; background:#b47a21; color:#fff; font-weight:700;">
+        OK, Continue ↵
+      </button>
+      <a href="#" target="_blank" rel="noopener" class="button secondary" id="balanceAlertLedgerBtn">
+        View Ledger Sheet →
+      </a>
+    </div>
+  </div>
+</div>

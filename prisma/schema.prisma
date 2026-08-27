@@ -60,6 +60,7 @@ model Customer {
   phone         String?          @unique
   email         String?
   address       String?          @db.Text
+  panNumber     String?          @db.VarChar(20)
   createdAt     DateTime         @default(now())
   updatedAt     DateTime         @updatedAt
   sales         Sale[]
@@ -114,6 +115,7 @@ model Sale {
   id            Int           @id @default(autoincrement())
   invoiceNumber String        @unique
   customerId    Int?
+  customerPan   String?       @db.VarChar(20)
   saleDate      DateTime      @default(now())
   subtotal      Decimal       @default(0) @db.Decimal(12, 2)
   discount      Decimal       @default(0) @db.Decimal(12, 2)

@@ -128,8 +128,17 @@ async function runBundledMigrations(appRoot, databaseUrl) {
           [migrationId]
         );
       } catch (error) {
-        await connection.query('UPDATE `_prisma_migrations` SET `logs` = ? WHERE `id` = ?', [String(error.message || error).slice(0, 65535), migrationId]);
-        throw error;
+        const benignCodes = new Set(['ER_DUP_FIELDNAME', 'ER_TABLE_EXISTS_ERROR', 'ER_DUP_KEYNAME', 'ER_CANT_DROP_FIELD_OR_KEY']);
+        if (benignCodes.has(error.code)) {
+          // Schema already contains these elements (e.g. from an imported SQL backup)
+          await connection.query(
+            'UPDATE `_prisma_migrations` SET `finished_at` = NOW(3), `applied_steps_count` = 1 WHERE `id` = ?',
+            [migrationId]
+          );
+        } else {
+          await connection.query('UPDATE `_prisma_migrations` SET `logs` = ? WHERE `id` = ?', [String(error.message || error).slice(0, 65535), migrationId]);
+          throw error;
+        }
       }
     }
   } catch (error) {

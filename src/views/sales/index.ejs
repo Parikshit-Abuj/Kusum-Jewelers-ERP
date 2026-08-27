@@ -31,8 +31,32 @@
 
   <% if (sales.length) { %>
     <div class="table-wrap"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Date</th><th>Items</th><th>Payment</th><th class="right">Invoice total</th><th class="right">Net payable</th><th></th></tr></thead><tbody>
-      <% sales.forEach((sale) => { const netPayable = Number(sale.total) - Number(sale.urdOffset); %>
-        <tr><td><strong><%= sale.invoiceNumber %></strong></td><td><%= sale.customer?.name || 'Walk-in customer' %></td><td><%= sale.saleDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) %></td><td><%= sale._count.items %></td><td><span class="pill neutral"><%= sale.paymentMethod.replace('_', ' ') %></span><% if (Number(sale.urdOffset) > 0) { %><small>URD adjusted <%= money(sale.urdOffset) %></small><% } %><% if (Number(sale.balance) > 0) { %><small class="danger-text">Due <%= money(sale.balance) %></small><% } %></td><td class="right"><strong><%= money(sale.total) %></strong></td><td class="right"><strong><%= money(netPayable) %></strong></td><td><a class="icon-button" href="/sales/<%= sale.id %>" title="Open invoice">→</a></td></tr>
+      <% sales.forEach((sale) => { 
+          const netPayable = Number(sale.total) - Number(sale.urdOffset);
+          const rawPhone = (sale.customer?.phone || '').replace(/\D/g, '');
+          const waPhone = rawPhone.length === 10 ? '91' + rawPhone : rawPhone;
+          const grandTotalFmt = Number(sale.total).toLocaleString('en-IN', { minimumFractionDigits: 2 });
+          const waText = encodeURIComponent(`*Kusum Jewellers - Tax Invoice*\n\nNamaste ${sale.customer?.name || 'Customer'},\nThank you for shopping with Kusum Jewellers!\n\n📄 *Invoice No:* ${sale.invoiceNumber}\n📅 *Date:* ${sale.saleDate.toLocaleDateString('en-IN')}\n💰 *Total Amount:* ₹${grandTotalFmt}\n\nPlease find your official Tax Invoice attached.`);
+      %>
+        <tr>
+          <td><strong><%= sale.invoiceNumber %></strong></td>
+          <td>
+            <strong><%= sale.customer?.name || 'Walk-in customer' %></strong>
+            <% if (sale.customer?.phone) { %><small><%= sale.customer.phone %></small><% } %>
+          </td>
+          <td><%= sale.saleDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) %></td>
+          <td><%= sale._count.items %></td>
+          <td><span class="pill neutral"><%= sale.paymentMethod.replace('_', ' ') %></span><% if (Number(sale.urdOffset) > 0) { %><small>URD adjusted <%= money(sale.urdOffset) %></small><% } %><% if (Number(sale.balance) > 0) { %><small class="danger-text">Due <%= money(sale.balance) %></small><% } %></td>
+          <td class="right"><strong><%= money(sale.total) %></strong></td>
+          <td class="right"><strong><%= money(netPayable) %></strong></td>
+          <td class="actions">
+            <a class="button ghost small" href="/sales/<%= sale.id %>/invoice.pdf" target="_blank" rel="noopener" title="Print / save PDF">PDF</a>
+            <% if (waPhone) { %>
+              <a class="icon-button whatsapp-icon" href="https://web.whatsapp.com/send?phone=<%= waPhone %>&text=<%= waText %>" target="_blank" rel="noopener" title="Open customer WhatsApp chat">💬</a>
+            <% } %>
+            <a class="icon-button" href="/sales/<%= sale.id %>" title="Open invoice">→</a>
+          </td>
+        </tr>
       <% }) %>
     </tbody></table></div>
   <% } else { %>

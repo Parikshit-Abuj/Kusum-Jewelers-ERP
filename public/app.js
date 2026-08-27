@@ -229,12 +229,15 @@ document.querySelectorAll('.flash').forEach((el) => {
   const existingName = lookup.querySelector('[data-existing-name]');
   const existingDetails = lookup.querySelector('[data-existing-details]');
   const ledgerLink = lookup.querySelector('[data-existing-ledger]');
+  const existingPanInput = lookup.querySelector('[data-existing-pan]');
   const newFields = lookup.querySelector('[data-new-customer-fields]');
   const nameInput = lookup.querySelector('[data-customer-name]');
+  const panInput = lookup.querySelector('[data-customer-pan]');
   const emailInput = lookup.querySelector('[data-customer-email]');
   const addressInput = lookup.querySelector('[data-customer-address]');
   let lookupTimer = null;
   let requestNumber = 0;
+  let lastAlertedCustomerId = null;
 
   function normalizedPhone() {
     let digits = (phoneInput.value || '').replace(/\D/g, '');
@@ -247,7 +250,7 @@ document.querySelectorAll('.flash').forEach((el) => {
     customerId.value = '';
     existing.hidden = true;
     newFields.hidden = false;
-    [nameInput, emailInput, addressInput].forEach((input) => { input.disabled = false; });
+    [nameInput, panInput, emailInput, addressInput].filter(Boolean).forEach((input) => { input.disabled = false; });
     nameInput.required = true;
     status.textContent = `${phone} is new. Enter the name to create this customer automatically when the bill is saved.`;
     status.className = 'customer-lookup-status is-new';
@@ -257,15 +260,57 @@ document.querySelectorAll('.flash').forEach((el) => {
     customerId.value = customer.id;
     existing.hidden = false;
     newFields.hidden = true;
-    [nameInput, emailInput, addressInput].forEach((input) => { input.disabled = true; });
+    [nameInput, panInput, emailInput, addressInput].filter(Boolean).forEach((input) => { input.disabled = true; });
     nameInput.required = false;
     existingName.textContent = customer.name;
     const contact = [customer.phone, customer.email, customer.address].filter(Boolean).join(' · ');
     existingDetails.textContent = `${contact || 'Customer details loaded'} · Outstanding: ${fmt(customer.outstanding)}`;
+    if (existingPanInput) existingPanInput.value = customer.panNumber || '';
     ledgerLink.href = `/customers/${customer.id}`;
     ledgerLink.hidden = false;
-    status.textContent = 'Existing customer found. Their profile and ledger will be used for this bill.';
-    status.className = 'customer-lookup-status is-found';
+    const outstandingVal = Number(customer.outstanding || 0);
+    if (outstandingVal > 0.01) {
+      status.textContent = `⚠️ Customer has an outstanding balance of ${fmt(outstandingVal)}.`;
+      status.className = 'customer-lookup-status is-warning';
+      if (lastAlertedCustomerId !== customer.id) {
+        lastAlertedCustomerId = customer.id;
+        showBalanceAlert(customer, outstandingVal);
+      }
+    } else {
+      status.textContent = 'Existing customer found. Their profile and ledger will be used for this bill.';
+      status.className = 'customer-lookup-status is-found';
+    }
+  }
+
+  function showBalanceAlert(customer, amount) {
+    const modal = document.getElementById('customerBalanceAlertModal');
+    if (!modal) return;
+    const nameEl = document.getElementById('balanceAlertCustName');
+    const phoneEl = document.getElementById('balanceAlertCustPhone');
+    const amountEl = document.getElementById('balanceAlertCustAmount');
+    const ledgerBtn = document.getElementById('balanceAlertLedgerBtn');
+    const okBtn = document.getElementById('balanceAlertOkBtn');
+
+    if (nameEl) nameEl.textContent = customer.name;
+    if (phoneEl) phoneEl.textContent = customer.phone || '—';
+    if (amountEl) amountEl.textContent = fmt(amount);
+    if (ledgerBtn) ledgerBtn.href = `/customers/${customer.id}`;
+
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+
+    function closeModal() {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+    }
+
+    if (okBtn) {
+      okBtn.onclick = closeModal;
+      setTimeout(() => okBtn.focus(), 50);
+    }
+    modal.onclick = (e) => {
+      if (e.target === modal) closeModal();
+    };
   }
 
   function clearLookup(message) {
@@ -273,7 +318,9 @@ document.querySelectorAll('.flash').forEach((el) => {
     existing.hidden = true;
     ledgerLink.hidden = true;
     newFields.hidden = true;
-    [nameInput, emailInput, addressInput].forEach((input) => { input.disabled = true; });
+    lastAlertedCustomerId = null;
+    [nameInput, panInput, emailInput, addressInput].filter(Boolean).forEach((input) => { input.disabled = true; });
+    if (existingPanInput) existingPanInput.value = '';
     nameInput.required = false;
     status.textContent = message;
     status.className = 'customer-lookup-status';
@@ -1253,7 +1300,7 @@ document.querySelectorAll('.flash').forEach((el) => {
     }
   }
 
-  async function loadBatchDocument(batchDocNo) {
+  async function loadBatchDocument(batchDocNo, silent = false) {
     try {
       const res = await fetch(`/api/inventory/batch-docs/${encodeURIComponent(batchDocNo)}`);
       if (!res.ok) throw new Error('Failed to load batch details');
@@ -1261,7 +1308,7 @@ document.querySelectorAll('.flash').forEach((el) => {
       sessionPieces = data.products || [];
       if (docNoInput) docNoInput.value = batchDocNo;
 
-      if (sessionPieces.length > 0) {
+      if (sessionPieces.length > 0 && !silent) {
         const first = sessionPieces[0];
         if (nameInput && first.name) nameInput.value = first.name;
         if (categoryInput && first.category) categoryInput.value = first.category;
@@ -1275,20 +1322,21 @@ document.querySelectorAll('.flash').forEach((el) => {
         if (locationInput && first.location) locationInput.value = first.location;
       }
 
-      closeLoadDocModal();
+      if (!silent) closeLoadDocModal();
       renderTable();
       updateRateDisplay();
 
-      if (feedbackEl) {
+      if (feedbackEl && !silent) {
         feedbackEl.style.display = 'inline-block';
         feedbackEl.textContent = `✓ Loaded ${sessionPieces.length} pieces from ${batchDocNo}`;
         setTimeout(() => { feedbackEl.style.display = 'none'; }, 4000);
       }
 
     } catch (err) {
-      alert(`Could not load batch: ${err.message}`);
+      if (!silent) alert(`Could not load batch: ${err.message}`);
     }
   }
+  window.loadBatchDocument = loadBatchDocument;
 
   // Save piece (Add new or Update existing)
   async function savePiece() {
@@ -1574,6 +1622,264 @@ document.querySelectorAll('.flash').forEach((el) => {
   modal.querySelectorAll('[data-batch-print-tspl]').forEach((btn) => {
     btn.addEventListener('click', printSessionLabels);
   });
+})();
+
+// ── Mobile Responsive Navigation Toggle ───────────────────────
+(function initMobileNavigation() {
+  const toggleBtn = document.getElementById('mobileMenuToggle');
+  const sidebar = document.getElementById('appSidebar');
+  const backdrop = document.getElementById('sidebarBackdrop');
+
+  if (!toggleBtn || !sidebar || !backdrop) return;
+
+  function toggleSidebar(open) {
+    const isOpen = open !== undefined ? open : !sidebar.classList.contains('is-open');
+    sidebar.classList.toggle('is-open', isOpen);
+    backdrop.classList.toggle('is-open', isOpen);
+    document.body.style.overflow = isOpen ? 'hidden' : '';
+  }
+
+  toggleBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleSidebar();
+  });
+
+  backdrop.addEventListener('click', () => {
+    toggleSidebar(false);
+  });
+
+  sidebar.querySelectorAll('nav a').forEach((link) => {
+    link.addEventListener('click', () => {
+      if (window.innerWidth <= 900) {
+        toggleSidebar(false);
+      }
+    });
+  });
+})();
+
+// ── Real-Time Multi-PC Synchronization & Live UI Refresh Engine ──
+(function initRealtimeSync() {
+  const statusBadge = document.getElementById('liveSyncStatus');
+  const dotEl = statusBadge?.querySelector('.live-sync-dot');
+  const textEl = statusBadge?.querySelector('.live-sync-label');
+
+  let evtSource = null;
+  let retryDelay = 2000;
+  let refreshDebounceTimer = null;
+
+  function setStatus(connected, text) {
+    if (!statusBadge) return;
+    statusBadge.classList.toggle('is-connected', connected);
+    statusBadge.classList.toggle('is-disconnected', !connected);
+    if (textEl) textEl.textContent = text;
+    if (dotEl) {
+      dotEl.className = `live-sync-dot ${connected ? 'online' : 'offline'}`;
+    }
+  }
+
+  function showSyncToast(message, type = 'info') {
+    let container = document.getElementById('syncToastContainer');
+    if (!container) {
+      container = document.createElement('div');
+      container.id = 'syncToastContainer';
+      container.className = 'sync-toast-container';
+      document.body.appendChild(container);
+    }
+    const toast = document.createElement('div');
+    toast.className = `sync-toast ${type}`;
+    toast.innerHTML = `<span class="sync-toast-icon">⚡</span><span class="sync-toast-msg">${message}</span>`;
+    container.appendChild(toast);
+    setTimeout(() => {
+      toast.classList.add('fade-out');
+      setTimeout(() => toast.remove(), 400);
+    }, 4500);
+  }
+
+  function scheduleSmartLiveRefresh() {
+    if (refreshDebounceTimer) clearTimeout(refreshDebounceTimer);
+    refreshDebounceTimer = setTimeout(performLiveDomPatch, 350);
+  }
+
+  async function performLiveDomPatch() {
+    // If user is actively typing in a bill creation / edit form, do not disturb
+    const isFormPage = window.location.pathname.endsWith('/new') || 
+                       window.location.pathname.includes('/edit');
+    const activeEl = document.activeElement;
+    const isTyping = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'SELECT');
+
+    if (isFormPage && isTyping) {
+      return;
+    }
+
+    try {
+      const res = await fetch(window.location.href, {
+        headers: { 'X-Requested-With': 'LiveSync' }
+      });
+      if (!res.ok) return;
+      const htmlText = await res.text();
+      const parser = new DOMParser();
+      const newDoc = parser.parseFromString(htmlText, 'text/html');
+
+      // 1. Live Refresh Table Bodies (Sales, Inventory, Cashbook, URD, Customers, Rates)
+      const currentTable = document.querySelector('.table-wrap table tbody, .inventory-table tbody');
+      const newTable = newDoc.querySelector('.table-wrap table tbody, .inventory-table tbody');
+      if (currentTable && newTable && !isFormPage) {
+        currentTable.innerHTML = newTable.innerHTML;
+      }
+
+      // 2. Live Refresh Stats Cards (Dashboard & Reports)
+      const currentStats = document.querySelector('.stats-grid');
+      const newStats = newDoc.querySelector('.stats-grid');
+      if (currentStats && newStats) {
+        currentStats.innerHTML = newStats.innerHTML;
+      }
+
+      // 3. Live Refresh Dashboard Breakdown Panels
+      const currentPanels = document.querySelectorAll('.content-grid .panel');
+      const newPanels = newDoc.querySelectorAll('.content-grid .panel');
+      if (currentPanels.length > 0 && newPanels.length === currentPanels.length) {
+        currentPanels.forEach((panel, idx) => {
+          if (!panel.querySelector('form')) {
+            panel.innerHTML = newPanels[idx].innerHTML;
+          }
+        });
+      }
+
+      // 4. Live Refresh Page Header Count / Subtitle
+      const currentCount = document.querySelector('.page-header .eyebrow, .page-header small');
+      const newCount = newDoc.querySelector('.page-header .eyebrow, .page-header small');
+      if (currentCount && newCount) {
+        currentCount.innerHTML = newCount.innerHTML;
+      }
+
+      // Visual flash indicator
+      if (dotEl) {
+        dotEl.classList.add('pulse-once');
+        setTimeout(() => dotEl.classList.remove('pulse-once'), 600);
+      }
+    } catch (err) {
+      console.warn('Smart live UI refresh warning:', err);
+    }
+  }
+
+  function connect() {
+    if (evtSource) {
+      try { evtSource.close(); } catch (_) {}
+    }
+    evtSource = new EventSource('/api/realtime-events');
+
+    evtSource.addEventListener('connected', () => {
+      setStatus(true, 'Live Sync Active');
+      retryDelay = 2000;
+    });
+
+    evtSource.addEventListener('message', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        handleSyncEvent(data);
+      } catch (err) {
+        console.error('Error handling realtime event:', err);
+      }
+    });
+
+    evtSource.onerror = () => {
+      setStatus(false, 'Reconnecting sync...');
+      try { evtSource.close(); } catch (_) {}
+      setTimeout(connect, Math.min(retryDelay * 1.5, 30000));
+    };
+  }
+
+  function handleSyncEvent(event) {
+    if (!event || !event.type) return;
+    const { type, payload } = event;
+
+    if (type === 'RATES_UPDATED') {
+      const g22 = payload.gold22k ? Number(payload.gold22k).toLocaleString('en-IN') : '';
+      const sil = payload.silver ? Number(payload.silver).toLocaleString('en-IN') : '';
+      showSyncToast(`Metal rates updated: 22K ₹${g22}/g · Silver ₹${sil}/g`);
+      
+      // Update any rate notices on page
+      const rateBanners = document.querySelectorAll('.rate-notice');
+      rateBanners.forEach((banner) => {
+        const span = banner.querySelector('span');
+        if (span && payload.gold22k) {
+          span.textContent = `22K ₹${g22}/g · 24K ₹${Number(payload.gold24k).toLocaleString('en-IN')}/g · Silver ₹${sil}/g`;
+        }
+      });
+      // Update batch modal rate badges
+      const goldBox = document.getElementById('batchRateGold');
+      const silverBox = document.getElementById('batchRateSilver');
+      if (goldBox && payload.gold22k) goldBox.textContent = `₹${g22}/g`;
+      if (silverBox && payload.silver) silverBox.textContent = `₹${sil}/g`;
+
+      scheduleSmartLiveRefresh();
+    }
+
+    else if (type === 'INVENTORY_CHANGED') {
+      // If Batch Modal is open, reload items in real-time
+      const batchModal = document.getElementById('batch-modal');
+      const docInput = document.getElementById('batchDocNo');
+      if (batchModal && batchModal.style.display !== 'none' && docInput && docInput.value) {
+        const currentDoc = docInput.value.trim();
+        if (!payload.batchDocNo || payload.batchDocNo === currentDoc) {
+          if (typeof window.loadBatchDocument === 'function') {
+            window.loadBatchDocument(currentDoc, true); // true = silent background refresh
+          }
+        }
+      }
+
+      if (payload.action === 'ITEMS_SOLD') {
+        showSyncToast(`Items billed on counter. Stock updated.`);
+      } else if (payload.action === 'BATCH_PIECE_ADDED') {
+        showSyncToast(`Piece added to batch ${payload.batchDocNo || ''}`);
+      }
+
+      scheduleSmartLiveRefresh();
+    }
+
+    else if (type === 'SALE_COMPLETED') {
+      showSyncToast(`Invoice #${payload.invoiceNumber} created (₹${Number(payload.total).toLocaleString('en-IN')})`);
+      scheduleSmartLiveRefresh();
+    }
+
+    else if (type === 'URD_COMPLETED') {
+      showSyncToast(`URD Purchase #${payload.purchaseNumber} recorded`);
+      scheduleSmartLiveRefresh();
+    }
+
+    else if (type === 'CASHBOOK_UPDATED') {
+      if (window.location.pathname === '/cashbook') {
+        showSyncToast(`Cashbook updated`);
+      }
+      scheduleSmartLiveRefresh();
+    }
+
+    else if (type === 'CUSTOMER_UPDATED') {
+      showSyncToast(`Customer ledger updated`);
+      scheduleSmartLiveRefresh();
+    }
+  }
+
+  window.showSyncToast = showSyncToast;
+  window.scheduleSmartLiveRefresh = scheduleSmartLiveRefresh;
+
+  // Clean up SSE connection immediately on page unload so browser connection pool never blocks
+  window.addEventListener('beforeunload', () => {
+    if (evtSource) {
+      try { evtSource.close(); } catch (_) {}
+    }
+  });
+
+  window.addEventListener('pagehide', () => {
+    if (evtSource) {
+      try { evtSource.close(); } catch (_) {}
+    }
+  });
+
+  // Start connection
+  if (typeof EventSource !== 'undefined') {
+    connect();
+  }
 })();
 
 
