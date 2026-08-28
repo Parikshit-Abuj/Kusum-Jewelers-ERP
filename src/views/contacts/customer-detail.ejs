@@ -25,7 +25,7 @@
     <form method="post" action="/customers/<%= customer.id %>/payments">
       <label>Amount received (₹) *<input name="amount" type="number" min="0.01" max="<%= outstanding %>" step="0.01" required value="<%= outstanding > 0 ? outstanding : '' %>" <%= outstanding <= 0 ? 'disabled' : '' %>></label>
       <label>Payment method<select name="paymentMethod" data-payment-method <%= outstanding <= 0 ? 'disabled' : '' %>><% ['CASH','UPI','CARD','BANK_TRANSFER'].forEach((method) => { %><option value="<%= method %>"><%= method.replace('_', ' ') %></option><% }) %></select></label>
-      <label class="cashbook-sync" data-cashbook-sync-control><input type="checkbox" name="syncCashbook" checked <%= outstanding <= 0 ? 'disabled' : '' %>> Add payment to Daily Cashbook</label>
+      <p class="form-hint">Payment synchronizes automatically to Daily Cashbook.</p>
       <label>Receipt / reference<input name="reference" placeholder="Optional receipt no." <%= outstanding <= 0 ? 'disabled' : '' %>></label>
       <label>Note<textarea name="note" rows="3" placeholder="Optional payment note" <%= outstanding <= 0 ? 'disabled' : '' %>></textarea></label>
       <button class="button full" type="submit" <%= outstanding <= 0 ? 'disabled' : '' %>><%= outstanding > 0 ? 'Receive payment' : 'No credit pending' %></button>

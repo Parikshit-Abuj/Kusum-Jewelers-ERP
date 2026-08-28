@@ -54,14 +54,14 @@ function statusFromPrinterList(preferredName, listed, checked = true) {
     };
   }
 
-  const configured = listed.printers.find((printer) => normalise(printer.name) === normalise(configuredName));
-  const tsc = listed.printers.find((printer) => /ttp[- ]?244/i.test(printer.name));
-  const printer = configured || tsc;
+  const printer = listed.printers.find((entry) => normalise(entry.name) === normalise(configuredName));
   if (!printer) {
+    const detectedTsc = listed.printers.filter((entry) => /ttp[- ]?244/i.test(entry.name)).map((entry) => entry.name);
+    const suggestion = detectedTsc.length ? ` Detected TSC queue(s): ${detectedTsc.join(', ')}. Select the exact name in Printer setup.` : '';
     return {
       available: false,
       name: configuredName,
-      message: `TSC TTP-244 Pro is not installed in Windows. Turn it on, connect USB, and install its Windows driver; then click Recheck printer.`,
+      message: `${configuredName} is not installed under that exact Windows printer name.${suggestion || ' Turn it on, connect USB, and install its Windows driver; then click Recheck printer.'}`,
       printers: listed.printers,
       checked
     };
@@ -71,6 +71,15 @@ function statusFromPrinterList(preferredName, listed, checked = true) {
       available: false,
       name: printer.name,
       message: `${printer.name} is installed but is not currently available to Windows. Check the cable, power and driver.`,
+      printers: listed.printers,
+      checked
+    };
+  }
+  if (printer.workOffline || Number(printer.printerStatus) === 7) {
+    return {
+      available: false,
+      name: printer.name,
+      message: `${printer.name} is installed but Windows reports it offline. Check power, USB/network cable, queue pause state and labels.`,
       printers: listed.printers,
       checked
     };

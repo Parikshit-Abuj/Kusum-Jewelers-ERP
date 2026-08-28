@@ -40,16 +40,15 @@ async function inspect() {
     console.log(`  Total rows: ${payload.rows.length}`);
     console.log(`  Columns (${payload.columns.length}): ${payload.columns.map(c => c.label).join(' │ ')}`);
 
-    // Check for empty columns (columns where every row has null/empty/0)
+    // Stable financial schemas intentionally retain zero/blank columns so
+    // exports from different days can be combined without shifted headings.
     for (const col of payload.columns) {
       const allEmpty = payload.rows.every(row => {
         const v = row[col.key];
         return v === null || v === undefined || v === '' || v === 0;
       });
       if (allEmpty && payload.rows.length > 0) {
-        const msg = `  ⚠️  Column "${col.label}" (${col.key}) is entirely empty/zero across all ${payload.rows.length} rows`;
-        console.log(msg);
-        issues.push({ resource: res.key, issue: `Column "${col.label}" is entirely empty` });
+        console.log(`  ℹ️  Stable column "${col.label}" is zero/blank for this period`);
       }
     }
 
@@ -93,16 +92,17 @@ async function inspect() {
 
     // Resource-specific checks
     if (res.key === 'cashbook') {
-      // Every entry must have: entryDate, type (IN/OUT), amount, description
+      // Every entry must have: date, direction, a split amount and description.
       const missingType = payload.rows.filter(r => !r.type);
       const missingDate = payload.rows.filter(r => !r.entryDate);
-      const missingAmount = payload.rows.filter(r => r.amount === 0 || r.amount === null);
+      const missingAmount = payload.rows.filter(r => Number(r.moneyIn || 0) <= 0 && Number(r.moneyOut || 0) <= 0);
       const missingDesc = payload.rows.filter(r => !r.description);
-      if (missingType.length) issues.push({ resource: 'cashbook', issue: `${missingType.length} rows missing type (IN/OUT)` });
+      if (missingType.length) issues.push({ resource: 'cashbook', issue: `${missingType.length} rows missing money-in/out type` });
       if (missingDate.length) issues.push({ resource: 'cashbook', issue: `${missingDate.length} rows missing entryDate` });
+      if (missingAmount.length) issues.push({ resource: 'cashbook', issue: `${missingAmount.length} rows missing an in/out amount` });
       if (missingDesc.length) issues.push({ resource: 'cashbook', issue: `${missingDesc.length} rows missing description` });
       console.log(`\n  ── Cashbook validation:`);
-      console.log(`     Types: ${payload.rows.filter(r => r.type === 'IN').length} IN, ${payload.rows.filter(r => r.type === 'OUT').length} OUT`);
+      console.log(`     Types: ${payload.rows.filter(r => r.type === 'Money in').length} money in, ${payload.rows.filter(r => r.type === 'Money out').length} money out`);
       console.log(`     Methods: ${[...new Set(payload.rows.map(r => r.paymentMethod))].join(', ')}`);
       console.log(`     Date range: ${payload.rows[0]?.entryDate || '—'} to ${payload.rows[payload.rows.length - 1]?.entryDate || '—'}`);
       

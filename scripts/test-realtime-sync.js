@@ -5,6 +5,7 @@
 require('dotenv').config();
 const http = require('http');
 const { createPrisma } = require('../src/lib/prisma');
+const { dateInput } = require('../src/lib/helpers');
 
 const PORT = Number(process.env.PORT || 3000);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
@@ -159,7 +160,7 @@ async function runRealtimeTest() {
 
     // 2. Test Rate Update Broadcast
     console.log('\n2. Updating Daily Rates on Admin Laptop...');
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = dateInput();
     await postRequest('/rates', {
       rateDate: todayStr,
       gold22k: 7420,

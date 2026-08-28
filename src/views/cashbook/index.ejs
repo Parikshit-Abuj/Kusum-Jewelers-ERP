@@ -153,16 +153,7 @@
         </select>
       </label>
 
-      <div id="syncOption" data-cashbook-sync-control style="display:none;margin-bottom:14px;">
-        <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;cursor:pointer;">
-          <input type="checkbox" name="syncLedger" style="width:auto;margin:0;">
-          Sync to customer ledger
-        </label>
-        <small style="display:block;margin-top:4px;color:#756f69;">
-          For an <strong>IN</strong> entry: reduces the customer's credit balance.<br>
-          For an <strong>OUT</strong> entry: logs an adjustment on the customer sheet.
-        </small>
-      </div>
+      <small class="form-hint">When a customer is selected, this entry synchronizes automatically to their ledger. Money received reduces their oldest credit first.</small>
 
       <label>Reference / Receipt no.
         <input name="reference" placeholder="Optional — invoice no., receipt, UTR…">
@@ -175,22 +166,3 @@
   </aside>
 
 </div>
-
-<script>
-(function() {
-  const customerSel = document.getElementById('cbCustomer');
-  const syncDiv = document.getElementById('syncOption');
-  const methodSel = document.querySelector('.cashbook-form [data-payment-method]');
-  const check = syncDiv && syncDiv.querySelector('input[name="syncLedger"]');
-  if (!customerSel || !syncDiv || !methodSel || !check) return;
-  function update() {
-    const allowed = Boolean(customerSel.value);
-    syncDiv.style.display = allowed ? 'block' : 'none';
-    check.disabled = !allowed;
-    if (!allowed) check.checked = false;
-  }
-  customerSel.addEventListener('change', update);
-  methodSel.addEventListener('change', update);
-  update();
-})();
-</script>

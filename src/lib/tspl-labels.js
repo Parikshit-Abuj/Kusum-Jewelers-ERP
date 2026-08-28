@@ -164,11 +164,8 @@ function sendTsplOverTcp(host, portNumber, tspl) {
     };
     socket.setTimeout(15000);
     socket.once('connect', () => {
-      socket.write(bytes, (error) => {
-        if (error) return finish(error);
-        socket.end();
-        finish(null, `Sent ${bytes.length} native TSPL bytes to ${hostName}:${port} over direct TCP.`);
-      });
+      socket.once('finish', () => finish(null, `Sent ${bytes.length} native TSPL bytes to ${hostName}:${port} over direct TCP.`));
+      socket.end(bytes);
     });
     socket.once('timeout', () => finish(new Error(`Timed out sending native TSPL to ${hostName}:${port}. Check the printer IP, TCP port, cable/router and network power.`)));
     socket.once('error', (error) => finish(new Error(`Could not send native TSPL to ${hostName}:${port}: ${error.message || error}`)));

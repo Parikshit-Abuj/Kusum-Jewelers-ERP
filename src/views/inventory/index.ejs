@@ -12,6 +12,7 @@
 <form id="label-test-form" method="post" action="/labels/test-print"></form>
 <section class="panel">
   <form class="search-bar" method="get"><input name="q" value="<%= typeof q !== 'undefined' ? q : '' %>" placeholder="Search item name, net weight (e.g. 18.25 or payal 18.25), barcode..."><button class="button secondary" type="submit">Search</button><% if (typeof q !== 'undefined' && q) { %><a class="button ghost" href="/inventory">Clear</a><% } %></form>
+  <div data-inventory-live-content>
   <% if (products.length) { %><form id="label-print-form" class="label-batch-toolbar" method="post" action="/labels/print"><div><strong data-label-count>0 selected</strong><% if (typeof printerStatus !== 'undefined' && printerStatus) { %><div class="printer-status <%= printerStatus.available ? 'is-ready' : 'is-missing' %>"><span><%= printerStatus.available ? '●' : '!' %></span><%= printerStatus.message %><a href="/inventory?<%= typeof q !== 'undefined' && q ? `q=${encodeURIComponent(q)}&` : '' %>checkPrinter=1">Recheck printer</a></div><% } %></div><label class="printer-name"><%= (typeof printerTransport !== 'undefined' && printerTransport?.mode === 'TCP') ? 'Direct TCP printer' : 'Windows printer queue' %><input name="printerName" readonly value="<%= typeof printerName !== 'undefined' ? printerName : '' %>"></label><button class="button small" type="submit" data-label-print-button disabled>Send to TSC TTP-244 Pro</button></form><div class="table-wrap"><table class="inventory-table"><thead><tr><th class="label-select"><input type="checkbox" data-label-select-all title="Select all visible items"></th><th>Barcode / item</th><th>Metal / purity</th><th>Weight</th><th>Stock</th><th>Making</th><th class="right">Suggested value</th><th>Location</th><th></th></tr></thead><tbody>
   <% products.forEach((product) => { %><tr>
     <td class="label-select"><input form="label-print-form" type="checkbox" name="productId" value="<%= product.id %>" data-label-select <%= product.barcode ? '' : 'disabled' %>></td>
@@ -25,7 +26,7 @@
     <td class="actions"><a class="icon-button" title="Edit item" href="/inventory/<%= product.id %>/edit">✎</a></td>
   </tr><% }) %>
   </tbody></table></div><% } else { %><div class="empty-state"><span>◇</span><h3>No jewellery items found</h3><p>Add stock to start billing and tracking inventory.</p><button type="button" class="button" data-open-batch-modal>⚡ Batch Add Pieces</button></div><% } %>
+  </div>
 </section>
 
 <%- include('_batch_modal') %>
-

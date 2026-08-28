@@ -15,15 +15,15 @@
   <section class="form-section"><h2>Weight &amp; rate</h2><div class="form-grid four">
     <label>Purity<select name="purity" data-urd-purity><option value="22K" selected>22K Gold</option><option value="24K">24K Gold</option><option value="18K">18K Gold</option><option value="925">Silver 925</option><option value="PURE">Pure Silver</option><option value="OTHER">Other</option></select></label>
     <label>Gross weight (g)<input name="grossWeight" type="number" step="0.001" min="0" placeholder="0.000" data-urd-gross></label>
-    <label>Net weight (g) *<input name="netWeight" type="number" step="0.001" min="0" required placeholder="0.000" data-urd-net></label>
-    <label>Rate / gram (₹) *<input name="ratePerGram" type="number" step="0.01" min="0" required placeholder="0.00" data-urd-rate data-rate-22="<%= rateInfo.rate ? Number(rateInfo.rate.gold22k) : 0 %>" data-rate-24="<%= rateInfo.rate ? Number(rateInfo.rate.gold24k) : 0 %>" data-rate-silver="<%= rateInfo.rate ? Number(rateInfo.rate.silver) : 0 %>"></label>
+    <label>Net weight (g) *<input name="netWeight" type="number" step="0.001" min="0.001" required placeholder="0.000" data-urd-net></label>
+    <label>Rate / gram (₹) *<input name="ratePerGram" type="number" step="0.01" min="0.01" required placeholder="0.00" data-urd-rate data-rate-22="<%= rateInfo.rate ? Number(rateInfo.rate.gold22k) : 0 %>" data-rate-24="<%= rateInfo.rate ? Number(rateInfo.rate.gold24k) : 0 %>" data-rate-silver="<%= rateInfo.rate ? Number(rateInfo.rate.silver) : 0 %>"></label>
   </div></section>
   <section class="form-section"><h2>Valuation &amp; payout</h2><div class="form-grid four">
     <div class="rate-readout accent"><span>Valuation amount</span><strong data-urd-total>₹0.00</strong><small>Net weight × rate</small></div>
-    <label>Valuation amount (₹) *<input name="totalAmount" type="number" step="0.01" min="0" required placeholder="0.00" data-urd-amount></label>
+    <label>Valuation amount (₹) *<input name="totalAmount" type="number" step="0.01" min="0.01" required placeholder="0.00" data-urd-amount></label>
     <label>Amount paid to customer (₹) *<input name="paid" type="number" step="0.01" min="0" required placeholder="0.00" data-urd-paid></label>
     <label>Payout method<select name="paymentMethod" data-payment-method><option value="CASH">Cash</option><option value="UPI">UPI</option><option value="CARD">Card</option><option value="BANK_TRANSFER">Bank Transfer</option></select></label>
-    <label class="cashbook-sync" data-cashbook-sync-control><input type="checkbox" name="syncCashbook" checked> Add payout to Daily Cashbook</label>
+    <p class="form-hint">Paid amount synchronizes automatically to Daily Cashbook.</p>
   </div></section>
   <section class="form-section"><label>Description<textarea name="description" rows="2" placeholder="Item description — old bangles, broken chain, etc."></textarea></label><label>Notes<textarea name="notes" rows="2" placeholder="Customer ID proof, any deductions, etc."></textarea></label></section>
   <footer class="form-footer"><a class="button ghost" href="/urd-purchases">Cancel</a><button class="button" type="submit">Save URD purchase</button></footer>

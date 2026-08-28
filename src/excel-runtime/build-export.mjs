@@ -12,18 +12,36 @@ const thinGoldBorder = {
   bottom: { style: 'thin', color: { argb: 'FFD2B77F' } },
   right: { style: 'thin', color: { argb: 'FFD2B77F' } }
 };
-const dataBorder = { bottom: { style: 'thin', color: { argb: 'FFE8E1D8' } } };
+const dataBorder = {
+  top: { style: 'thin', color: { argb: 'FFE8E1D8' } },
+  left: { style: 'thin', color: { argb: 'FFE8E1D8' } },
+  bottom: { style: 'thin', color: { argb: 'FFE8E1D8' } },
+  right: { style: 'thin', color: { argb: 'FFE8E1D8' } }
+};
 const summaryLabelFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF4DE' } };
 const summaryValueFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFBF1' } };
+const alternateRowFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFCF7' } };
+const normalRowFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
+
+function dateOnlyValue(value) {
+  const dateText = String(value || '');
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateText);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day, 12));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day ? date : null;
+}
 
 function cellValue(value, type) {
-  if (value === null || value === undefined || (type === 'text' && value === '')) return null;
+  if (value === null || value === undefined || (['text', 'identifier'].includes(type) && value === '')) return null;
+  if (type === 'identifier') return { richText: [{ text: String(value) }] };
   if (type === 'date') {
-    if (value instanceof Date) return value;
     const dateText = String(value);
-    const date = /^\d{4}-\d{2}-\d{2}$/.test(dateText)
-      ? new Date(`${dateText}T12:00:00`)
-      : new Date(value);
+    const stableDate = dateOnlyValue(dateText);
+    if (stableDate) return stableDate;
+    const date = value instanceof Date ? value : new Date(value);
     return Number.isNaN(date.getTime()) ? dateText : date;
   }
   if (['currency', 'number', 'integer', 'weight'].includes(type)) return Number(value || 0);
@@ -31,18 +49,29 @@ function cellValue(value, type) {
 }
 
 function numberFormat(type) {
-  if (type === 'date') return 'yyyy-mm-dd';
-  if (type === 'currency') return '₹#,##0.00';
-  if (type === 'weight') return '0.000';
-  if (type === 'integer') return '#,##0';
-  if (type === 'number') return '#,##0.00';
+  if (type === 'date') return 'dd-mmm-yyyy';
+  if (type === 'currency') return '[$₹-en-IN]#,##0.00;[Red]-[$₹-en-IN]#,##0.00';
+  if (type === 'weight') return '0.000;[Red]-0.000';
+  if (type === 'integer') return '#,##0;[Red]-#,##0';
+  if (type === 'number') return '#,##0.00;[Red]-#,##0.00';
   return undefined;
 }
 
 function applyCellFormat(cell, type, alignment = 'left') {
-  cell.alignment = { vertical: 'middle', horizontal: alignment };
+  cell.alignment = { vertical: 'middle', horizontal: alignment, wrapText: type === 'text' };
   const format = numberFormat(type);
-  cell.numFmt = format || (type === 'text' ? '@' : 'General');
+  cell.numFmt = format || (['text', 'identifier'].includes(type) ? '@' : 'General');
+}
+
+function rowHeightFor(row, columns) {
+  const lines = columns.reduce((maximum, column) => {
+    if (column.type !== 'text') return maximum;
+    const value = String(row[column.key] || '');
+    const explicitLines = value.split(/\r?\n/);
+    const estimated = explicitLines.reduce((total, line) => total + Math.max(1, Math.ceil(line.length / Math.max(8, (column.width || 16) - 2))), 0);
+    return Math.max(maximum, estimated);
+  }, 1);
+  return Math.min(60, Math.max(20, lines * 16));
 }
 
 function sheetName(name, index, names) {
@@ -68,13 +97,15 @@ function addWorksheet(workbook, spec, index, usedNames) {
 
   const lastColumn = columns.length;
   const infoRows = spec.infoRows || [];
-  const infoPairsPerRow = Math.max(1, Math.floor(lastColumn / 2));
+  const infoBlockWidth = lastColumn >= 8 ? 4 : 2;
+  const infoPairsPerRow = Math.max(1, Math.floor(lastColumn / infoBlockWidth));
   const infoRowCount = Math.ceil(infoRows.length / infoPairsPerRow);
   const headerRow = 4 + infoRowCount;
   const dataStart = headerRow + 1;
   const sheet = workbook.addWorksheet(sheetName(spec.name, index, usedNames), {
     views: [{ state: 'frozen', ySplit: headerRow, showGridLines: false }]
   });
+  sheet.properties.defaultRowHeight = 18;
   sheet.columns = columns.map((column) => ({ key: column.key, width: column.width || 16 }));
 
   mergeAcross(sheet, 1, lastColumn);
@@ -92,16 +123,22 @@ function addWorksheet(workbook, spec, index, usedNames) {
 
   infoRows.forEach((item, itemIndex) => {
     const rowNumber = 3 + Math.floor(itemIndex / infoPairsPerRow);
-    const labelColumn = 1 + (itemIndex % infoPairsPerRow) * 2;
-    const valueColumn = labelColumn + 1;
+    const labelColumn = 1 + (itemIndex % infoPairsPerRow) * infoBlockWidth;
+    const labelEndColumn = labelColumn + Math.floor(infoBlockWidth / 2) - 1;
+    const valueColumn = labelEndColumn + 1;
+    const valueEndColumn = Math.min(labelColumn + infoBlockWidth - 1, lastColumn);
+    if (labelEndColumn > labelColumn) sheet.mergeCells(rowNumber, labelColumn, rowNumber, labelEndColumn);
+    if (valueEndColumn > valueColumn) sheet.mergeCells(rowNumber, valueColumn, rowNumber, valueEndColumn);
     const labelCell = sheet.getCell(rowNumber, labelColumn);
     const valueCell = sheet.getCell(rowNumber, valueColumn);
     labelCell.value = item.label;
     labelCell.fill = summaryLabelFill;
+    labelCell.border = thinGoldBorder;
     labelCell.font = { bold: true, color: { argb: 'FF6E4B12' }, size: 10 };
     labelCell.alignment = { horizontal: 'left', vertical: 'middle' };
     valueCell.value = cellValue(item.value, item.type);
     valueCell.fill = summaryValueFill;
+    valueCell.border = thinGoldBorder;
     valueCell.font = { bold: true, color: { argb: 'FF30251D' }, size: 10 };
     applyCellFormat(valueCell, item.type, ['currency', 'number', 'integer', 'weight'].includes(item.type) ? 'right' : 'left');
   });
@@ -123,7 +160,7 @@ function addWorksheet(workbook, spec, index, usedNames) {
       ref: `A${headerRow}`,
       headerRow: true,
       totalsRow: false,
-      style: { theme: 'TableStyleLight9', showRowStripes: true },
+      style: { theme: 'TableStyleLight1', showRowStripes: false },
       columns: columns.map((column) => ({ name: column.label })),
       rows: rows.map((row) => columns.map((column) => cellValue(row[column.key], column.type)))
     });
@@ -135,8 +172,10 @@ function addWorksheet(workbook, spec, index, usedNames) {
         const cell = excelRow.getCell(columnIndex + 1);
         cell.value = cellValue(row[column.key], column.type);
         cell.border = dataBorder;
+        cell.fill = rowIndex % 2 === 1 ? alternateRowFill : normalRowFill;
         applyCellFormat(cell, column.type, ['currency', 'number', 'integer', 'weight'].includes(column.type) ? 'right' : 'left');
       });
+      excelRow.height = rowHeightFor(row, columns);
     });
   } else {
     mergeAcross(sheet, dataStart, lastColumn);
@@ -146,7 +185,18 @@ function addWorksheet(workbook, spec, index, usedNames) {
   }
 
   sheet.autoFilter = rows.length ? { from: { row: headerRow, column: 1 }, to: { row: headerRow + rows.length, column: lastColumn } } : undefined;
-  sheet.pageSetup = { orientation: lastColumn > 8 ? 'landscape' : 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0 };
+  sheet.pageSetup = {
+    paperSize: 9,
+    orientation: lastColumn > 8 ? 'landscape' : 'portrait',
+    fitToPage: true,
+    fitToWidth: 1,
+    fitToHeight: 0,
+    margins: { left: 0.25, right: 0.25, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 },
+    printTitlesRow: `${headerRow}:${headerRow}`
+  };
+  sheet.headerFooter.oddFooter = '&LKusum ERP&CConfidential business register&RPage &P of &N';
+  sheet.headerFooter.evenFooter = sheet.headerFooter.oddFooter;
+  sheet.printArea = `A1:${sheet.getColumn(lastColumn).letter}${Math.max(dataStart, headerRow + rows.length)}`;
 }
 
 const defaultColumns = payload.columns || [];
@@ -158,7 +208,10 @@ if (!sheets.length || !sheets[0].columns?.length) throw new Error('Excel export 
 
 const workbook = new ExcelJS.Workbook();
 workbook.creator = 'Kusum ERP';
+workbook.lastModifiedBy = 'Kusum ERP';
+workbook.company = 'Kusum ERP';
 workbook.created = new Date();
+workbook.modified = new Date();
 const usedNames = new Set();
 sheets.forEach((sheet, index) => addWorksheet(workbook, sheet, index, usedNames));
 

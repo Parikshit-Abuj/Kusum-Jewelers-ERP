@@ -118,8 +118,8 @@
           <label>Qty
             <input name="quantity" type="number" min="1" value="1" required data-quantity>
           </label>
-          <label>Weight (g)
-            <input type="number" readonly data-weight placeholder="0.000">
+          <label>Billing weight (g)
+            <input name="weight" type="number" min="0.001" step="0.001" required data-weight placeholder="0.000">
           </label>
           <label>HSN (opt)
             <input name="hsnCode" placeholder="e.g. 7113" data-hsn-code autocomplete="off">
@@ -217,31 +217,11 @@
       </label>
     </div>
 
-    <!-- Single payment sync -->
-    <div data-single-cashbook-sync>
-      <label class="cashbook-sync" data-cashbook-sync-control>
-        <input type="checkbox" name="syncCashbook" checked>
-        Add payment to Daily Cashbook
-      </label>
-    </div>
-
-    <!-- Mixed payment separate sync options (only visible when MIXED is selected) -->
-    <div class="mixed-cashbook-sync" data-mixed-cashbook-sync style="display: none;">
-      <label class="cashbook-sync">
-        <input type="checkbox" name="syncCashCashbook" checked data-sync-cash>
-        Add Cash portion to Daily Cashbook
-      </label>
-      <label class="cashbook-sync">
-        <input type="checkbox" name="syncUpiCashbook" checked data-sync-upi>
-        Add UPI portion to Daily Cashbook
-      </label>
-    </div>
-
-    <p class="credit-hint">Choose <strong>Mixed</strong> to enter cash and UPI separately. Any remaining balance is automatically tracked in customer ledger.</p>
+    <p class="credit-hint">Choose <strong>Mixed</strong> to enter cash and UPI separately. Payments sync automatically to Daily Cashbook, and any remaining balance is tracked in the customer ledger.</p>
 
     <button class="button full large" type="submit">Generate bill →</button>
 
-    <p class="form-hint">Daily Cashbook sync is optional for cash, UPI, card and bank transfer.</p>
+    <p class="form-hint">All recorded payments are synchronized automatically.</p>
   </aside>
 
 </form>

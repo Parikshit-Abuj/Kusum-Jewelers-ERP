@@ -12,6 +12,7 @@ const { generateSqlBackup, importSqlBackup } = require('../src/lib/sql-backup-re
 const { getExportPayload } = require('../src/lib/data-lifecycle');
 const { writeSaleInvoice } = require('../src/lib/sale-invoice-pdf');
 const { writeUrdPurchaseInvoice } = require('../src/lib/urd-invoice-pdf');
+const { dateInput } = require('../src/lib/helpers');
 const stream = require('stream');
 
 const PORT = Number(process.env.PORT || 3000);
@@ -187,7 +188,7 @@ async function runDeepAudit() {
     // 4. DAILY METAL RATES
     // ----------------------------------------------------------------
     console.log('\n4. Subsystem: Daily Metal Rates');
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = dateInput();
     const ratePostRes = await makeRequest('POST', '/rates', {
       rateDate: todayStr,
       gold22k: 7350,
@@ -300,6 +301,7 @@ async function runDeepAudit() {
       customerEmail: 'audit@example.com',
       productId: [invPiece.id],
       quantity: [1],
+      weight: [Number(invPiece.netWeight)],
       metalRate: [7350],
       makingChargeType: ['PER_GRAM'],
       makingChargeValue: [500],
@@ -309,10 +311,7 @@ async function runDeepAudit() {
       paymentMethod: 'MIXED',
       cashPaid: 10000,
       upiPaid: 10000,
-      paid: 20000,
-      syncCashbook: 'on',
-      syncCashCashbook: 'on',
-      syncUpiCashbook: 'on'
+      paid: 20000
     });
 
     check('Create Sale Invoice with Customer PAN, HSN, HUID & Mixed Payment', salePostRes.status === 302 || salePostRes.status === 200, `Status: ${salePostRes.status}`);
@@ -360,7 +359,6 @@ async function runDeepAudit() {
       totalAmount: 68000,
       paid: 68000,
       paymentMethod: 'CASH',
-      syncCashbook: 'on',
       description: 'Old gold mangalsutra'
     });
 

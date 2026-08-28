@@ -423,6 +423,8 @@ document.querySelectorAll('.flash').forEach((el) => {
 
     let lookupTimer = null;
     let productData = null;
+    let lookupSequence = 0;
+    let lookupController = null;
 
     function getSaleDate() {
       return saleDateInput ? saleDateInput.value : new Date().toISOString().slice(0, 10);
@@ -458,7 +460,10 @@ document.querySelectorAll('.flash').forEach((el) => {
 
     async function lookupBarcode(barcode) {
       if (!barcode) return;
-      // Allow re-lookup of same barcode (user may have set rates in between)
+      const requestedBarcode = barcode.trim().toUpperCase();
+      const requestSequence = ++lookupSequence;
+      if (lookupController) lookupController.abort();
+      lookupController = new AbortController();
 
       setRowStatus(row, 'loading', 'Looking up barcode…');
       productIdInput.value = '';
@@ -466,8 +471,9 @@ document.querySelectorAll('.flash').forEach((el) => {
 
       try {
         const date = getSaleDate();
-        const resp = await fetch(`/api/products/barcode/${encodeURIComponent(barcode.toUpperCase())}?date=${date}`);
+        const resp = await fetch(`/api/products/barcode/${encodeURIComponent(requestedBarcode)}?date=${date}`, { signal: lookupController.signal });
         const data = await resp.json();
+        if (requestSequence !== lookupSequence || barcodeInput.value.trim().toUpperCase() !== requestedBarcode) return;
 
         if (!resp.ok) {
           setRowStatus(row, 'error', data.error || 'Not found.');
@@ -504,6 +510,7 @@ document.querySelectorAll('.flash').forEach((el) => {
           setRowStatus(row, 'ok', `✓ ${data.product.name} loaded · Rate: ${fmt(data.metalRate)}/g`);
         }
       } catch (err) {
+        if (err.name === 'AbortError' || requestSequence !== lookupSequence) return;
         setRowStatus(row, 'error', 'Network error — check your connection.');
         console.error('Barcode lookup failed:', err);
       }
@@ -512,9 +519,16 @@ document.querySelectorAll('.flash').forEach((el) => {
     // Barcode input: debounce lookup
     barcodeInput.addEventListener('input', () => {
       clearTimeout(lookupTimer);
+      lookupSequence++;
+      if (lookupController) lookupController.abort();
+      productIdInput.value = '';
+      productData = null;
+      itemDetails.innerHTML = '<strong>Waiting for barcode…</strong><small>Item details will appear here after lookup</small>';
       const val = barcodeInput.value.trim();
       if (val.length >= 1) {
         lookupTimer = setTimeout(() => lookupBarcode(val), 500);
+      } else {
+        setRowStatus(row, '', '');
       }
     });
 
@@ -526,8 +540,9 @@ document.querySelectorAll('.flash').forEach((el) => {
       }
     });
 
-    // Quantity change
+    // Quantity and billing-weight changes
     qtyInput.addEventListener('input', recalcRow);
+    weightInput.addEventListener('input', recalcRow);
 
     // Rate change (manual override)
     metalRateInput.addEventListener('input', recalcRow);
@@ -609,16 +624,6 @@ document.querySelectorAll('.flash').forEach((el) => {
     if (cashPaidInput) cashPaidInput.disabled = !mixed;
     if (upiPaidInput) upiPaidInput.disabled = !mixed;
     if (paidInput) paidInput.disabled = mixed;
-    const singleSync = form.querySelector('[data-single-cashbook-sync]');
-    const mixedSync = form.querySelector('[data-mixed-cashbook-sync]');
-    if (singleSync) {
-      singleSync.hidden = mixed;
-      singleSync.style.display = mixed ? 'none' : 'block';
-    }
-    if (mixedSync) {
-      mixedSync.hidden = !mixed;
-      mixedSync.style.display = mixed ? 'flex' : 'none';
-    }
     updateFormTotals();
   });
 
@@ -662,6 +667,19 @@ document.querySelectorAll('.flash').forEach((el) => {
     addRowBtn.addEventListener('click', addRow);
   }
 
+  form.addEventListener('submit', (event) => {
+    const unresolved = Array.from(rowsContainer.querySelectorAll('[data-line-item]')).find((row) => {
+      const barcode = row.querySelector('[data-barcode]')?.value.trim();
+      const productId = row.querySelector('[data-product-id]')?.value;
+      return barcode && !productId;
+    });
+    if (unresolved) {
+      event.preventDefault();
+      setRowStatus(unresolved, 'error', 'Wait for this barcode to load, or scan it again before saving.');
+      unresolved.querySelector('[data-barcode]')?.focus();
+    }
+  });
+
   // Add first row automatically
   addRow();
   toggleUrdFields();
@@ -669,38 +687,7 @@ document.querySelectorAll('.flash').forEach((el) => {
 })();
 
 /* ═══════════════════════════════════════════════════════════════
-   5. OPTIONAL CASHBOOK SYNC — any recorded payment method
-   ═══════════════════════════════════════════════════════════════ */
-(function initCashbookSyncControls() {
-  document.querySelectorAll('[data-cashbook-sync-control]').forEach((control) => {
-    const checkbox = control.querySelector('input[name="syncCashbook"]');
-    const form = control.closest('form');
-    const method = form?.querySelector('[data-payment-method]');
-    const singleSync = form?.querySelector('[data-single-cashbook-sync]');
-    const mixedSync = form?.querySelector('[data-mixed-cashbook-sync]');
-    if (!checkbox || !method) return;
-    function update() {
-      const isMixed = method.value === 'MIXED';
-      const canSync = ['CASH', 'UPI', 'CARD', 'BANK_TRANSFER'].includes(method.value);
-      if (singleSync) {
-        singleSync.hidden = isMixed || !canSync;
-        singleSync.style.display = (isMixed || !canSync) ? 'none' : 'block';
-      }
-      if (mixedSync) {
-        mixedSync.hidden = !isMixed;
-        mixedSync.style.display = isMixed ? 'flex' : 'none';
-      }
-      control.hidden = isMixed || !canSync;
-      checkbox.disabled = isMixed || !canSync;
-      if (!canSync && !isMixed) checkbox.checked = false;
-    }
-    method.addEventListener('change', update);
-    update();
-  });
-})();
-
-/* ═══════════════════════════════════════════════════════════════
-   6. CUSTOMER DETAIL — payment form amount slider hint
+   5. CUSTOMER DETAIL — payment form amount slider hint
    ═══════════════════════════════════════════════════════════════ */
 (function initCustomerPayment() {
   const amountInput = document.querySelector('.receive-payment input[name="amount"]');
@@ -730,34 +717,34 @@ document.querySelectorAll('.flash').forEach((el) => {
 /* ═══════════════════════════════════════════════════════════════
    7. INVENTORY LABEL BATCH — select multiple labels for one print run
    ═══════════════════════════════════════════════════════════════ */
-(function initLabelBatch() {
+function updateInventoryLabelBatchState() {
   const form = document.getElementById('label-print-form');
-  if (!form) return;
-
+  const selections = Array.from(document.querySelectorAll('[data-label-select]')).filter((input) => !input.disabled);
+  const selected = selections.filter((input) => input.checked);
   const selectAll = document.querySelector('[data-label-select-all]');
-  const selections = Array.from(document.querySelectorAll('[data-label-select]'));
-  const countEl = form.querySelector('[data-label-count]');
-  const printButtons = Array.from(document.querySelectorAll('[data-label-print-button]'));
-
-  function update() {
-    const selected = selections.filter((input) => input.checked);
-    const count = selected.length;
-    if (countEl) countEl.textContent = `${count} selected`;
-    printButtons.forEach((button) => { button.disabled = count === 0; });
-    if (selectAll) {
-      selectAll.checked = count > 0 && count === selections.length;
-      selectAll.indeterminate = count > 0 && count < selections.length;
-    }
-  }
-
+  const countEl = form?.querySelector('[data-label-count]');
+  if (countEl) countEl.textContent = `${selected.length} selected`;
+  document.querySelectorAll('[data-label-print-button]').forEach((button) => {
+    button.disabled = selected.length === 0;
+  });
   if (selectAll) {
-    selectAll.addEventListener('change', () => {
-      selections.forEach((input) => { input.checked = selectAll.checked; });
-      update();
-    });
+    selectAll.checked = selections.length > 0 && selected.length === selections.length;
+    selectAll.indeterminate = selected.length > 0 && selected.length < selections.length;
   }
-  selections.forEach((input) => input.addEventListener('change', update));
-  update();
+}
+
+(function initLabelBatch() {
+  document.addEventListener('change', (event) => {
+    if (event.target.matches('[data-label-select-all]')) {
+      document.querySelectorAll('[data-label-select]').forEach((input) => {
+        if (!input.disabled) input.checked = event.target.checked;
+      });
+      updateInventoryLabelBatchState();
+    } else if (event.target.matches('[data-label-select]')) {
+      updateInventoryLabelBatchState();
+    }
+  });
+  updateInventoryLabelBatchState();
 })();
 
 /* ═══════════════════════════════════════════════════════════════
@@ -934,7 +921,6 @@ document.querySelectorAll('.flash').forEach((el) => {
   const modal = document.getElementById('batchPieceModal');
   if (!modal) return;
 
-  const openBtns = document.querySelectorAll('[data-open-batch-modal]');
   const closeBtns = modal.querySelectorAll('[data-batch-modal-close]');
   const closeRefreshBtn = modal.querySelector('[data-batch-close-refresh]');
 
@@ -1209,7 +1195,9 @@ document.querySelectorAll('.flash').forEach((el) => {
     if (editingPieceId) exitEditMode();
   }
 
-  openBtns.forEach((btn) => btn.addEventListener('click', openModal));
+  document.addEventListener('click', (event) => {
+    if (event.target.closest('[data-open-batch-modal]')) openModal();
+  });
   closeBtns.forEach((btn) => btn.addEventListener('click', closeModal));
 
   closeRefreshBtn?.addEventListener('click', () => {
@@ -1666,6 +1654,8 @@ document.querySelectorAll('.flash').forEach((el) => {
   let evtSource = null;
   let retryDelay = 2000;
   let refreshDebounceTimer = null;
+  let lastDatabaseRevision = null;
+  let revisionPollBusy = false;
 
   function setStatus(connected, text) {
     if (!statusBadge) return;
@@ -1720,11 +1710,20 @@ document.querySelectorAll('.flash').forEach((el) => {
       const parser = new DOMParser();
       const newDoc = parser.parseFromString(htmlText, 'text/html');
 
-      // 1. Live Refresh Table Bodies (Sales, Inventory, Cashbook, URD, Customers, Rates)
-      const currentTable = document.querySelector('.table-wrap table tbody, .inventory-table tbody');
-      const newTable = newDoc.querySelector('.table-wrap table tbody, .inventory-table tbody');
-      if (currentTable && newTable && !isFormPage) {
-        currentTable.innerHTML = newTable.innerHTML;
+      // 1. Inventory needs a stable wrapper because its table is replaced by
+      // an empty state when the last piece sells (and vice versa).
+      const currentInventory = document.querySelector('[data-inventory-live-content]');
+      const newInventory = newDoc.querySelector('[data-inventory-live-content]');
+      if (currentInventory && newInventory && !isFormPage) {
+        currentInventory.innerHTML = newInventory.innerHTML;
+        updateInventoryLabelBatchState();
+      } else {
+        // Live Refresh Table Bodies (Sales, Cashbook, URD, Customers, Rates)
+        const currentTable = document.querySelector('.table-wrap table tbody');
+        const newTable = newDoc.querySelector('.table-wrap table tbody');
+        if (currentTable && newTable && !isFormPage) {
+          currentTable.innerHTML = newTable.innerHTML;
+        }
       }
 
       // 2. Live Refresh Stats Cards (Dashboard & Reports)
@@ -1759,6 +1758,25 @@ document.querySelectorAll('.flash').forEach((el) => {
       }
     } catch (err) {
       console.warn('Smart live UI refresh warning:', err);
+    }
+  }
+
+  async function pollSharedDatabaseRevision() {
+    if (revisionPollBusy) return;
+    revisionPollBusy = true;
+    try {
+      const response = await fetch('/api/sync-version', { cache: 'no-store' });
+      if (!response.ok) return;
+      const payload = await response.json();
+      const revision = String(payload.revision ?? '0');
+      if (lastDatabaseRevision !== null && revision !== lastDatabaseRevision) {
+        scheduleSmartLiveRefresh();
+      }
+      lastDatabaseRevision = revision;
+    } catch (_) {
+      // SSE handles the visible connection state; polling retries naturally.
+    } finally {
+      revisionPollBusy = false;
     }
   }
 
@@ -1880,7 +1898,9 @@ document.querySelectorAll('.flash').forEach((el) => {
   if (typeof EventSource !== 'undefined') {
     connect();
   }
+  pollSharedDatabaseRevision();
+  setInterval(pollSharedDatabaseRevision, 10000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) pollSharedDatabaseRevision();
+  });
 })();
-
-
-

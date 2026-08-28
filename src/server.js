@@ -6,6 +6,7 @@ const session = require('express-session');
 const morgan = require('morgan');
 const path = require('path');
 const crypto = require('crypto');
+const mysql = require('mysql2/promise');
 const appRoot = path.join(__dirname, '..');
 const shopDataDirectory = process.env.KUSUM_APP_DATA
   || path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Kusum Jewelers ERP');
@@ -17,7 +18,7 @@ const { writeUrdPurchaseInvoice } = require('./lib/urd-invoice-pdf');
 const { writeSaleInvoice } = require('./lib/sale-invoice-pdf');
 const { buildTsplJob, checkTcpPrinter, sendTsplToPrinter } = require('./lib/tspl-labels');
 const { resolveTscPrinter, cachedTscPrinterStatus } = require('./lib/windows-printers');
-const { provisionShopDatabase, enableNetworkSharing, updatePrinterConfiguration, parseDatabaseConnection, isLocalHost } = require('./lib/shop-provisioning');
+const { provisionShopDatabase, enableNetworkSharing, updatePrinterConfiguration, parseDatabaseConnection, isLocalHost, runBundledMigrations } = require('./lib/shop-provisioning');
 const { buildExcelExport } = require('./lib/excel-export');
 const { RESOURCE_LIST, resourceFor, parseDateRange, getExportPayload, archiveData } = require('./lib/data-lifecycle');
 const { generateSqlBackup, importSqlBackup } = require('./lib/sql-backup-restore');
@@ -30,6 +31,16 @@ const sqlUpload = multer({
   limits: { fileSize: 100 * 1024 * 1024 },
   storage: multer.memoryStorage()
 });
+
+function receiveSqlUpload(req, res, next) {
+  sqlUpload.single('sqlFile')(req, res, (error) => {
+    if (!error) return next();
+    const message = error.code === 'LIMIT_FILE_SIZE'
+      ? 'The SQL backup is larger than 100 MB. Archive old records or restore it with MySQL tools on the main PC.'
+      : (error.message || 'Could not read the uploaded SQL backup.');
+    return redirectWith(res, '/data-management', 'error', message);
+  });
+}
 
 let prisma = createPrisma();
 let databaseHealth = { checkedAt: 0, error: null };
@@ -78,6 +89,12 @@ function broadcastSyncEvent(type, payload = {}) {
       sseClients.delete(client);
     }
   }
+  // Separate Electron installations have separate in-memory SSE hubs. Bump a
+  // shared MySQL revision so every PC can notice this committed change too.
+  if (!shopSetupRequired()) {
+    prisma.$executeRaw`UPDATE \`SyncRevision\` SET \`revision\` = \`revision\` + 1, \`updatedAt\` = NOW(3) WHERE \`id\` = 1`
+      .catch(() => {});
+  }
 }
 
 // 25-second keep-alive heartbeat
@@ -94,6 +111,7 @@ setInterval(() => {
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 
 app.get('/api/realtime-events', (req, res) => {
+  if (!req.session?.authenticated) return res.status(401).end();
   if (req.socket) {
     req.socket.setKeepAlive(true);
     req.socket.setNoDelay(true);
@@ -125,6 +143,62 @@ function redirectWith(res, route, type, message) {
   res.redirect(`${route}${separator}${type}=${encodeURIComponent(message)}`);
 }
 
+function isLoopbackRequest(req) {
+  const address = String(req.socket?.remoteAddress || '').toLowerCase();
+  return address === '::1' || address === '127.0.0.1' || address === '::ffff:127.0.0.1';
+}
+
+function requireLoopback(req, res, next) {
+  if (isLoopbackRequest(req)) return next();
+  return res.status(403).send('ERP setup and connection repair are available only on this PC.');
+}
+
+function databaseMutationLockName() {
+  const connection = parseDatabaseConnection(process.env.DATABASE_URL);
+  const identity = `${connection.host}:${connection.port}/${connection.database}`;
+  return `kusum_erp_write_${crypto.createHash('sha256').update(identity).digest('hex').slice(0, 24)}`;
+}
+
+async function databaseMutationLock(req, res, next) {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)
+      || req.path === '/data/export'
+      || req.path.startsWith('/labels/')
+      || req.path === '/printer-setup') return next();
+
+  let connection;
+  try {
+    const config = parseDatabaseConnection(process.env.DATABASE_URL);
+    connection = await mysql.createConnection({
+      host: config.host,
+      port: config.port,
+      user: config.username,
+      password: config.password,
+      database: config.database,
+      connectTimeout: 12000
+    });
+    const [[lock]] = await connection.query('SELECT GET_LOCK(?, 15) AS acquired', [databaseMutationLockName()]);
+    if (Number(lock?.acquired) !== 1) {
+      throw new Error('Another ERP PC is saving or restoring data. Wait a moment and try again.');
+    }
+    let released = false;
+    const release = async () => {
+      if (released) return;
+      released = true;
+      try { await connection.query('DO RELEASE_LOCK(?)', [databaseMutationLockName()]); } catch (_) {}
+      await connection.end().catch(() => {});
+    };
+    res.once('finish', release);
+    res.once('close', release);
+    return next();
+  } catch (error) {
+    if (connection) await connection.end().catch(() => {});
+    if (req.is('json') || req.headers['content-type']?.includes('application/json')) {
+      return res.status(409).json({ error: error.message || 'ERP is busy on another PC.' });
+    }
+    return redirectWith(res, req.get('referer') || '/', 'error', error.message || 'ERP is busy on another PC.');
+  }
+}
+
 function labelRequests(body) {
   return [...new Set(asArray(body.productId).map(Number).filter((id) => Number.isInteger(id) && id > 0))]
     .map((id) => ({
@@ -135,7 +209,9 @@ function labelRequests(body) {
 
 function saleRows(body) {
   const productIds = asArray(body.productId);
+  const barcodes = asArray(body.barcode);
   const quantities = asArray(body.quantity);
+  const weights = asArray(body.weight);
   const metalRates = asArray(body.metalRate);
   const makingTypes = asArray(body.makingChargeType);
   const makingValues = asArray(body.makingChargeValue);
@@ -144,7 +220,9 @@ function saleRows(body) {
   const huidCodes = asArray(body.huidCode);
   return productIds.map((productId, index) => ({
     productId: Number(productId),
+    barcode: String(barcodes[index] || '').trim().toUpperCase(),
     quantity: Math.max(1, Math.floor(number(quantities[index], 1))),
+    weight: weights[index] === undefined || weights[index] === '' ? null : number(weights[index]),
     metalRate: number(metalRates[index]),
     makingChargeType: ['FIXED', 'PER_GRAM', 'PERCENTAGE'].includes(makingTypes[index]) ? makingTypes[index] : null,
     makingChargeValue: makingValues[index] === undefined || makingValues[index] === '' ? null : number(makingValues[index]),
@@ -161,46 +239,36 @@ async function getRateForDate(db, rateDate = dateInput()) {
   return { rate: latest, sourceDate: latest?.rateDate || null, isFallback: Boolean(latest) };
 }
 
-function requestedCashbookSync(body) {
-  const paymentMethods = new Set(['CASH', 'UPI', 'CARD', 'BANK_TRANSFER', 'MIXED']);
-  if (!paymentMethods.has(body.paymentMethod)) return false;
-  if (body.paymentMethod === 'MIXED') {
-    return body.syncCashCashbook === 'on' || body.syncUpiCashbook === 'on' || body.syncCashbook === 'on';
-  }
-  return body.syncCashbook === 'on';
-}
-
 function salePaymentBreakdown(body) {
   const selectedMethod = ['CASH', 'UPI', 'CARD', 'BANK_TRANSFER', 'CREDIT', 'MIXED'].includes(body.paymentMethod)
     ? body.paymentMethod
     : 'CASH';
   if (selectedMethod !== 'MIXED') {
-    const paid = Math.max(0, number(body.paid));
-    const sync = body.syncCashbook === 'on';
+    // CREDIT is not a money movement. Ignore a stale or manipulated paid
+    // value so the sale and cashbook can never disagree.
+    const paid = selectedMethod === 'CREDIT' ? 0 : Math.max(0, roundedMoney(number(body.paid)));
     return {
       paid,
       cashPaid: selectedMethod === 'CASH' ? paid : 0,
       upiPaid: selectedMethod === 'UPI' ? paid : 0,
-      paymentMethod: selectedMethod,
-      cashbookPayments: (sync && paid > 0) ? [{ method: selectedMethod, amount: paid }] : []
+      paymentMethod: paid > 0 ? selectedMethod : 'CREDIT',
+      cashbookPayments: paid > 0 ? [{ method: selectedMethod, amount: paid }] : []
     };
   }
-  const cashPaid = Math.max(0, number(body.cashPaid));
-  const upiPaid = Math.max(0, number(body.upiPaid));
-  const syncCash = body.syncCashCashbook !== undefined ? body.syncCashCashbook === 'on' : body.syncCashbook === 'on';
-  const syncUpi = body.syncUpiCashbook !== undefined ? body.syncUpiCashbook === 'on' : body.syncCashbook === 'on';
+  const cashPaid = Math.max(0, roundedMoney(number(body.cashPaid)));
+  const upiPaid = Math.max(0, roundedMoney(number(body.upiPaid)));
   const cashbookPayments = [];
-  if (syncCash && cashPaid > 0) {
+  if (cashPaid > 0) {
     cashbookPayments.push({ method: 'CASH', amount: cashPaid });
   }
-  if (syncUpi && upiPaid > 0) {
+  if (upiPaid > 0) {
     cashbookPayments.push({ method: 'UPI', amount: upiPaid });
   }
   return {
-    paid: cashPaid + upiPaid,
+    paid: roundedMoney(cashPaid + upiPaid),
     cashPaid,
     upiPaid,
-    paymentMethod: cashPaid > 0 && upiPaid > 0 ? 'MIXED' : cashPaid > 0 ? 'CASH' : upiPaid > 0 ? 'UPI' : 'MIXED',
+    paymentMethod: cashPaid > 0 && upiPaid > 0 ? 'MIXED' : cashPaid > 0 ? 'CASH' : upiPaid > 0 ? 'UPI' : 'CREDIT',
     cashbookPayments
   };
 }
@@ -210,6 +278,110 @@ function receiptMethodAmounts(paymentMethod, amount) {
   if (paymentMethod === 'CASH') paymentData.cashPaid = { increment: amount };
   if (paymentMethod === 'UPI') paymentData.upiPaid = { increment: amount };
   return paymentData;
+}
+
+const RECEIPT_PAYMENT_METHODS = new Set(['CASH', 'UPI', 'CARD', 'BANK_TRANSFER']);
+
+function receiptPaymentMethod(value) {
+  const method = String(value || 'CASH').toUpperCase();
+  if (!RECEIPT_PAYMENT_METHODS.has(method)) {
+    throw new Error('Choose Cash, UPI, Card or Bank Transfer as the payment method.');
+  }
+  return method;
+}
+
+function roundedMoney(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+function stockMovementSnapshot(product, type, quantity, note) {
+  return {
+    productId: product.id,
+    productBarcode: product.barcode || null,
+    productSku: product.sku || '',
+    productName: product.name || '',
+    productMetal: product.metal || null,
+    productPurity: product.purity || null,
+    netWeight: product.netWeight || 0,
+    type,
+    quantity,
+    note
+  };
+}
+
+async function lockCustomerForLedger(tx, customerId) {
+  if (!Number.isInteger(customerId) || customerId <= 0) throw new Error('Select a valid customer.');
+  // All ledger mutations for one customer take the same row lock. This keeps
+  // receipts correct when two LAN clients submit at nearly the same time.
+  const rows = await tx.$queryRaw`SELECT id FROM \`Customer\` WHERE id = ${customerId} FOR UPDATE`;
+  if (!rows.length) throw new Error('The selected customer no longer exists.');
+}
+
+async function allocateCustomerPayment(tx, { customerId, amount, paymentMethod, reference, note }) {
+  await lockCustomerForLedger(tx, customerId);
+
+  const ledgerTotal = await tx.customerLedger.aggregate({
+    where: { customerId },
+    _sum: { amount: true }
+  });
+  const outstanding = Math.max(0, roundedMoney(ledgerTotal._sum.amount || 0));
+  if (outstanding <= 0) throw new Error('This customer has no outstanding credit or loan.');
+  if (amount > outstanding) {
+    throw new Error(`Payment is greater than the outstanding amount of ${money(outstanding)}.`);
+  }
+
+  const openSales = await tx.sale.findMany({
+    where: { customerId, balance: { gt: 0 } },
+    orderBy: [{ saleDate: 'asc' }, { id: 'asc' }]
+  });
+  let remaining = roundedMoney(amount);
+  for (const sale of openSales) {
+    if (remaining <= 0) break;
+    const currentBalance = Number(sale.balance);
+    const currentPaid = Number(sale.paid);
+    const allocation = roundedMoney(Math.min(remaining, currentBalance));
+    const nextPaymentMethod = currentPaid <= 0 || sale.paymentMethod === 'CREDIT'
+      ? paymentMethod
+      : sale.paymentMethod === paymentMethod ? sale.paymentMethod : 'MIXED';
+    await tx.sale.update({
+      where: { id: sale.id },
+      data: {
+        paid: roundedMoney(currentPaid + allocation),
+        balance: Math.max(0, roundedMoney(currentBalance - allocation)),
+        paymentMethod: nextPaymentMethod,
+        ...receiptMethodAmounts(paymentMethod, allocation)
+      }
+    });
+    await tx.customerLedger.create({
+      data: {
+        customerId,
+        saleId: sale.id,
+        type: 'PAYMENT_RECEIVED',
+        amount: -allocation,
+        paymentMethod,
+        reference,
+        note: note || `Payment received against ${sale.invoiceNumber}`
+      }
+    });
+    remaining = roundedMoney(remaining - allocation);
+  }
+
+  // Any amount left after invoices pays down a manual loan/adjustment. Without
+  // this entry the cashbook would show money received while the ledger stayed due.
+  if (remaining > 0) {
+    await tx.customerLedger.create({
+      data: {
+        customerId,
+        type: 'PAYMENT_RECEIVED',
+        amount: -remaining,
+        paymentMethod,
+        reference,
+        note: note || 'Payment received against customer loan / adjustment'
+      }
+    });
+  }
+
+  return { outstanding, remainingAfterInvoices: remaining };
 }
 
 function normalizePhone(value) {
@@ -345,12 +517,12 @@ function localNetworkAddresses() {
     .filter((address, index, all) => all.indexOf(address) === index);
 }
 
-app.get('/setup', (req, res) => {
+app.get('/setup', requireLoopback, (req, res) => {
   if (!shopSetupRequired()) return res.redirect('/login');
   renderSetup(res, { error: req.query.error || null });
 });
 
-app.post('/setup', async (req, res) => {
+app.post('/setup', requireLoopback, async (req, res) => {
   if (!shopSetupRequired()) return res.redirect('/login');
   try {
     const values = await provisionShopDatabase({ appRoot, configPath, form: req.body });
@@ -362,11 +534,11 @@ app.post('/setup', async (req, res) => {
   }
 });
 
-app.get('/connection-repair', (req, res) => {
+app.get('/connection-repair', requireLoopback, (req, res) => {
   renderSetup(res, { repair: true, error: req.query.error || null });
 });
 
-app.post('/connection-repair', async (req, res) => {
+app.post('/connection-repair', requireLoopback, async (req, res) => {
   try {
     const values = await provisionShopDatabase({ appRoot, configPath, form: req.body });
     Object.assign(process.env, values);
@@ -411,6 +583,17 @@ app.use(async (req, res, next) => {
   return next();
 });
 
+app.use(databaseMutationLock);
+
+app.get('/api/sync-version', async (req, res, next) => {
+  try {
+    const rows = await prisma.$queryRaw`SELECT \`revision\`, \`updatedAt\` FROM \`SyncRevision\` WHERE \`id\` = 1`;
+    const row = rows[0] || { revision: 0, updatedAt: null };
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ revision: String(row.revision || 0), updatedAt: row.updatedAt || null });
+  } catch (error) { next(error); }
+});
+
 app.get('/network-setup', (req, res, next) => {
   try {
     const connection = parseDatabaseConnection(process.env.DATABASE_URL);
@@ -425,7 +608,11 @@ app.get('/network-setup', (req, res, next) => {
 
 app.post('/network-setup', async (req, res, next) => {
   try {
-    const access = await enableNetworkSharing({ databaseUrl: process.env.DATABASE_URL, form: req.body });
+    const access = await enableNetworkSharing({ databaseUrl: process.env.DATABASE_URL, configPath, currentEnv: process.env, form: req.body });
+    if (access.updatedConfig) {
+      Object.assign(process.env, access.updatedConfig);
+      await reloadPrismaClient();
+    }
     redirectWith(res, '/network-setup', 'message', `Client PC access is ready for database ${access.database} on port ${access.port}. Use the selected database username on each client.`);
   } catch (error) {
     redirectWith(res, '/network-setup', 'error', error.message || 'Could not enable client PC access.');
@@ -453,7 +640,9 @@ app.get('/data-management', (req, res, next) => {
     const selectedResource = req.query.resource || 'sales';
     const resource = resourceFor(selectedResource);
     const range = parseDateRange(req.query);
-    res.render('data-management/index', { title: 'Data export & archive', resources: RESOURCE_LIST, selectedResource, resource, range });
+    const restoreAllowed = isLocalHost(parseDatabaseConnection(process.env.DATABASE_URL).host)
+      && String(process.env.KUSUM_DEPLOYMENT_MODE || 'SERVER').toUpperCase() !== 'CLIENT';
+    res.render('data-management/index', { title: 'Data export & archive', resources: RESOURCE_LIST, selectedResource, resource, range, restoreAllowed });
   } catch (error) { next(error); }
 });
 
@@ -484,6 +673,7 @@ app.post('/data/archive', async (req, res) => {
       throw new Error('Tick the confirmation box and type DELETE before permanently removing data.');
     }
     const result = await archiveData(prisma, resource.key, range);
+    broadcastSyncEvent('DATA_ARCHIVED', { resource: resource.key, from: range.from, to: range.to, deleted: result.deleted });
     const skipped = result.skipped ? ` ${result.skipped} protected record${result.skipped === 1 ? '' : 's'} kept.` : '';
     const note = result.note ? ` ${result.note}` : '';
     redirectWith(res, `/data-management?resource=${resource.key}&from=${range.from}&to=${range.to}`, 'message', `${result.deleted} ${resource.label.toLowerCase()} record${result.deleted === 1 ? '' : 's'} permanently deleted.${skipped}${note}`);
@@ -496,29 +686,40 @@ app.post('/data/archive', async (req, res) => {
 app.get('/data/backup-sql', async (req, res) => {
   try {
     const backup = await generateSqlBackup(process.env.DATABASE_URL);
-    res.setHeader('Content-Type', 'application/sql');
+    res.setHeader('Content-Type', 'application/sql; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${backup.filename}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     res.send(backup.sql);
   } catch (error) {
     redirectWith(res, '/data-management', 'error', `Could not generate SQL backup: ${error.message}`);
   }
 });
 
-app.post('/data/restore-sql', sqlUpload.single('sqlFile'), async (req, res) => {
+app.post('/data/restore-sql', receiveSqlUpload, async (req, res) => {
+  let restoreAttempted = false;
   try {
+    const connection = parseDatabaseConnection(process.env.DATABASE_URL);
+    if (!isLocalHost(connection.host) || String(process.env.KUSUM_DEPLOYMENT_MODE || 'SERVER').toUpperCase() === 'CLIENT') {
+      throw new Error('For safety, database restore is available only on the Main database PC.');
+    }
     if (!req.file || !req.file.buffer) {
       throw new Error('Please choose a .sql backup file to upload.');
+    }
+    if (path.extname(req.file.originalname || '').toLowerCase() !== '.sql') {
+      throw new Error('Choose a Kusum ERP backup file with the .sql extension.');
     }
     if (req.body.restoreAcknowledged !== 'on') {
       throw new Error('Please tick the confirmation box to restore the database.');
     }
     const sqlText = req.file.buffer.toString('utf8');
+    restoreAttempted = true;
     const result = await importSqlBackup(process.env.DATABASE_URL, sqlText, appRoot);
-    // Refresh prisma client connection pool after restoring database
-    try { await prisma.$disconnect(); } catch { /* ignore */ }
-    prisma = createPrisma();
+    await reloadPrismaClient();
+    broadcastSyncEvent('DATABASE_RESTORED', { tables: result.tableCount });
     redirectWith(res, '/data-management', 'message', `Database backup imported successfully! Restored ${result.tableCount} tables (${result.executedStatements} SQL statements executed). All records are ready.`);
   } catch (error) {
+    if (restoreAttempted) await reloadPrismaClient().catch(() => {});
     redirectWith(res, '/data-management', 'error', `Could not restore database from SQL backup: ${error.message}`);
   }
 });
@@ -526,11 +727,12 @@ app.post('/data/restore-sql', sqlUpload.single('sqlFile'), async (req, res) => {
 app.get('/', async (req, res, next) => {
   try {
     const today = startOfToday();
+    const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000);
     const todayKey = dateInput(today);
     const [productCount, stockProducts, todaySales, lowStock, recentSales, todayCashbook, customerDue] = await Promise.all([
       prisma.product.count({ where: { status: 'AVAILABLE' } }),
       prisma.product.findMany({ where: { quantity: { gt: 0 }, status: 'AVAILABLE' }, select: { quantity: true, netWeight: true, grossWeight: true, metal: true, name: true, category: true } }),
-      prisma.sale.aggregate({ where: { saleDate: { gte: today } }, _sum: { total: true, paid: true, balance: true, urdOffset: true }, _count: true }),
+      prisma.sale.aggregate({ where: { saleDate: { gte: today, lt: tomorrow } }, _sum: { total: true, paid: true, balance: true, urdOffset: true }, _count: true }),
       prisma.product.findMany({ where: { quantity: { lte: 1 }, status: 'AVAILABLE' }, orderBy: { quantity: 'asc' }, take: 6 }),
       prisma.sale.findMany({ include: { customer: true }, orderBy: { saleDate: 'desc' }, take: 6 }),
       prisma.cashbookEntry.findMany({ where: { entryDate: todayKey }, select: { type: true, amount: true } }),
@@ -716,6 +918,15 @@ app.post('/labels/print', express.json(), async (req, res, next) => {
     } else {
       requests = labelRequests(req.body);
     }
+    requests = requests.map((request) => ({
+      id: Number(request.id),
+      copies: Number(request.copies)
+    }));
+    if (requests.some((request) => !Number.isInteger(request.id) || request.id <= 0 || !Number.isInteger(request.copies) || request.copies < 1 || request.copies > 20)) {
+      throw new Error('Each selected item must request between 1 and 20 label copies.');
+    }
+    const totalRequestedLabels = requests.reduce((total, request) => total + request.copies, 0);
+    if (totalRequestedLabels > 500) throw new Error('A single print job is limited to 500 labels. Split this into smaller batches.');
     if (!requests.length) {
       if (isJson) return res.status(400).json({ error: 'Select at least one inventory item to print labels.' });
       return redirectWith(res, '/inventory', 'error', 'Select at least one inventory item to print labels.');
@@ -872,12 +1083,12 @@ app.post('/api/inventory/batch-piece', express.json(), async (req, res, next) =>
         }
       });
       await tx.stockMovement.create({
-        data: {
-          productId: newProduct.id,
-          type: 'OPENING',
-          quantity: 1,
-          note: `Batch opening stock · ${barcode}${batchDocNo ? ` · ${batchDocNo}` : ''}`
-        }
+        data: stockMovementSnapshot(
+          newProduct,
+          'OPENING',
+          1,
+          `Batch opening stock · ${barcode}${batchDocNo ? ` · ${batchDocNo}` : ''}`
+        )
       });
       // Register in master autocomplete list
       await upsertItemName(tx, name, category, { updateCategory: false });
@@ -1008,7 +1219,7 @@ app.post('/inventory', async (req, res, next) => {
           notes: req.body.notes || null, status: quantity ? 'AVAILABLE' : 'SOLD_OUT'
         }
       });
-      if (quantity) await tx.stockMovement.create({ data: { productId: product.id, type: 'OPENING', quantity, note: `Opening stock · ${barcode}` } });
+      if (quantity) await tx.stockMovement.create({ data: stockMovementSnapshot(product, 'OPENING', quantity, `Opening stock · ${barcode}`) });
       // Auto-register item name in the master list for future autocomplete
       await upsertItemName(tx, req.body.name.trim(), req.body.category.trim(), { updateCategory: false });
       return product;
@@ -1059,7 +1270,7 @@ app.post('/inventory/:id/adjust', async (req, res, next) => {
       const nextQuantity = product.quantity + delta;
       if (nextQuantity < 0) throw new Error('Adjustment would make stock negative.');
       await tx.product.update({ where: { id }, data: { quantity: nextQuantity, status: nextQuantity ? 'AVAILABLE' : 'SOLD_OUT' } });
-      await tx.stockMovement.create({ data: { productId: id, type: delta > 0 ? 'ADJUSTMENT_IN' : 'ADJUSTMENT_OUT', quantity: delta, note: req.body.note || 'Manual stock adjustment' } });
+      await tx.stockMovement.create({ data: stockMovementSnapshot(product, delta > 0 ? 'ADJUSTMENT_IN' : 'ADJUSTMENT_OUT', delta, req.body.note || 'Manual stock adjustment') });
     });
     broadcastSyncEvent('INVENTORY_CHANGED', { action: 'STOCK_ADJUSTED', id, delta });
     redirectWith(res, '/inventory', 'message', 'Stock adjustment recorded.');
@@ -1092,7 +1303,8 @@ app.post('/customers', async (req, res, next) => {
   try {
     const phone = normalizePhone(req.body.phone);
     if (!validCustomerPhone(phone)) return redirectWith(res, '/customers', 'error', 'Enter a valid customer mobile number (10 to 15 digits).');
-    await prisma.customer.create({ data: { name: req.body.name.trim(), phone, email: req.body.email || null, address: req.body.address || null } });
+    const customer = await prisma.customer.create({ data: { name: req.body.name.trim(), phone, email: req.body.email || null, address: req.body.address || null } });
+    broadcastSyncEvent('CUSTOMER_UPDATED', { customerId: customer.id, action: 'CREATED' });
     redirectWith(res, '/customers', 'message', 'Customer added.');
   } catch (error) {
     if (error.code === 'P2002') return redirectWith(res, '/customers', 'error', 'That phone number already belongs to a customer.');
@@ -1117,49 +1329,26 @@ app.get('/customers/:id', async (req, res, next) => {
 app.post('/customers/:id/payments', async (req, res, next) => {
   try {
     const customerId = Number(req.params.id);
-    const amount = number(req.body.amount);
-    const paymentMethod = req.body.paymentMethod || 'CASH';
-    const syncCashbook = requestedCashbookSync(req.body);
+    const amount = roundedMoney(number(req.body.amount));
+    const paymentMethod = receiptPaymentMethod(req.body.paymentMethod);
     if (amount <= 0) return redirectWith(res, `/customers/${customerId}`, 'error', 'Enter a valid payment amount.');
     await prisma.$transaction(async (tx) => {
-      const openSales = await tx.sale.findMany({
-        where: { customerId, balance: { gt: 0 } },
-        orderBy: { saleDate: 'asc' }
-      });
-      const outstanding = openSales.reduce((total, sale) => total + Number(sale.balance), 0);
-      if (!outstanding) throw new Error('This customer has no outstanding credit.');
-      if (amount > outstanding + 0.01) throw new Error(`Payment is greater than the outstanding amount of ${money(outstanding)}.`);
-      let remaining = amount;
       const receipt = req.body.reference?.trim() || `RCPT-${String(Date.now()).slice(-7)}`;
-      for (const sale of openSales) {
-        if (remaining <= 0) break;
-        const allocation = Math.min(remaining, Number(sale.balance));
-        await tx.sale.update({
-          where: { id: sale.id },
-          data: {
-            paid: Number(sale.paid) + allocation, balance: Number(sale.balance) - allocation,
-            paymentMethod: sale.paymentMethod === req.body.paymentMethod ? sale.paymentMethod : 'MIXED',
-            ...receiptMethodAmounts(paymentMethod, allocation)
-          }
-        });
-        await tx.customerLedger.create({
-          data: {
-            customerId, saleId: sale.id, type: 'PAYMENT_RECEIVED', amount: -allocation,
-            paymentMethod: req.body.paymentMethod, reference: receipt, note: req.body.note || `Payment received against ${sale.invoiceNumber}`
-          }
-        });
-        remaining -= allocation;
-      }
-      if (syncCashbook) {
-        await tx.cashbookEntry.create({ data: {
-          entryDate: dateInput(), type: 'IN', paymentMethod, amount,
-          description: `Customer payment received — ${receipt}`, reference: receipt, customerId, syncLedger: true,
-          notes: req.body.note || null
-        } });
-      }
+      await allocateCustomerPayment(tx, {
+        customerId,
+        amount,
+        paymentMethod,
+        reference: receipt,
+        note: req.body.note || null
+      });
+      await tx.cashbookEntry.create({ data: {
+        entryDate: dateInput(), type: 'IN', paymentMethod, amount,
+        description: `Customer payment received — ${receipt}`, reference: receipt, customerId, syncLedger: true,
+        notes: req.body.note || null
+      } });
     });
     broadcastSyncEvent('CUSTOMER_UPDATED', { customerId, action: 'PAYMENT_RECEIVED', amount });
-    if (syncCashbook) broadcastSyncEvent('CASHBOOK_UPDATED', { type: 'IN', amount });
+    broadcastSyncEvent('CASHBOOK_UPDATED', { type: 'IN', amount });
     redirectWith(res, `/customers/${customerId}`, 'message', 'Payment received and customer credit updated.');
   } catch (error) { redirectWith(res, `/customers/${req.params.id}`, 'error', error.message || 'Could not record payment.'); }
 });
@@ -1210,6 +1399,7 @@ app.post('/item-names/:id', async (req, res, next) => {
     const category = (req.body.category || '').trim();
     if (!name || !category) return redirectWith(res, '/item-names', 'error', 'Name and category are required.');
     await prisma.itemName.update({ where: { id }, data: { name, category } });
+    broadcastSyncEvent('ITEM_NAMES_UPDATED', { id, name, category, action: 'UPDATED' });
     redirectWith(res, '/item-names', 'message', `"${name}" updated.`);
   } catch (error) {
     if (error.code === 'P2002') return redirectWith(res, '/item-names', 'error', 'That item name already exists.');
@@ -1221,6 +1411,7 @@ app.post('/item-names/:id/delete', async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     const item = await prisma.itemName.delete({ where: { id } });
+    broadcastSyncEvent('ITEM_NAMES_UPDATED', { id, action: 'DELETED' });
     redirectWith(res, '/item-names', 'message', `"${item.name}" deleted.`);
   } catch (error) { next(error); }
 });
@@ -1328,58 +1519,71 @@ app.post('/sales', async (req, res, next) => {
     const payment = salePaymentBreakdown(req.body);
     const saleDate = dateTimeFromInput(req.body.saleDate);
     const includeUrdPurchase = req.body.includeUrdPurchase === 'on';
-    const syncCashbook = requestedCashbookSync(req.body);
     const sale = await prisma.$transaction(async (tx) => {
       const productIds = [...new Set(rows.map((row) => row.productId))];
+      // Lock in a stable order so two PCs cannot sell the same last piece or
+      // overwrite one another's quantity update.
+      for (const productId of [...productIds].sort((a, b) => a - b)) {
+        await tx.$queryRaw`SELECT id FROM \`Product\` WHERE id = ${productId} FOR UPDATE`;
+      }
       const [products, rateInfo] = await Promise.all([
         tx.product.findMany({ where: { id: { in: productIds } } }),
         getRateForDate(tx, dateInput(saleDate))
       ]);
       if (products.length !== productIds.length) throw new Error('One or more scanned items no longer exist.');
       for (const product of products) {
+        if (product.status !== 'AVAILABLE') throw new Error(`${product.barcode || product.sku} is not available for sale.`);
+        const submittedRows = rows.filter((row) => row.productId === product.id);
+        if (submittedRows.some((row) => row.barcode && ![product.barcode, product.sku].filter(Boolean).map((value) => String(value).toUpperCase()).includes(row.barcode))) {
+          throw new Error('A barcode changed before the bill was saved. Scan the item again to prevent billing the wrong piece.');
+        }
         const requested = rows.filter((row) => row.productId === product.id).reduce((total, row) => total + row.quantity, 0);
         if (product.quantity < requested) throw new Error(`${product.barcode || product.sku} has only ${product.quantity} piece(s) in stock.`);
       }
       const pricedRows = rows.map((row) => {
         const product = products.find((item) => item.id === row.productId);
-        const weight = Number(product.netWeight);
+        const weight = row.weight === null ? Number(product.netWeight) : row.weight;
+        if (!Number.isFinite(weight) || weight <= 0) {
+          throw new Error(`Enter a valid billing weight for ${product.barcode || product.sku}.`);
+        }
         const defaultRate = metalRateFromDailyRate(product, rateInfo.rate);
         const metalRate = row.metalRate > 0 ? row.metalRate : defaultRate;
         if (!metalRate) throw new Error(`Set a daily rate before billing ${product.barcode || product.sku}.`);
         const makingChargeType = row.makingChargeType || product.makingChargeType;
         const makingChargeValue = row.makingChargeValue === null ? Number(product.makingChargeValue) : row.makingChargeValue;
-        const metalAmount = metalRate * weight * row.quantity;
-        const calculatedMaking = makingAmount(makingChargeType, makingChargeValue, metalAmount, weight, row.quantity);
-        const calculatedTaxable = metalAmount + calculatedMaking;
+        const metalAmount = roundedMoney(metalRate * weight * row.quantity);
+        const calculatedMaking = roundedMoney(makingAmount(makingChargeType, makingChargeValue, metalAmount, weight, row.quantity));
+        const calculatedTaxable = roundedMoney(metalAmount + calculatedMaking);
         return {
           ...row, product, weight, metalRate, metalAmount, makingChargeType, makingChargeValue,
           makingCharge: calculatedMaking,
-          taxableAmount: row.taxableAmount === null ? calculatedTaxable : row.taxableAmount
+          taxableAmount: row.taxableAmount === null ? calculatedTaxable : roundedMoney(row.taxableAmount)
         };
       });
-      const subtotal = pricedRows.reduce((sum, row) => sum + row.taxableAmount, 0);
-      const taxable = Math.max(0, subtotal - Math.min(discount, subtotal));
+      const subtotal = roundedMoney(pricedRows.reduce((sum, row) => sum + row.taxableAmount, 0));
+      const appliedDiscount = roundedMoney(Math.min(discount, subtotal));
+      const taxable = roundedMoney(Math.max(0, subtotal - appliedDiscount));
       const gstRate = 3;
-      const gstAmount = taxable * gstRate / 100;
-      const total = taxable + gstAmount;
+      const gstAmount = roundedMoney(taxable * gstRate / 100);
+      const total = roundedMoney(taxable + gstAmount);
       const customer = await resolveBillingCustomer(tx, req.body);
       const customerId = customer.id;
       const customerPan = String(req.body.customerPan || req.body.existingCustomerPan || customer.panNumber || '').trim().toUpperCase() || null;
-      const urdAmount = includeUrdPurchase ? Math.max(0, number(req.body.urdTotalAmount)) : 0;
+      const urdAmount = includeUrdPurchase ? Math.max(0, roundedMoney(number(req.body.urdTotalAmount))) : 0;
       if (includeUrdPurchase) {
         if (!customerId) throw new Error('Select the customer before settling their URD purchase against this bill.');
         if (number(req.body.urdNetWeight) <= 0 || number(req.body.urdRatePerGram) <= 0 || urdAmount <= 0) {
           throw new Error('Enter valid URD net weight, rate and purchase amount.');
         }
-        if (urdAmount > total + 0.01) throw new Error('URD value is higher than this sale total. Record it as a separate URD purchase so the balance can be paid to the customer.');
+        if (urdAmount > total) throw new Error('URD value is higher than this sale total. Record it as a separate URD purchase so the balance can be paid to the customer.');
       }
-      const netPayable = Math.max(0, total - urdAmount);
-      if (payment.paid > netPayable + 0.01) throw new Error(`Payment is greater than the net payable amount of ${money(netPayable)}.`);
+      const netPayable = roundedMoney(Math.max(0, total - urdAmount));
+      if (payment.paid > netPayable) throw new Error(`Payment is greater than the net payable amount of ${money(netPayable)}.`);
       const acceptedPaid = payment.paid;
-      const balance = Math.max(0, netPayable - acceptedPaid);
+      const balance = roundedMoney(Math.max(0, netPayable - acceptedPaid));
       const sale = await tx.sale.create({ data: {
         invoiceNumber: req.body.invoiceNumber || await nextDocumentNumber(tx, 'INV', saleDate), customerId, customerPan, saleDate,
-        subtotal, discount: Math.min(discount, subtotal), gstRate, gstAmount, total, urdOffset: urdAmount, paid: acceptedPaid,
+        subtotal, discount: appliedDiscount, gstRate, gstAmount, total, urdOffset: urdAmount, paid: acceptedPaid,
         cashPaid: payment.cashPaid, upiPaid: payment.upiPaid, balance,
         paymentMethod: payment.paymentMethod, notes: req.body.notes || null,
         items: { create: pricedRows.map((row) => ({
@@ -1406,7 +1610,7 @@ app.post('/sales', async (req, res, next) => {
           notes: `Settled against sale ${sale.invoiceNumber}`, saleId: sale.id
         } });
       }
-      if (syncCashbook && acceptedPaid > 0) {
+      if (acceptedPaid > 0) {
         for (const recordedPayment of payment.cashbookPayments) {
           await tx.cashbookEntry.create({ data: {
             entryDate: dateInput(saleDate), type: 'IN', paymentMethod: recordedPayment.method, amount: recordedPayment.amount,
@@ -1418,7 +1622,7 @@ app.post('/sales', async (req, res, next) => {
       for (const product of products) {
         const quantitySold = rows.filter((row) => row.productId === product.id).reduce((total, row) => total + row.quantity, 0);
         const remaining = product.quantity - quantitySold;
-        await tx.stockMovement.create({ data: { productId: product.id, type: 'SALE', quantity: -quantitySold, note: `Sold via ${sale.invoiceNumber}` } });
+        await tx.stockMovement.create({ data: stockMovementSnapshot(product, 'SALE', -quantitySold, `Sold via ${sale.invoiceNumber}`) });
         // Sale-line snapshots preserve invoices and exports. A fully sold
         // barcode can therefore be removed permanently from inventory.
         if (remaining <= 0) await tx.product.delete({ where: { id: product.id } });
@@ -1434,7 +1638,7 @@ app.post('/sales', async (req, res, next) => {
       balance: Number(sale.balance)
     });
     broadcastSyncEvent('INVENTORY_CHANGED', { action: 'ITEMS_SOLD', count: rows.length });
-    if (syncCashbook) broadcastSyncEvent('CASHBOOK_UPDATED', { type: 'IN', amount: Number(sale.paid) });
+    if (Number(sale.paid) > 0) broadcastSyncEvent('CASHBOOK_UPDATED', { type: 'IN', amount: Number(sale.paid) });
     redirectWith(res, `/sales/${sale.id}`, 'message', 'Sale saved, stock removed and customer credit updated.');
   } catch (error) { redirectWith(res, '/sales/new', 'error', error.message || 'Could not save sale.'); }
 });
@@ -1458,7 +1662,7 @@ app.get('/sales/:id/invoice.pdf', async (req, res, next) => {
 app.get('/cashbook', async (req, res, next) => {
   try {
     const selectedDate = req.query.date || dateInput();
-    const fromDate = req.query.from || new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
+    const fromDate = req.query.from || `${dateInput().slice(0, 7)}-01`;
     const toDate = req.query.to || dateInput();
     const methodFilter = req.query.method || '';
     const where = {
@@ -1492,16 +1696,30 @@ app.get('/cashbook', async (req, res, next) => {
 
 app.post('/cashbook', async (req, res, next) => {
   try {
-    const amount = number(req.body.amount);
+    const amount = roundedMoney(number(req.body.amount));
     if (amount <= 0) return redirectWith(res, '/cashbook', 'error', 'Enter a valid amount greater than zero.');
-    const customerId = req.body.customerId ? Number(req.body.customerId) : null;
-    const syncLedger = req.body.syncLedger === 'on' && customerId;
+    const requestedCustomerId = req.body.customerId ? Number(req.body.customerId) : null;
+    const customerId = Number.isInteger(requestedCustomerId) && requestedCustomerId > 0 ? requestedCustomerId : null;
+    const syncLedger = Boolean(customerId);
     const entryDate = req.body.entryDate || dateInput();
     const entryType = req.body.type === 'OUT' ? 'OUT' : 'IN';
-    const paymentMethod = req.body.paymentMethod;
-    const description = req.body.description.trim();
+    const paymentMethod = receiptPaymentMethod(req.body.paymentMethod);
+    const description = String(req.body.description || '').trim();
+    if (!description) return redirectWith(res, '/cashbook', 'error', 'Enter a description for this entry.');
 
     await prisma.$transaction(async (tx) => {
+      const receipt = req.body.reference?.trim() || `CB-${String(Date.now()).slice(-7)}`;
+      if (syncLedger && entryType === 'IN') {
+        await allocateCustomerPayment(tx, {
+          customerId,
+          amount,
+          paymentMethod,
+          reference: receipt,
+          note: `Payment via cashbook · ${description}`
+        });
+      } else if (syncLedger) {
+        await lockCustomerForLedger(tx, customerId);
+      }
       await tx.cashbookEntry.create({
         data: {
           entryDate, type: entryType, paymentMethod, description, amount,
@@ -1509,47 +1727,18 @@ app.post('/cashbook', async (req, res, next) => {
           customerId, syncLedger: Boolean(syncLedger)
         }
       });
-      // If syncing to customer ledger (e.g., customer repaying their loan)
-      if (syncLedger) {
-        const isPaymentReceived = entryType === 'IN';
-        if (isPaymentReceived) {
-          // Customer paying back — reduce their outstanding
-          const openSales = await tx.sale.findMany({
-            where: { customerId, balance: { gt: 0 } },
-            orderBy: { saleDate: 'asc' }
-          });
-          let remaining = amount;
-          const receipt = req.body.reference?.trim() || `CB-${String(Date.now()).slice(-7)}`;
-          for (const sale of openSales) {
-            if (remaining <= 0) break;
-            const allocation = Math.min(remaining, Number(sale.balance));
-            await tx.sale.update({
-              where: { id: sale.id },
-              data: {
-                paid: Number(sale.paid) + allocation, balance: Number(sale.balance) - allocation, paymentMethod: 'MIXED',
-                ...receiptMethodAmounts(paymentMethod, allocation)
-              }
-            });
-            await tx.customerLedger.create({
-              data: {
-                customerId, saleId: sale.id, type: 'PAYMENT_RECEIVED', amount: -allocation,
-                paymentMethod, reference: receipt, note: `Payment via cashbook · ${description}`
-              }
-            });
-            remaining -= allocation;
+      if (syncLedger && entryType === 'OUT') {
+        // Money going out to a customer is money they owe back to the shop.
+        await tx.customerLedger.create({
+          data: {
+            customerId, type: 'ADJUSTMENT', amount,
+            paymentMethod, reference: req.body.reference || null, note: `Cashbook out · ${description}`
           }
-        } else {
-          // Money going out to customer (e.g., refund) — log as adjustment
-          await tx.customerLedger.create({
-            data: {
-              customerId, type: 'ADJUSTMENT', amount: amount,
-              paymentMethod, reference: req.body.reference || null, note: `Cashbook out · ${description}`
-            }
-          });
-        }
+        });
       }
     });
     broadcastSyncEvent('CASHBOOK_UPDATED', { entryDate: req.body.entryDate, type: req.body.type, amount: Number(req.body.amount) });
+    if (syncLedger) broadcastSyncEvent('CUSTOMER_UPDATED', { customerId, action: entryType === 'IN' ? 'PAYMENT_RECEIVED' : 'ADJUSTMENT', amount });
     const label = req.body.type === 'OUT' ? 'Cash out' : 'Cash in';
     const syncNote = syncLedger ? ' Customer ledger updated.' : '';
     redirectWith(res, '/cashbook', 'message', `${label} entry saved.${syncNote}`);
@@ -1605,10 +1794,15 @@ app.post('/urd-purchases', async (req, res, next) => {
         return redirectWith(res, '/urd-purchases/new', 'error', 'Select a customer for this URD purchase.');
       }
     }
-    const totalAmount = number(req.body.totalAmount);
-    const paid = Math.min(Math.max(0, number(req.body.paid)), totalAmount);
-    const paymentMethod = req.body.paymentMethod || 'CASH';
-    const syncCashbook = requestedCashbookSync(req.body);
+    const netWeight = number(req.body.netWeight);
+    const ratePerGram = number(req.body.ratePerGram);
+    const totalAmount = roundedMoney(number(req.body.totalAmount));
+    const paid = roundedMoney(Math.max(0, number(req.body.paid)));
+    const paymentMethod = receiptPaymentMethod(req.body.paymentMethod);
+    if (netWeight <= 0) return redirectWith(res, '/urd-purchases/new', 'error', 'Enter a net weight greater than zero.');
+    if (ratePerGram <= 0) return redirectWith(res, '/urd-purchases/new', 'error', 'Enter a rate per gram greater than zero.');
+    if (totalAmount <= 0) return redirectWith(res, '/urd-purchases/new', 'error', 'Enter a valuation amount greater than zero.');
+    if (paid > totalAmount) return redirectWith(res, '/urd-purchases/new', 'error', `Payout is greater than the valuation amount of ${money(totalAmount)}.`);
     const purchaseDate = dateTimeFromInput(req.body.purchaseDate);
     const purchase = await prisma.$transaction(async (tx) => {
       const record = await tx.urdPurchase.create({
@@ -1617,11 +1811,11 @@ app.post('/urd-purchases', async (req, res, next) => {
           customerId,
           purchaseDate,
           metal: req.body.metal || 'GOLD', purity: req.body.purity || null,
-          grossWeight: number(req.body.grossWeight), netWeight: number(req.body.netWeight), ratePerGram: number(req.body.ratePerGram),
+          grossWeight: number(req.body.grossWeight), netWeight, ratePerGram,
           totalAmount, paid, paymentMethod, description: req.body.description || null, notes: req.body.notes || null
         }
       });
-      if (syncCashbook && paid > 0) {
+      if (paid > 0) {
         await tx.cashbookEntry.create({ data: {
           entryDate: dateInput(record.purchaseDate), type: 'OUT', paymentMethod,
           description: `URD purchase — ${record.purchaseNumber}`, amount: paid, reference: record.purchaseNumber,
@@ -1635,9 +1829,54 @@ app.post('/urd-purchases', async (req, res, next) => {
       totalAmount: Number(purchase.totalAmount),
       paid: Number(purchase.paid)
     });
-    if (syncCashbook && paid > 0) broadcastSyncEvent('CASHBOOK_UPDATED', { type: 'OUT', amount: paid });
+    if (paid > 0) broadcastSyncEvent('CASHBOOK_UPDATED', { type: 'OUT', amount: paid });
     redirectWith(res, '/urd-purchases', 'message', `URD Purchase ${purchase.purchaseNumber} saved.`);
   } catch (error) { next(error); }
+});
+
+app.post('/urd-purchases/:id/payments', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const amount = roundedMoney(number(req.body.amount));
+    const paymentMethod = receiptPaymentMethod(req.body.paymentMethod);
+    if (!Number.isInteger(id) || id <= 0) throw new Error('Invalid URD purchase.');
+    if (amount <= 0) throw new Error('Enter a payout amount greater than zero.');
+    const result = await prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw`SELECT id FROM \`UrdPurchase\` WHERE id = ${id} FOR UPDATE`;
+      if (!locked.length) throw new Error('This URD purchase no longer exists.');
+      const purchase = await tx.urdPurchase.findUniqueOrThrow({ where: { id } });
+      const outstanding = roundedMoney(Math.max(0, Number(purchase.totalAmount) - Number(purchase.saleOffset) - Number(purchase.paid)));
+      if (outstanding <= 0) throw new Error('This URD purchase is already fully paid or settled.');
+      if (amount > outstanding) throw new Error(`Payout is greater than the outstanding amount of ${money(outstanding)}.`);
+      const reference = req.body.reference?.trim() || `${purchase.purchaseNumber}-PAY`;
+      const nextMethod = Number(purchase.paid) <= 0 || purchase.paymentMethod === paymentMethod
+        ? paymentMethod
+        : 'MIXED';
+      const updated = await tx.urdPurchase.update({
+        where: { id },
+        data: { paid: { increment: amount }, paymentMethod: nextMethod }
+      });
+      await tx.cashbookEntry.create({
+        data: {
+          entryDate: req.body.entryDate || dateInput(),
+          type: 'OUT',
+          paymentMethod,
+          amount,
+          description: `URD payout — ${purchase.purchaseNumber}`,
+          reference,
+          customerId: purchase.customerId,
+          syncLedger: false,
+          notes: req.body.notes || null
+        }
+      });
+      return updated;
+    });
+    broadcastSyncEvent('URD_UPDATED', { id, action: 'PAYOUT_RECORDED', amount, paid: Number(result.paid) });
+    broadcastSyncEvent('CASHBOOK_UPDATED', { type: 'OUT', amount });
+    redirectWith(res, '/urd-purchases', 'message', `URD payout of ${money(amount)} recorded.`);
+  } catch (error) {
+    redirectWith(res, '/urd-purchases', 'error', error.message || 'Could not record the URD payout.');
+  }
 });
 
 app.get('/urd-purchases/:id/invoice.pdf', async (req, res, next) => {
@@ -1654,8 +1893,9 @@ app.post('/urd-purchases/:id/delete', async (req, res, next) => {
   try {
     const purchase = await prisma.urdPurchase.findUniqueOrThrow({ where: { id: Number(req.params.id) } });
     const outstanding = Math.max(0, Number(purchase.totalAmount) - Number(purchase.paid) - Number(purchase.saleOffset));
-    if (outstanding > 0.01) throw new Error(`This URD purchase has ${money(outstanding)} still payable to the customer and cannot be deleted.`);
+    if (outstanding > 0) throw new Error(`This URD purchase has ${money(outstanding)} still payable to the customer and cannot be deleted.`);
     await prisma.urdPurchase.delete({ where: { id: purchase.id } });
+    broadcastSyncEvent('URD_UPDATED', { id: purchase.id, action: 'DELETED' });
     redirectWith(res, '/urd-purchases', 'message', 'Purchase deleted.');
   } catch (error) {
     redirectWith(res, '/urd-purchases', 'error', error.message || 'Could not delete this URD purchase.');
@@ -1664,8 +1904,11 @@ app.post('/urd-purchases/:id/delete', async (req, res, next) => {
 
 app.get('/reports', async (req, res, next) => {
   try {
-    const from = req.query.from ? new Date(req.query.from) : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-    const to = req.query.to ? new Date(`${req.query.to}T23:59:59`) : new Date();
+    const todayKey = dateInput();
+    const fromKey = req.query.from || `${todayKey.slice(0, 7)}-01`;
+    const toKey = req.query.to || todayKey;
+    const from = new Date(`${fromKey}T00:00:00.000+05:30`);
+    const to = new Date(`${toKey}T23:59:59.999+05:30`);
     const [sales, saleItemsInPeriod, stockProducts, receivables] = await Promise.all([
       prisma.sale.aggregate({ where: { saleDate: { gte: from, lte: to } }, _sum: { subtotal: true, discount: true, gstAmount: true, total: true, paid: true, balance: true }, _count: true }),
       prisma.saleItem.findMany({
@@ -1758,6 +2001,39 @@ app.use((error, req, res, next) => {
   res.status(500).render('error', { title: 'Something went wrong', detail: process.env.NODE_ENV === 'development' ? error.message : null });
 });
 
-app.listen(port, () => console.log(`Kusum ERP running at http://localhost:${port}`));
+async function startApplicationServer() {
+  if (!shopSetupRequired()) {
+    const connection = parseDatabaseConnection(process.env.DATABASE_URL);
+    const mode = String(process.env.KUSUM_DEPLOYMENT_MODE || 'SERVER').toUpperCase();
+    if (mode !== 'CLIENT' && isLocalHost(connection.host)) {
+      await runBundledMigrations(appRoot, process.env.DATABASE_URL);
+    } else {
+      // Client PCs never migrate the shared schema. They fail clearly until
+      // the updated ERP has first been opened on the Main database PC.
+      const probe = mysql.createConnection({
+        host: connection.host,
+        port: connection.port,
+        user: connection.username,
+        password: connection.password,
+        database: connection.database,
+        connectTimeout: 12000
+      });
+      const client = await probe;
+      try {
+        await client.query('SELECT `revision` FROM `SyncRevision` WHERE `id` = 1');
+      } finally {
+        await client.end();
+      }
+    }
+  }
+  const mode = String(process.env.KUSUM_DEPLOYMENT_MODE || 'SERVER').toUpperCase();
+  const bindHost = process.env.KUSUM_BIND_HOST || (mode === 'CLIENT' ? '127.0.0.1' : '0.0.0.0');
+  return app.listen(port, bindHost, () => console.log(`Kusum ERP running at http://localhost:${port}`));
+}
+
+startApplicationServer().catch((error) => {
+  console.error(error);
+  setImmediate(() => { throw error; });
+});
 
 process.on('SIGINT', async () => { await prisma.$disconnect(); process.exit(0); });

@@ -101,12 +101,18 @@ model Product {
 
 model StockMovement {
   id        Int          @id @default(autoincrement())
-  productId Int
+  productId Int?
+  productBarcode String?
+  productSku String       @default("")
+  productName String      @default("")
+  productMetal MetalType?
+  productPurity String?
+  netWeight Decimal       @default(0) @db.Decimal(12, 3)
   type      MovementType
   quantity  Int
   note      String?
   createdAt DateTime     @default(now())
-  product   Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product   Product?     @relation(fields: [productId], references: [id], onDelete: SetNull)
 
   @@index([productId, createdAt])
 }
@@ -254,4 +260,10 @@ model ItemName {
   name      String   @unique @db.VarChar(255)
   category  String   @db.VarChar(100)
   createdAt DateTime @default(now())
+}
+
+model SyncRevision {
+  id        Int      @id
+  revision BigInt   @default(0)
+  updatedAt DateTime @updatedAt
 }

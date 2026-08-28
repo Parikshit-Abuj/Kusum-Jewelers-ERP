@@ -58,6 +58,49 @@ function mysqlUrl({ host, port: mysqlPort, username, password, database }) {
   return `mysql://${encodeURIComponent(username)}:${encodeURIComponent(password)}@${host}:${mysqlPort}/${database}`;
 }
 
+function splitMigrationStatements(sql) {
+  const statements = [];
+  let current = '';
+  let quote = null;
+  let lineComment = false;
+  let blockComment = false;
+  for (let index = 0; index < sql.length; index += 1) {
+    const char = sql[index];
+    const next = sql[index + 1] || '';
+    if (lineComment) {
+      if (char === '\n') { lineComment = false; current += '\n'; }
+      continue;
+    }
+    if (blockComment) {
+      if (char === '*' && next === '/') { blockComment = false; current += ' '; index += 1; }
+      continue;
+    }
+    if (quote) {
+      current += char;
+      if (char === '\\' && index + 1 < sql.length) {
+        current += sql[index + 1];
+        index += 1;
+      } else if (char === quote) {
+        if (sql[index + 1] === quote) { current += sql[index + 1]; index += 1; }
+        else quote = null;
+      }
+      continue;
+    }
+    if (char === '-' && next === '-' && /\s/.test(sql[index + 2] || '')) { lineComment = true; index += 1; continue; }
+    if (char === '#') { lineComment = true; continue; }
+    if (char === '/' && next === '*') { blockComment = true; index += 1; continue; }
+    if (char === "'" || char === '"' || char === '`') { quote = char; current += char; continue; }
+    if (char === ';') {
+      if (current.trim()) statements.push(current.trim());
+      current = '';
+      continue;
+    }
+    current += char;
+  }
+  if (current.trim()) statements.push(current.trim());
+  return statements;
+}
+
 function printerFormValues(form) {
   const printerMode = String(form.printerMode || 'WINDOWS').trim().toUpperCase() === 'TCP' ? 'TCP' : 'WINDOWS';
   const printerName = input(form.printerName || 'TSC TTP-244 Pro');
@@ -122,23 +165,25 @@ async function runBundledMigrations(appRoot, databaseUrl) {
         [migrationId, checksum, migrationName]
       );
       try {
-        await connection.query(sql);
+        let appliedSteps = 0;
+        const benignCodes = new Set(['ER_DUP_FIELDNAME', 'ER_TABLE_EXISTS_ERROR', 'ER_DUP_KEYNAME', 'ER_CANT_DROP_FIELD_OR_KEY', 'ER_FK_DUP_NAME']);
+        for (const statement of splitMigrationStatements(sql)) {
+          try {
+            await connection.query(statement);
+          } catch (error) {
+            // Continue only past the exact idempotency conflict and still run
+            // every later statement in the migration.
+            if (!benignCodes.has(error.code)) throw error;
+          }
+          appliedSteps += 1;
+        }
         await connection.query(
-          'UPDATE `_prisma_migrations` SET `finished_at` = NOW(3), `applied_steps_count` = 1 WHERE `id` = ?',
-          [migrationId]
+          'UPDATE `_prisma_migrations` SET `finished_at` = NOW(3), `applied_steps_count` = ? WHERE `id` = ?',
+          [appliedSteps, migrationId]
         );
       } catch (error) {
-        const benignCodes = new Set(['ER_DUP_FIELDNAME', 'ER_TABLE_EXISTS_ERROR', 'ER_DUP_KEYNAME', 'ER_CANT_DROP_FIELD_OR_KEY']);
-        if (benignCodes.has(error.code)) {
-          // Schema already contains these elements (e.g. from an imported SQL backup)
-          await connection.query(
-            'UPDATE `_prisma_migrations` SET `finished_at` = NOW(3), `applied_steps_count` = 1 WHERE `id` = ?',
-            [migrationId]
-          );
-        } else {
-          await connection.query('UPDATE `_prisma_migrations` SET `logs` = ? WHERE `id` = ?', [String(error.message || error).slice(0, 65535), migrationId]);
-          throw error;
-        }
+        await connection.query('UPDATE `_prisma_migrations` SET `logs` = ? WHERE `id` = ?', [String(error.message || error).slice(0, 65535), migrationId]);
+        throw error;
       }
     }
   } catch (error) {
@@ -184,14 +229,27 @@ async function grantDatabaseAccess(connection, { database, username, password, i
   await connection.query('FLUSH PRIVILEGES');
 }
 
-async function verifyClientConnection(databaseUrl) {
+async function verifyClientConnection(databaseUrl, appRoot) {
   let connection;
   try {
     connection = await mysql.createConnection({ uri: databaseUrl, connectTimeout: 12000 });
+    const requiredTables = ['_prisma_migrations', 'Customer', 'Product', 'Sale', 'SaleItem', 'CashbookEntry', 'CustomerLedger', 'UrdPurchase', 'SyncRevision'];
     const [tables] = await connection.query(
-      "SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = '_prisma_migrations' LIMIT 1"
+      'SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN (?)',
+      [requiredTables]
     );
-    if (!tables.length) throw new Error('The selected database is not an initialized Kusum Jewelers ERP database. Complete Main database PC setup first.');
+    const found = new Set(tables.map((row) => String(row.TABLE_NAME || row.table_name).toLowerCase()));
+    const missing = requiredTables.filter((table) => !found.has(table.toLowerCase()));
+    if (missing.length) throw new Error(`The selected database is not fully initialized (${missing.join(', ')} missing). Complete or update Main database PC setup first.`);
+    if (appRoot) {
+      const latestMigration = fs.readdirSync(path.join(appRoot, 'prisma', 'migrations'), { withFileTypes: true })
+        .filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort().at(-1);
+      const [migration] = await connection.query(
+        'SELECT 1 FROM `_prisma_migrations` WHERE `migration_name` = ? AND `finished_at` IS NOT NULL LIMIT 1',
+        [latestMigration]
+      );
+      if (!migration.length) throw new Error('The main database PC is using an older ERP schema. Update and start the ERP on the main PC before connecting this client.');
+    }
   } catch (error) {
     throw new Error(`Could not connect to the main ERP database: ${error.message || error}`);
   } finally {
@@ -206,7 +264,9 @@ function parseDatabaseConnection(databaseUrl) {
     return {
       host: url.hostname,
       port: port(url.port || 3306),
-      database: databaseName(decodeURIComponent(url.pathname.replace(/^\//, '')))
+      database: databaseName(decodeURIComponent(url.pathname.replace(/^\//, ''))),
+      username: decodeURIComponent(url.username || ''),
+      password: decodeURIComponent(url.password || '')
     };
   } catch (error) {
     throw new Error(`Could not read the existing ERP database connection: ${error.message || error}`);
@@ -239,20 +299,21 @@ async function provisionMainDatabase({ appRoot, configPath, form }) {
   return config;
 }
 
-async function provisionClientDatabase({ configPath, form }) {
+async function provisionClientDatabase({ appRoot, configPath, form }) {
   const values = commonFormValues(form);
+  if (isLocalHost(values.host)) throw new Error('Client PC setup must use the Main database PC LAN IP address, not localhost or 127.0.0.1.');
   const config = connectionValues({ ...values, username: values.databaseUser, password: values.databasePassword, mode: 'CLIENT' });
-  await verifyClientConnection(config.DATABASE_URL);
+  await verifyClientConnection(config.DATABASE_URL, appRoot);
   writeEnvFile(configPath, config);
   return config;
 }
 
 async function provisionShopDatabase({ appRoot, configPath, form }) {
-  if (input(form.setupMode).toUpperCase() === 'CLIENT') return provisionClientDatabase({ configPath, form });
+  if (input(form.setupMode).toUpperCase() === 'CLIENT') return provisionClientDatabase({ appRoot, configPath, form });
   return provisionMainDatabase({ appRoot, configPath, form });
 }
 
-async function enableNetworkSharing({ databaseUrl, form }) {
+async function enableNetworkSharing({ databaseUrl, configPath, currentEnv, form }) {
   const current = parseDatabaseConnection(databaseUrl);
   if (!isLocalHost(current.host)) throw new Error('This ERP is already configured as a client PC. Enable sharing only on the main database PC.');
   const rootUser = input(form.mysqlUser || 'root');
@@ -268,7 +329,23 @@ async function enableNetworkSharing({ databaseUrl, form }) {
   } finally {
     if (rootConnection) await rootConnection.end();
   }
-  return { database: current.database, port: current.port, username: databaseUser };
+  let updatedConfig = null;
+  if (current.username === databaseUser) {
+    updatedConfig = {
+      DATABASE_URL: mysqlUrl({ host: current.host, port: current.port, username: databaseUser, password, database: current.database }),
+      PORT: currentEnv.PORT || 3000,
+      AUTH_USERNAME: currentEnv.AUTH_USERNAME,
+      AUTH_PASSWORD: currentEnv.AUTH_PASSWORD,
+      SESSION_SECRET: currentEnv.SESSION_SECRET || crypto.randomBytes(48).toString('base64url'),
+      TSC_PRINTER_MODE: currentEnv.TSC_PRINTER_MODE || 'WINDOWS',
+      TSC_PRINTER_NAME: currentEnv.TSC_PRINTER_NAME || 'TSC TTP-244 Pro',
+      TSC_PRINTER_HOST: currentEnv.TSC_PRINTER_HOST || '',
+      TSC_PRINTER_PORT: currentEnv.TSC_PRINTER_PORT || 9100,
+      KUSUM_DEPLOYMENT_MODE: currentEnv.KUSUM_DEPLOYMENT_MODE || 'SERVER'
+    };
+    writeEnvFile(configPath, updatedConfig);
+  }
+  return { database: current.database, port: current.port, username: databaseUser, updatedConfig };
 }
 
 function updatePrinterConfiguration({ configPath, currentEnv, form }) {

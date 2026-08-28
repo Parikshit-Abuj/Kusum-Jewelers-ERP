@@ -1,3 +1,5 @@
+const { dateInput } = require('./helpers');
+
 const RESOURCE_LIST = [
   { key: 'sales', label: 'Sales invoices', dateLabel: 'Invoice date', archiveNote: 'Only invoices with no credit balance due can be removed. URD settlements do not block deletion.' },
   { key: 'urd', label: 'URD purchases', dateLabel: 'URD purchase date', archiveNote: 'Only URD purchases with no amount still payable to the customer can be removed.' },
@@ -12,11 +14,17 @@ const RESOURCE_LIST = [
 const RESOURCE_MAP = new Map(RESOURCE_LIST.map((resource) => [resource.key, resource]));
 
 function today() {
-  return new Date().toISOString().slice(0, 10);
+  return dateInput();
 }
 
 function isDate(value) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || '')) && !Number.isNaN(new Date(`${value}T12:00:00`).getTime());
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ''));
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const checked = new Date(Date.UTC(year, month - 1, day));
+  return checked.getUTCFullYear() === year && checked.getUTCMonth() === month - 1 && checked.getUTCDate() === day;
 }
 
 function parseDateRange(source) {
@@ -42,11 +50,31 @@ function dateTimeRange(range) {
 
 function num(value) { return Number(value || 0); }
 function str(value) { return value || ''; }
+function exportDate(value) { return dateInput(value); }
+
+function displayDate(value) {
+  const [year, month, day] = String(value).split('-');
+  return `${day}-${month}-${year}`;
+}
+
+function enumLabel(value) {
+  return String(value || '').toLowerCase().replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function paymentLabel(value) {
+  const labels = { CASH: 'Cash', UPI: 'UPI', CARD: 'Card', BANK_TRANSFER: 'Bank transfer', CREDIT: 'Credit', MIXED: 'Mixed' };
+  return labels[value] || enumLabel(value);
+}
+
+function makingLabel(value) {
+  const labels = { FIXED: 'Fixed', PER_GRAM: 'Per gram', PERCENTAGE: 'Percentage' };
+  return labels[value] || enumLabel(value);
+}
 
 function exportEnvelope(resource, range, columns, rows, options = {}) {
   return {
     title: `Kusum ERP - ${resource.label}`,
-    subtitle: `${resource.dateLabel}: ${range.from} to ${range.to} | ${rows.length} row${rows.length === 1 ? '' : 's'}`,
+    subtitle: `${resource.dateLabel}: ${displayDate(range.from)} to ${displayDate(range.to)} (IST) | ${rows.length} row${rows.length === 1 ? '' : 's'}`,
     columns,
     rows,
     filename: `${resource.key}-${range.from}-to-${range.to}.xlsx`,
@@ -58,26 +86,17 @@ function exportEnvelope(resource, range, columns, rows, options = {}) {
 const col = {
   date:     (key, label = 'Date')   => ({ key, label, type: 'date', width: 14 }),
   text:     (key, label, width = 20) => ({ key, label, type: 'text', width }),
-  currency: (key, label)            => ({ key, label, type: 'currency', width: 16 }),
+  identifier: (key, label, width = 18) => ({ key, label, type: 'identifier', width }),
+  currency: (key, label)            => ({ key, label, type: 'currency', width: 18 }),
   number:   (key, label)            => ({ key, label, type: 'number', width: 12 }),
   integer:  (key, label, width = 12) => ({ key, label, type: 'integer', width }),
   weight:   (key, label)            => ({ key, label, type: 'weight', width: 13 })
 };
 
-/**
- * Removes columns that are 100% empty/zero across all rows.
- * Keeps exports clean — no useless blank columns.
- */
 function pruneEmptyColumns(columns, rows) {
-  if (!rows.length) return columns;
-  return columns.filter((c) => {
-    return rows.some((row) => {
-      const v = row[c.key];
-      if (v === null || v === undefined || v === '') return false;
-      if (typeof v === 'number' && v === 0) return false;
-      return true;
-    });
-  });
+  // Financial registers must keep a stable schema. A zero GST, balance,
+  // stone weight or payment column is meaningful and must not disappear.
+  return columns;
 }
 
 const CASHBOOK_METHODS = [
@@ -108,6 +127,28 @@ function cashbookInfoRows(rows) {
   ];
 }
 
+function cashbookExportRows(entries) {
+  let runningBalance = 0;
+  return entries.map((entry) => {
+    const amount = num(entry.amount);
+    runningBalance += entry.type === 'IN' ? amount : -amount;
+    return {
+      entryDate: entry.entryDate,
+      type: entry.type === 'IN' ? 'Money in' : 'Money out',
+      paymentMethod: paymentLabel(entry.paymentMethod),
+      description: entry.description,
+      moneyIn: entry.type === 'IN' ? amount : 0,
+      moneyOut: entry.type === 'OUT' ? amount : 0,
+      runningBalance,
+      reference: entry.reference || '',
+      customerPhone: entry.customer?.phone || '',
+      customerName: entry.customer?.name || '',
+      syncLedger: entry.syncLedger ? 'Yes' : 'No',
+      notes: str(entry.notes)
+    };
+  });
+}
+
 function inventoryTotals(rows) {
   return rows.reduce((t, r) => {
     const qty = num(r.quantity);
@@ -132,8 +173,8 @@ function inventoryInfoRows(rows) {
 function inventorySummaryRows(rows) {
   const groups = new Map();
   for (const r of rows) {
-    const key = [r.metal, r.itemName, r.category, r.purity].join('\u0000');
-    const g = groups.get(key) || { metal: r.metal, itemName: r.itemName, category: r.category, purity: r.purity, records: 0, quantity: 0, grossWeight: 0, netWeight: 0, value: 0 };
+    const key = [r.metalKey, r.itemName, r.category, r.purity].join('\u0000');
+    const g = groups.get(key) || { metal: r.metal, metalKey: r.metalKey, itemName: r.itemName, category: r.category, purity: r.purity, records: 0, quantity: 0, grossWeight: 0, netWeight: 0, value: 0 };
     const qty = num(r.quantity);
     g.records += 1;
     g.quantity += qty;
@@ -143,7 +184,7 @@ function inventorySummaryRows(rows) {
     groups.set(key, g);
   }
   return [...groups.values()].sort((a, b) => {
-    const md = METAL_ORDER.indexOf(a.metal) - METAL_ORDER.indexOf(b.metal);
+    const md = METAL_ORDER.indexOf(a.metalKey) - METAL_ORDER.indexOf(b.metalKey);
     return md || a.itemName.localeCompare(b.itemName) || a.category.localeCompare(b.category);
   });
 }
@@ -169,7 +210,7 @@ async function getExportPayload(db, key, range) {
 
       // Line-item rows (one per sold piece)
       const lineRows = sales.flatMap((s) => s.items.map((item) => ({
-        saleDate: s.saleDate,
+        saleDate: exportDate(s.saleDate),
         invoiceNumber: s.invoiceNumber,
         customerPhone: s.customer?.phone || '',
         customerName: s.customer?.name || 'Walk-in customer',
@@ -181,74 +222,112 @@ async function getExportPayload(db, key, range) {
         hsnCode: item.hsnCode || '',
         huidCode: item.huidCode || '',
         quantity: item.quantity,
+        grossWeight: num(item.grossWeight),
         weight: num(item.weight),
         metalRate: num(item.metalRate),
+        metalAmount: num(item.metalAmount),
+        makingType: makingLabel(item.makingChargeType),
+        makingValue: num(item.makingChargeValue),
         makingCharge: num(item.makingCharge),
         taxableAmount: num(item.taxableAmount),
+        gstRate: num(s.gstRate),
         invoiceTotal: num(s.total),
         urdOffset: num(s.urdOffset),
         paid: num(s.paid),
+        cashPaid: num(s.cashPaid),
+        upiPaid: num(s.upiPaid),
+        otherPaid: Math.max(0, num(s.paid) - num(s.cashPaid) - num(s.upiPaid)),
         balance: num(s.balance),
-        paymentMethod: s.paymentMethod,
+        paymentMethod: paymentLabel(s.paymentMethod),
         notes: str(s.notes)
       })));
 
       const allLineColumns = [
         col.date('saleDate', 'Invoice date'),
-        col.text('invoiceNumber', 'Invoice no.'),
-        col.text('customerPhone', 'Customer phone', 16),
+        col.identifier('invoiceNumber', 'Invoice no.', 20),
+        col.identifier('customerPhone', 'Customer phone', 16),
         col.text('customerName', 'Customer'),
-        col.text('customerPan', 'PAN no.', 14),
-        col.text('barcode', 'Barcode', 14),
+        col.identifier('customerPan', 'PAN no.', 14),
+        col.identifier('barcode', 'Barcode', 14),
         col.text('itemName', 'Item name'),
         col.text('metal', 'Metal', 12),
         col.text('purity', 'Purity', 10),
-        col.text('hsnCode', 'HSN code', 12),
-        col.text('huidCode', 'HUID', 12),
-        col.number('quantity', 'Qty'),
+        col.identifier('hsnCode', 'HSN code', 12),
+        col.identifier('huidCode', 'HUID', 12),
+        col.integer('quantity', 'Qty'),
+        col.weight('grossWeight', 'Gross wt. (g)'),
         col.weight('weight', 'Weight (g)'),
         col.currency('metalRate', 'Rate / g'),
-        col.currency('makingCharge', 'Making charge'),
-        col.currency('taxableAmount', 'Amount'),
+        col.currency('metalAmount', 'Metal value'),
+        col.text('makingType', 'Making basis', 15),
+        col.number('makingValue', 'Making value'),
+        col.currency('makingCharge', 'Making amount'),
+        col.currency('taxableAmount', 'Taxable amount'),
+        col.number('gstRate', 'GST rate (%)'),
         col.currency('invoiceTotal', 'Invoice total'),
         col.currency('urdOffset', 'URD adjustment'),
-        col.currency('paid', 'Paid'),
+        col.currency('paid', 'Total paid'),
+        col.currency('cashPaid', 'Cash paid'),
+        col.currency('upiPaid', 'UPI paid'),
+        col.currency('otherPaid', 'Other paid'),
         col.currency('balance', 'Due balance'),
-        col.text('paymentMethod', 'Payment', 16),
+        col.text('paymentMethod', 'Payment method', 16),
         col.text('notes', 'Notes', 30)
       ];
       const lineColumns = pruneEmptyColumns(allLineColumns, lineRows);
 
       // Invoice summary rows (one per invoice)
       const invoiceRows = sales.map((s) => ({
-        saleDate: s.saleDate,
+        saleDate: exportDate(s.saleDate),
         invoiceNumber: s.invoiceNumber,
         customerPhone: s.customer?.phone || '',
         customerName: s.customer?.name || 'Walk-in customer',
         customerPan: s.customerPan || s.customer?.panNumber || '',
-        itemCount: s.items.length,
+        itemCount: s.items.reduce((total, item) => total + Number(item.quantity || 0), 0),
         totalWeight: s.items.reduce((sum, i) => sum + num(i.weight) * i.quantity, 0),
+        subtotal: num(s.subtotal),
+        discount: num(s.discount),
+        taxableAfterDiscount: Math.max(0, num(s.subtotal) - num(s.discount)),
+        cgstRate: num(s.gstRate) / 2,
+        cgstAmount: Math.round((num(s.gstAmount) / 2) * 100) / 100,
+        sgstRate: num(s.gstRate) / 2,
+        sgstAmount: num(s.gstAmount) - Math.round((num(s.gstAmount) / 2) * 100) / 100,
         total: num(s.total),
         urdOffset: num(s.urdOffset),
+        netPayable: Math.max(0, num(s.total) - num(s.urdOffset)),
         paid: num(s.paid),
+        cashPaid: num(s.cashPaid),
+        upiPaid: num(s.upiPaid),
+        otherPaid: Math.max(0, num(s.paid) - num(s.cashPaid) - num(s.upiPaid)),
         balance: num(s.balance),
-        paymentMethod: s.paymentMethod,
+        paymentMethod: paymentLabel(s.paymentMethod),
         notes: str(s.notes)
       }));
 
       const allInvColumns = [
         col.date('saleDate', 'Invoice date'),
-        col.text('invoiceNumber', 'Invoice no.'),
-        col.text('customerPhone', 'Customer phone', 16),
+        col.identifier('invoiceNumber', 'Invoice no.', 20),
+        col.identifier('customerPhone', 'Customer phone', 16),
         col.text('customerName', 'Customer'),
-        col.text('customerPan', 'PAN no.', 14),
+        col.identifier('customerPan', 'PAN no.', 14),
         col.integer('itemCount', 'Items sold'),
         col.weight('totalWeight', 'Total weight (g)'),
+        col.currency('subtotal', 'Subtotal'),
+        col.currency('discount', 'Discount'),
+        col.currency('taxableAfterDiscount', 'Taxable value'),
+        col.number('cgstRate', 'CGST (%)'),
+        col.currency('cgstAmount', 'CGST amount'),
+        col.number('sgstRate', 'SGST (%)'),
+        col.currency('sgstAmount', 'SGST amount'),
         col.currency('total', 'Invoice total'),
         col.currency('urdOffset', 'URD adjustment'),
-        col.currency('paid', 'Paid'),
+        col.currency('netPayable', 'Net payable'),
+        col.currency('paid', 'Total paid'),
+        col.currency('cashPaid', 'Cash paid'),
+        col.currency('upiPaid', 'UPI paid'),
+        col.currency('otherPaid', 'Other paid'),
         col.currency('balance', 'Due balance'),
-        col.text('paymentMethod', 'Payment', 16),
+        col.text('paymentMethod', 'Payment method', 16),
         col.text('notes', 'Notes', 30)
       ];
       const invColumns = pruneEmptyColumns(allInvColumns, invoiceRows);
@@ -256,12 +335,16 @@ async function getExportPayload(db, key, range) {
       const totalSales = sales.reduce((s, sl) => s + num(sl.total), 0);
       const totalPaid = sales.reduce((s, sl) => s + num(sl.paid), 0);
       const totalDue = sales.reduce((s, sl) => s + num(sl.balance), 0);
+      const totalItemsSold = sales.reduce(
+        (total, sale) => total + sale.items.reduce((quantity, item) => quantity + Number(item.quantity || 0), 0),
+        0
+      );
 
       const sheets = [
         {
           name: 'Invoice summary',
           title: `Sales - Invoice summary`,
-          subtitle: `${range.from} to ${range.to} | ${invoiceRows.length} invoice${invoiceRows.length === 1 ? '' : 's'}`,
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (IST) | ${invoiceRows.length} invoice${invoiceRows.length === 1 ? '' : 's'}`,
           columns: invColumns,
           rows: invoiceRows,
           infoRows: [
@@ -274,11 +357,11 @@ async function getExportPayload(db, key, range) {
         {
           name: 'Item-wise details',
           title: `Sales - Item-wise line details`,
-          subtitle: `${range.from} to ${range.to} | ${lineRows.length} item${lineRows.length === 1 ? '' : 's'} across ${invoiceRows.length} invoice${invoiceRows.length === 1 ? '' : 's'}`,
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (IST) | ${totalItemsSold} item${totalItemsSold === 1 ? '' : 's'} across ${invoiceRows.length} invoice${invoiceRows.length === 1 ? '' : 's'}`,
           columns: lineColumns,
           rows: lineRows,
           infoRows: [
-            { label: 'Total items sold', value: lineRows.length, type: 'integer' },
+            { label: 'Total items sold', value: totalItemsSold, type: 'integer' },
             { label: 'Total sales value', value: totalSales, type: 'currency' }
           ]
         }
@@ -297,7 +380,7 @@ async function getExportPayload(db, key, range) {
         include: { customer: true, sale: true }
       });
       const rows = purchases.map((p) => ({
-        purchaseDate: p.purchaseDate,
+        purchaseDate: exportDate(p.purchaseDate),
         purchaseNumber: p.purchaseNumber,
         customerPhone: p.customer.phone || '',
         customerName: p.customer.name,
@@ -308,8 +391,10 @@ async function getExportPayload(db, key, range) {
         ratePerGram: num(p.ratePerGram),
         totalAmount: num(p.totalAmount),
         saleOffset: num(p.saleOffset),
+        cashPayable: Math.max(0, num(p.totalAmount) - num(p.saleOffset)),
         paid: num(p.paid),
-        paymentMethod: p.paymentMethod,
+        outstanding: Math.max(0, num(p.totalAmount) - num(p.saleOffset) - num(p.paid)),
+        paymentMethod: paymentLabel(p.paymentMethod),
         settledSale: p.sale?.invoiceNumber || '',
         description: str(p.description),
         notes: str(p.notes)
@@ -317,8 +402,8 @@ async function getExportPayload(db, key, range) {
 
       const allColumns = [
         col.date('purchaseDate', 'Purchase date'),
-        col.text('purchaseNumber', 'URD no.'),
-        col.text('customerPhone', 'Customer phone', 16),
+        col.identifier('purchaseNumber', 'URD no.', 22),
+        col.identifier('customerPhone', 'Customer phone', 16),
         col.text('customerName', 'Customer'),
         col.text('metal', 'Metal', 12),
         col.text('purity', 'Purity', 10),
@@ -327,28 +412,33 @@ async function getExportPayload(db, key, range) {
         col.currency('ratePerGram', 'Rate / g'),
         col.currency('totalAmount', 'Total amount'),
         col.currency('saleOffset', 'Sale adjustment'),
-        col.currency('paid', 'Paid'),
-        col.text('paymentMethod', 'Payment', 16),
-        col.text('settledSale', 'Settled invoice'),
+        col.currency('cashPayable', 'Amount payable'),
+        col.currency('paid', 'Amount paid'),
+        col.currency('outstanding', 'Outstanding'),
+        col.text('paymentMethod', 'Payment method', 16),
+        col.identifier('settledSale', 'Settled invoice', 20),
         col.text('description', 'Description', 30),
         col.text('notes', 'Notes', 30)
       ];
       const columns = pruneEmptyColumns(allColumns, rows);
       const totalPurchased = rows.reduce((s, r) => s + r.totalAmount, 0);
       const totalPaid = rows.reduce((s, r) => s + r.paid, 0);
+      const totalAdjusted = rows.reduce((s, r) => s + r.saleOffset, 0);
+      const totalPending = rows.reduce((s, r) => s + r.outstanding, 0);
 
       return exportEnvelope(resource, range, columns, rows, {
         sheets: [{
           name: 'URD purchases',
           title: `URD Purchases - Detailed register`,
-          subtitle: `${range.from} to ${range.to} | ${rows.length} purchase${rows.length === 1 ? '' : 's'}`,
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (IST) | ${rows.length} purchase${rows.length === 1 ? '' : 's'}`,
           columns,
           rows,
           infoRows: [
             { label: 'Total purchases', value: rows.length, type: 'integer' },
             { label: 'Total value', value: totalPurchased, type: 'currency' },
+            { label: 'Adjusted in sales', value: totalAdjusted, type: 'currency' },
             { label: 'Total paid', value: totalPaid, type: 'currency' },
-            { label: 'Pending', value: totalPurchased - totalPaid, type: 'currency' }
+            { label: 'Pending', value: totalPending, type: 'currency' }
           ]
         }]
       });
@@ -360,30 +450,11 @@ async function getExportPayload(db, key, range) {
     case 'cashbook': {
       const entries = await db.cashbookEntry.findMany({
         where: { entryDate: { gte: range.from, lte: range.to } },
-        orderBy: [{ entryDate: 'asc' }, { id: 'asc' }],
+        orderBy: [{ entryDate: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
         include: { customer: true }
       });
 
-      // Build rows with a running balance
-      let runningBalance = 0;
-      const rows = entries.map((e) => {
-        const amt = num(e.amount);
-        runningBalance += (e.type === 'IN' ? amt : -amt);
-        return {
-          entryDate: e.entryDate,
-          type: e.type === 'IN' ? 'Money In' : 'Money Out',
-          paymentMethod: e.paymentMethod,
-          description: e.description,
-          moneyIn: e.type === 'IN' ? amt : 0,
-          moneyOut: e.type === 'OUT' ? amt : 0,
-          runningBalance,
-          reference: e.reference || '',
-          customerPhone: e.customer?.phone || '',
-          customerName: e.customer?.name || '',
-          syncLedger: e.syncLedger ? 'Yes' : '',
-          notes: str(e.notes)
-        };
-      });
+      const rows = cashbookExportRows(entries);
 
       const allColumns = [
         col.date('entryDate', 'Date'),
@@ -393,8 +464,8 @@ async function getExportPayload(db, key, range) {
         col.currency('moneyIn', 'Money in'),
         col.currency('moneyOut', 'Money out'),
         col.currency('runningBalance', 'Running balance'),
-        col.text('reference', 'Reference', 18),
-        col.text('customerPhone', 'Customer phone', 16),
+        col.identifier('reference', 'Reference', 18),
+        col.identifier('customerPhone', 'Customer phone', 16),
         col.text('customerName', 'Customer', 24),
         col.text('syncLedger', 'Ledger synced', 14),
         col.text('notes', 'Notes', 30)
@@ -402,8 +473,12 @@ async function getExportPayload(db, key, range) {
       const columns = pruneEmptyColumns(allColumns, rows);
 
       // Per-method grouping
-      const grouped = CASHBOOK_METHODS.map((m) => ({ ...m, rows: rows.filter((r) => r.paymentMethod === m.key) }));
-      const otherRows = rows.filter((r) => !CASHBOOK_METHODS.some((m) => m.key === r.paymentMethod));
+      const grouped = CASHBOOK_METHODS.map((method) => {
+        const methodEntries = entries.filter((entry) => entry.paymentMethod === method.key);
+        return { ...method, entries: methodEntries, rows: cashbookExportRows(methodEntries) };
+      });
+      const otherEntries = entries.filter((entry) => !CASHBOOK_METHODS.some((method) => method.key === entry.paymentMethod));
+      const otherRows = cashbookExportRows(otherEntries);
 
       // Summary rows
       const summaryColumns = [
@@ -414,7 +489,7 @@ async function getExportPayload(db, key, range) {
         col.currency('netBalance', 'Net balance')
       ];
       const summaryRows = [...grouped, ...(otherRows.length ? [{ key: 'OTHER', label: 'Other methods', rows: otherRows }] : [])].map((g) => {
-        const totals = cashbookTotals(g.rows.map(r => ({ type: r.moneyIn > 0 ? 'IN' : 'OUT', amount: r.moneyIn > 0 ? r.moneyIn : r.moneyOut })));
+        const totals = cashbookTotals(g.entries || otherEntries);
         return { paymentMethod: g.label, entries: g.rows.length, moneyIn: totals.in, moneyOut: totals.out, netBalance: totals.in - totals.out };
       });
 
@@ -424,7 +499,7 @@ async function getExportPayload(db, key, range) {
         {
           name: 'All entries',
           title: `Daily Cashbook - All entries`,
-          subtitle: `${range.from} to ${range.to} | ${rows.length} detailed entr${rows.length === 1 ? 'y' : 'ies'}`,
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (IST) | ${rows.length} detailed entr${rows.length === 1 ? 'y' : 'ies'}`,
           columns,
           rows,
           infoRows: infoAll
@@ -432,7 +507,7 @@ async function getExportPayload(db, key, range) {
         {
           name: 'Summary',
           title: `Daily Cashbook - Payment method summary`,
-          subtitle: `${range.from} to ${range.to} | Totals grouped by payment method`,
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (IST) | Totals grouped by payment method`,
           columns: summaryColumns,
           rows: summaryRows,
           infoRows: infoAll
@@ -440,12 +515,11 @@ async function getExportPayload(db, key, range) {
       ];
 
       for (const g of grouped) {
-        if (!g.rows.length) continue;
-        const gInfo = cashbookInfoRows(g.rows.map(r => ({ type: r.moneyIn > 0 ? 'IN' : 'OUT', amount: r.moneyIn > 0 ? r.moneyIn : r.moneyOut })));
+        const gInfo = cashbookInfoRows(g.entries);
         sheets.push({
           name: g.label,
           title: `Daily Cashbook - ${g.label} entries`,
-          subtitle: `${range.from} to ${range.to} | ${g.rows.length} ${g.label.toLowerCase()} entr${g.rows.length === 1 ? 'y' : 'ies'}`,
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (IST) | ${g.rows.length} ${g.label.toLowerCase()} entr${g.rows.length === 1 ? 'y' : 'ies'}`,
           columns,
           rows: g.rows,
           infoRows: gInfo
@@ -455,10 +529,10 @@ async function getExportPayload(db, key, range) {
         sheets.push({
           name: 'Other methods',
           title: `Daily Cashbook - Other payment methods`,
-          subtitle: `${range.from} to ${range.to} | ${otherRows.length} entr${otherRows.length === 1 ? 'y' : 'ies'}`,
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (IST) | ${otherRows.length} entr${otherRows.length === 1 ? 'y' : 'ies'}`,
           columns,
           rows: otherRows,
-          infoRows: cashbookInfoRows(otherRows.map(r => ({ type: r.moneyIn > 0 ? 'IN' : 'OUT', amount: r.moneyIn > 0 ? r.moneyIn : r.moneyOut })))
+          infoRows: cashbookInfoRows(otherEntries)
         });
       }
 
@@ -478,7 +552,8 @@ async function getExportPayload(db, key, range) {
       });
 
       const rows = sortedProducts.map((p) => ({
-        metal: p.metal,
+        metal: enumLabel(p.metal),
+        metalKey: p.metal,
         itemName: p.name,
         category: p.category,
         purity: p.purity || '',
@@ -488,12 +563,15 @@ async function getExportPayload(db, key, range) {
         stoneWeight: num(p.stoneWeight),
         netWeight: num(p.netWeight),
         quantity: p.quantity,
+        reorderLevel: p.reorderLevel,
         purchasePrice: num(p.purchasePrice),
         sellingPrice: num(p.sellingPrice),
-        status: p.status,
+        makingType: makingLabel(p.makingChargeType),
+        makingValue: num(p.makingChargeValue),
+        status: enumLabel(p.status),
         location: p.location || '',
         batchDocNo: p.batchDocNo || '',
-        createdAt: p.createdAt,
+        createdAt: exportDate(p.createdAt),
         notes: str(p.notes)
       }));
 
@@ -502,17 +580,20 @@ async function getExportPayload(db, key, range) {
         col.text('itemName', 'Item name', 24),
         col.text('category', 'Category', 18),
         col.text('purity', 'Purity', 10),
-        col.text('barcode', 'Barcode', 16),
-        col.text('sku', 'SKU', 16),
+        col.identifier('barcode', 'Barcode', 16),
+        col.identifier('sku', 'SKU', 16),
         col.weight('grossWeight', 'Gross wt. (g)'),
         col.weight('stoneWeight', 'Stone wt. (g)'),
         col.weight('netWeight', 'Net wt. (g)'),
         col.integer('quantity', 'Stock qty'),
+        col.integer('reorderLevel', 'Reorder level'),
         col.currency('purchasePrice', 'Purchase price'),
         col.currency('sellingPrice', 'Selling price'),
+        col.text('makingType', 'Making basis', 15),
+        col.number('makingValue', 'Making value'),
         col.text('status', 'Status', 14),
         col.text('location', 'Location', 16),
-        col.text('batchDocNo', 'Batch doc no.', 18),
+        col.identifier('batchDocNo', 'Batch doc no.', 18),
         col.date('createdAt', 'Created date'),
         col.text('notes', 'Notes', 30)
       ];
@@ -534,7 +615,7 @@ async function getExportPayload(db, key, range) {
         {
           name: 'All records',
           title: `Inventory - All individual records`,
-          subtitle: `${range.from} to ${range.to} | ${rows.length} record${rows.length === 1 ? '' : 's'} with barcode details`,
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (IST) | ${rows.length} record${rows.length === 1 ? '' : 's'} with barcode details`,
           columns,
           rows,
           infoRows: inventoryInfoRows(rows)
@@ -542,7 +623,7 @@ async function getExportPayload(db, key, range) {
         {
           name: 'Item summary',
           title: `Inventory - Item-wise summary`,
-          subtitle: `${range.from} to ${range.to} | Grouped by metal, item, category and purity`,
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (IST) | Grouped by metal, item, category and purity`,
           columns: summaryColumns,
           rows: inventorySummaryRows(rows),
           infoRows: inventoryInfoRows(rows)
@@ -550,12 +631,12 @@ async function getExportPayload(db, key, range) {
       ];
 
       for (const metal of METAL_ORDER) {
-        const metalRows = rows.filter((r) => r.metal === metal);
-        if (!metalRows.length) continue;
+        const metalRows = rows.filter((r) => r.metalKey === metal);
+        if (!metalRows.length && !['GOLD', 'SILVER'].includes(metal)) continue;
         sheets.push({
           name: METAL_LABELS[metal],
           title: `Inventory - ${METAL_LABELS[metal]} records`,
-          subtitle: `${range.from} to ${range.to} | ${metalRows.length} ${METAL_LABELS[metal].toLowerCase()} item${metalRows.length === 1 ? '' : 's'}`,
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (IST) | ${metalRows.length} ${METAL_LABELS[metal].toLowerCase()} item${metalRows.length === 1 ? '' : 's'}`,
           columns,
           rows: metalRows,
           infoRows: inventoryInfoRows(metalRows)
@@ -575,33 +656,49 @@ async function getExportPayload(db, key, range) {
         include: { product: true }
       });
       const rows = movements.map((m) => ({
-        createdAt: m.createdAt,
-        type: m.type,
-        barcode: m.product.barcode || '',
-        sku: m.product.sku,
-        itemName: m.product.name,
-        metal: m.product.metal,
-        purity: m.product.purity || '',
+        createdAt: exportDate(m.createdAt),
+        type: enumLabel(m.type),
+        barcode: m.product?.barcode || m.productBarcode || '',
+        sku: m.product?.sku || m.productSku || '',
+        itemName: m.product?.name || m.productName || 'Deleted inventory item',
+        metal: enumLabel(m.product?.metal || m.productMetal),
+        purity: m.product?.purity || m.productPurity || '',
         quantity: m.quantity,
-        netWeight: num(m.product.netWeight),
+        netWeight: num(m.product?.netWeight ?? m.netWeight),
         note: str(m.note)
       }));
 
       const allColumns = [
         col.date('createdAt', 'Movement date'),
         col.text('type', 'Movement type', 16),
-        col.text('barcode', 'Barcode', 16),
-        col.text('sku', 'SKU', 16),
+        col.identifier('barcode', 'Barcode', 16),
+        col.identifier('sku', 'SKU', 16),
         col.text('itemName', 'Item name', 24),
         col.text('metal', 'Metal', 12),
         col.text('purity', 'Purity', 10),
-        col.number('quantity', 'Qty change'),
+        col.integer('quantity', 'Qty change'),
         col.weight('netWeight', 'Net wt. (g)'),
         col.text('note', 'Note', 32)
       ];
       const columns = pruneEmptyColumns(allColumns, rows);
 
-      return exportEnvelope(resource, range, columns, rows);
+      const quantityIn = rows.filter((row) => row.quantity > 0).reduce((total, row) => total + row.quantity, 0);
+      const quantityOut = rows.filter((row) => row.quantity < 0).reduce((total, row) => total + Math.abs(row.quantity), 0);
+      return exportEnvelope(resource, range, columns, rows, {
+        sheets: [{
+          name: 'Stock movements',
+          title: 'Stock Movement Register',
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (IST) | ${rows.length} movement${rows.length === 1 ? '' : 's'}`,
+          columns,
+          rows,
+          infoRows: [
+            { label: 'Total movements', value: rows.length, type: 'integer' },
+            { label: 'Quantity in', value: quantityIn, type: 'integer' },
+            { label: 'Quantity out', value: quantityOut, type: 'integer' },
+            { label: 'Net quantity change', value: quantityIn - quantityOut, type: 'integer' }
+          ]
+        }]
+      });
     }
 
     // ────────────────────────────────────────────────────────────
@@ -614,7 +711,7 @@ async function getExportPayload(db, key, range) {
         include: { ledger: { select: { amount: true } }, _count: { select: { sales: true, urdPurchases: true } } }
       });
       const rows = customers.map((c) => ({
-        createdAt: c.createdAt,
+        createdAt: exportDate(c.createdAt),
         customerPhone: c.phone || '',
         customerName: c.name,
         panNumber: c.panNumber || '',
@@ -627,13 +724,13 @@ async function getExportPayload(db, key, range) {
 
       const allColumns = [
         col.date('createdAt', 'Registered date'),
-        col.text('customerPhone', 'Phone / ID', 18),
+        col.identifier('customerPhone', 'Phone / ID', 18),
         col.text('customerName', 'Customer name', 24),
-        col.text('panNumber', 'PAN no.', 14),
+        col.identifier('panNumber', 'PAN no.', 14),
         col.text('email', 'Email', 24),
         col.text('address', 'Address', 34),
-        col.number('salesCount', 'Total sales'),
-        col.number('urdCount', 'URD purchases'),
+        col.integer('salesCount', 'Total sales'),
+        col.integer('urdCount', 'URD purchases'),
         col.currency('outstanding', 'Outstanding due')
       ];
       const columns = pruneEmptyColumns(allColumns, rows);
@@ -643,7 +740,7 @@ async function getExportPayload(db, key, range) {
         sheets: [{
           name: 'Customer directory',
           title: `Customer Directory`,
-          subtitle: `${range.from} to ${range.to} | ${rows.length} customer${rows.length === 1 ? '' : 's'}`,
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (IST) | ${rows.length} customer${rows.length === 1 ? '' : 's'}`,
           columns,
           rows,
           infoRows: [
@@ -658,48 +755,75 @@ async function getExportPayload(db, key, range) {
     //  CUSTOMER LEDGER
     // ────────────────────────────────────────────────────────────
     case 'customer-ledger': {
+      const period = dateTimeRange(range);
       const entries = await db.customerLedger.findMany({
-        where: { createdAt: dateTimeRange(range) },
+        where: { createdAt: period },
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
         include: { customer: true, sale: true }
       });
-      const rows = entries.map((e) => ({
-        createdAt: e.createdAt,
-        customerPhone: e.customer.phone || '',
-        customerName: e.customer.name,
-        type: e.type === 'SALE_CREDIT' ? 'Sale credit (due)' : e.type === 'PAYMENT_RECEIVED' ? 'Payment received' : e.type,
-        invoiceNumber: e.sale?.invoiceNumber || '',
-        amount: num(e.amount),
-        paymentMethod: e.paymentMethod || '',
-        reference: e.reference || '',
-        note: str(e.note)
-      }));
+      const customerIds = [...new Set(entries.map((entry) => entry.customerId))];
+      const openingRows = customerIds.length ? await db.customerLedger.groupBy({
+        by: ['customerId'],
+        where: { customerId: { in: customerIds }, createdAt: { lt: period.gte } },
+        _sum: { amount: true }
+      }) : [];
+      const openingBalances = new Map(openingRows.map((row) => [row.customerId, num(row._sum.amount)]));
+      const customerBalances = new Map();
+      const rows = entries.map((e) => {
+        const amount = num(e.amount);
+        const openingBalance = openingBalances.get(e.customerId) || 0;
+        const runningBalance = (customerBalances.has(e.customerId) ? customerBalances.get(e.customerId) : openingBalance) + amount;
+        customerBalances.set(e.customerId, runningBalance);
+        return {
+          createdAt: exportDate(e.createdAt),
+          customerPhone: e.customer.phone || '',
+          customerName: e.customer.name,
+          type: e.type === 'SALE_CREDIT' ? 'Sale credit (due)' : e.type === 'PAYMENT_RECEIVED' ? 'Payment received' : 'Adjustment',
+          invoiceNumber: e.sale?.invoiceNumber || '',
+          dueIncrease: amount > 0 ? amount : 0,
+          paymentReceived: amount < 0 ? Math.abs(amount) : 0,
+          ledgerChange: amount,
+          openingBalance,
+          runningBalance,
+          paymentMethod: paymentLabel(e.paymentMethod),
+          reference: e.reference || '',
+          note: str(e.note)
+        };
+      });
 
       const allColumns = [
         col.date('createdAt', 'Ledger date'),
-        col.text('customerPhone', 'Phone / ID', 18),
+        col.identifier('customerPhone', 'Phone / ID', 18),
         col.text('customerName', 'Customer', 24),
         col.text('type', 'Entry type', 22),
-        col.text('invoiceNumber', 'Invoice no.'),
-        col.currency('amount', 'Amount'),
+        col.identifier('invoiceNumber', 'Invoice no.', 20),
+        col.currency('dueIncrease', 'Due / debit'),
+        col.currency('paymentReceived', 'Payment / credit'),
+        col.currency('ledgerChange', 'Ledger change'),
+        col.currency('openingBalance', 'Opening due'),
+        col.currency('runningBalance', 'Running due'),
         col.text('paymentMethod', 'Payment method', 16),
-        col.text('reference', 'Reference', 18),
+        col.identifier('reference', 'Reference', 18),
         col.text('note', 'Note', 34)
       ];
       const columns = pruneEmptyColumns(allColumns, rows);
-      const totalCredit = rows.filter(r => r.amount > 0).reduce((s, r) => s + r.amount, 0);
-      const totalPayments = rows.filter(r => r.amount < 0).reduce((s, r) => s + Math.abs(r.amount), 0);
+      const totalCredit = rows.reduce((sum, row) => sum + row.dueIncrease, 0);
+      const totalPayments = rows.reduce((sum, row) => sum + row.paymentReceived, 0);
+      const totalOpening = [...openingBalances.values()].reduce((sum, amount) => sum + amount, 0);
+      const totalClosing = [...customerBalances.values()].reduce((sum, amount) => sum + amount, 0);
 
       return exportEnvelope(resource, range, columns, rows, {
         sheets: [{
           name: 'Customer ledger',
           title: `Customer Ledger`,
-          subtitle: `${range.from} to ${range.to} | ${rows.length} entr${rows.length === 1 ? 'y' : 'ies'}`,
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (IST) | ${rows.length} entr${rows.length === 1 ? 'y' : 'ies'}`,
           columns,
           rows,
           infoRows: [
-            { label: 'Credit issued', value: totalCredit, type: 'currency' },
+            { label: 'Opening due', value: totalOpening, type: 'currency' },
+            { label: 'Due added', value: totalCredit, type: 'currency' },
             { label: 'Payments received', value: totalPayments, type: 'currency' },
+            { label: 'Closing due', value: totalClosing, type: 'currency' },
             { label: 'Ledger entries', value: rows.length, type: 'integer' }
           ]
         }]
@@ -728,7 +852,16 @@ async function getExportPayload(db, key, range) {
       ];
       const columns = pruneEmptyColumns(allColumns, rows);
 
-      return exportEnvelope(resource, range, columns, rows);
+      return exportEnvelope(resource, range, columns, rows, {
+        sheets: [{
+          name: 'Daily rates',
+          title: 'Daily Metal Rate Register',
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (IST) | ${rows.length} saved rate${rows.length === 1 ? '' : 's'}`,
+          columns,
+          rows,
+          infoRows: [{ label: 'Rate days', value: rows.length, type: 'integer' }]
+        }]
+      });
     }
 
     default:
@@ -746,7 +879,7 @@ async function archiveData(db, key, range) {
   return db.$transaction(async (tx) => {
     if (key === 'sales') {
       const candidates = await tx.sale.findMany({ where: { saleDate: dateTimeRange(range) }, select: { id: true, balance: true } });
-      const ids = candidates.filter((s) => num(s.balance) <= 0.01).map((s) => s.id);
+      const ids = candidates.filter((s) => num(s.balance) <= 0).map((s) => s.id);
       if (ids.length) {
         await tx.customerLedger.deleteMany({ where: { saleId: { in: ids } } });
         await tx.sale.deleteMany({ where: { id: { in: ids } } });
@@ -755,7 +888,7 @@ async function archiveData(db, key, range) {
     }
     if (key === 'urd') {
       const candidates = await tx.urdPurchase.findMany({ where: { purchaseDate: dateTimeRange(range) }, select: { id: true, totalAmount: true, paid: true, saleOffset: true } });
-      const ids = candidates.filter((p) => num(p.totalAmount) - num(p.paid) - num(p.saleOffset) <= 0.01).map((p) => p.id);
+      const ids = candidates.filter((p) => num(p.totalAmount) - num(p.paid) - num(p.saleOffset) <= 0).map((p) => p.id);
       const result = ids.length ? await tx.urdPurchase.deleteMany({ where: { id: { in: ids } } }) : { count: 0 };
       return { deleted: result.count, skipped: candidates.length - ids.length, note: 'URD purchases with an unpaid customer amount were kept.' };
     }
