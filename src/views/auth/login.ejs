@@ -1,25 +1,423 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title><%= title %> · Kusum ERP</title>
-    <link rel="stylesheet" href="/styles.css">
-  </head>
-  <body class="login-page">
-    <main class="login-card">
-      <span class="brand-mark">KJ</span>
-      <p class="eyebrow">Kusum ERP</p>
-      <h1>Sign in to ERP</h1>
-      <p class="muted">Use your shop login to continue.</p>
-      <% if (typeof message !== 'undefined' && message) { %><div class="flash success"><span>✓</span><%= message %></div><% } %>
-      <% if (typeof error !== 'undefined' && error) { %><div class="flash error"><span>!</span><%= error %></div><% } %>
-      <form method="post" action="/login">
-        <label>Username<input name="username" autocomplete="username" required autofocus></label>
-        <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
-        <button class="button full large" type="submit">Sign in</button>
-      </form>
-      <p class="form-hint" style="text-align:center;margin:18px 0 0"><a href="/connection-repair">Set up or change this PC’s database connection</a></p>
-    </main>
-  </body>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title><%= title %> · Kusum ERP</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    .login-page {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 1.1fr 1fr;
+      background: #0a0806;
+      overflow: hidden;
+    }
+
+    /* ── Left panel — full-bleed jewelry hero ── */
+    .login-hero {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      overflow: hidden;
+    }
+
+    .login-hero .hero-bg {
+      position: absolute;
+      inset: 0;
+      background: url('/login-hero.jpg') center/cover no-repeat;
+      opacity: .55;
+      filter: saturate(1.1) contrast(1.05);
+      transition: transform 8s ease-out;
+    }
+
+    .login-hero:hover .hero-bg {
+      transform: scale(1.03);
+    }
+
+    /* Dark vignette overlay */
+    .login-hero::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(to top, rgba(10,8,6,.95) 0%, rgba(10,8,6,.5) 35%, rgba(10,8,6,.1) 60%, rgba(10,8,6,.35) 100%),
+        radial-gradient(ellipse at center, transparent 30%, rgba(10,8,6,.6) 100%);
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    /* Subtle gold shimmer line at the right edge */
+    .login-hero::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 1px;
+      height: 100%;
+      background: linear-gradient(to bottom, transparent, rgba(212,162,60,.3) 30%, rgba(212,162,60,.5) 50%, rgba(212,162,60,.3) 70%, transparent);
+      z-index: 3;
+    }
+
+    .hero-content {
+      position: relative;
+      z-index: 2;
+      padding: 52px;
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      background: rgba(212,162,60,.12);
+      border: 1px solid rgba(212,162,60,.18);
+      border-radius: 24px;
+      color: #d4a23c;
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      margin-bottom: 20px;
+      backdrop-filter: blur(8px);
+    }
+
+    .hero-badge .badge-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: #d4a23c;
+      box-shadow: 0 0 6px rgba(212,162,60,.6);
+      animation: badge-pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes badge-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: .4; }
+    }
+
+    .hero-title {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: 46px;
+      font-weight: 800;
+      color: #fff;
+      line-height: 1.1;
+      letter-spacing: -.02em;
+      margin-bottom: 14px;
+      text-shadow: 0 2px 30px rgba(0,0,0,.5);
+    }
+
+    .hero-title span {
+      display: block;
+      background: linear-gradient(135deg, #f5d682, #d4a23c, #a37518);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero-subtitle {
+      color: rgba(255,255,255,.5);
+      font-size: 14.5px;
+      line-height: 1.7;
+      max-width: 380px;
+      margin-bottom: 36px;
+    }
+
+    .hero-stats {
+      display: flex;
+      gap: 32px;
+      padding-top: 28px;
+      border-top: 1px solid rgba(212,162,60,.12);
+    }
+
+    .hero-stat {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .hero-stat-value {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: 22px;
+      font-weight: 700;
+      color: #d4a23c;
+    }
+
+    .hero-stat-label {
+      font-size: 11px;
+      color: rgba(255,255,255,.35);
+      font-weight: 600;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Right panel — login form ── */
+    .login-form-panel {
+      display: grid;
+      place-items: center;
+      padding: 48px;
+      background: linear-gradient(170deg, #fdfaf4 0%, #f7f0e4 50%, #f2eadb 100%);
+      position: relative;
+    }
+
+    /* Decorative circles */
+    .login-form-panel::before {
+      content: '';
+      position: absolute;
+      top: -120px;
+      right: -80px;
+      width: 300px;
+      height: 300px;
+      border-radius: 50%;
+      border: 1px solid rgba(212,162,60,.08);
+      pointer-events: none;
+    }
+
+    .login-form-panel::after {
+      content: '';
+      position: absolute;
+      bottom: -60px;
+      left: -40px;
+      width: 200px;
+      height: 200px;
+      border-radius: 50%;
+      border: 1px solid rgba(212,162,60,.06);
+      pointer-events: none;
+    }
+
+    .login-card {
+      width: min(100%, 370px);
+      padding: 0;
+      background: none;
+      border: none;
+      border-radius: 0;
+      box-shadow: none;
+      position: relative;
+      z-index: 1;
+    }
+
+    .login-card .brand-mark { display: none; }
+
+    .login-logo {
+      width: 52px;
+      height: 52px;
+      display: inline-grid;
+      place-items: center;
+      background: linear-gradient(135deg, #f0c164, #9d6512);
+      color: #2d1c06;
+      border-radius: 15px;
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: 20px;
+      font-weight: 900;
+      box-shadow: inset 0 1px 2px #ffe7ad, 0 6px 24px rgba(212,162,60,.25);
+      margin-bottom: 28px;
+    }
+
+    .login-heading {
+      margin-bottom: 32px;
+    }
+
+    .login-heading .eyebrow {
+      color: #b08a3e;
+      text-transform: uppercase;
+      font-size: 10.5px;
+      font-weight: 800;
+      letter-spacing: .16em;
+      margin: 0 0 12px;
+    }
+
+    .login-heading h1 {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: 30px;
+      font-weight: 800;
+      color: #1a1612;
+      letter-spacing: -.03em;
+      margin: 0 0 8px;
+    }
+
+    .login-heading .muted {
+      color: #8a7d6f;
+      font-size: 13.5px;
+      margin: 0;
+      line-height: 1.5;
+    }
+
+    .login-card form {
+      display: grid;
+      gap: 18px;
+      margin-top: 0;
+    }
+
+    .login-card form label {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      font-size: 11.5px;
+      font-weight: 700;
+      color: #5a4f42;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+
+    .login-card form input {
+      padding: 14px 16px;
+      border: 1.5px solid #ddd3c6;
+      border-radius: 12px;
+      background: #fff;
+      font-size: 14.5px;
+      color: #1a1612;
+      transition: border-color .2s, box-shadow .2s;
+      text-transform: none;
+      font-weight: 500;
+    }
+
+    .login-card form input:focus {
+      outline: none;
+      border-color: #c9a044;
+      box-shadow: 0 0 0 4px rgba(201,160,68,.12);
+    }
+
+    .login-card form .login-submit {
+      margin-top: 8px;
+      padding: 15px;
+      border: none;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #d4a23c, #a37518);
+      color: #fff;
+      font-size: 14.5px;
+      font-weight: 700;
+      letter-spacing: .02em;
+      cursor: pointer;
+      transition: transform .15s, box-shadow .2s, filter .2s;
+      box-shadow: 0 4px 20px rgba(163,117,24,.3);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .login-card form .login-submit::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(255,255,255,.15), transparent 60%);
+      pointer-events: none;
+    }
+
+    .login-card form .login-submit:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 28px rgba(163,117,24,.4);
+      filter: brightness(1.06);
+    }
+
+    .login-card form .login-submit:active {
+      transform: translateY(0);
+      box-shadow: 0 2px 10px rgba(163,117,24,.25);
+    }
+
+    .login-card .flash {
+      position: static;
+      min-width: 0;
+      margin-bottom: 8px;
+      border-radius: 10px;
+    }
+
+    .login-footer {
+      margin-top: 32px;
+      padding-top: 24px;
+      border-top: 1px solid #e5dcd0;
+      text-align: center;
+    }
+
+    .login-footer a {
+      color: #9b8258;
+      font-size: 12px;
+      font-weight: 600;
+      transition: color .15s;
+    }
+
+    .login-footer a:hover {
+      color: #7a5c2d;
+    }
+
+    .login-footer .version {
+      margin-top: 10px;
+      color: #c4b9a8;
+      font-size: 10.5px;
+      letter-spacing: .02em;
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 900px) {
+      .login-page { grid-template-columns: 1fr; }
+      .login-hero { display: none; }
+      .login-form-panel { min-height: 100vh; }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="login-page">
+    <div class="login-hero">
+      <div class="hero-bg"></div>
+      <div class="hero-content">
+        <div class="hero-badge">
+          <span class="badge-dot"></span>
+          Kusum ERP
+        </div>
+        <h2 class="hero-title">
+          Crafting Legacy<br>
+          <span>In Gold</span>
+        </h2>
+        <p class="hero-subtitle">Trusted jewellers since generations. Managing your entire business — from weighing to billing — with precision and pride.</p>
+        <div class="hero-stats">
+          <div class="hero-stat">
+            <span class="hero-stat-value">ERP</span>
+            <span class="hero-stat-label">Software</span>
+          </div>
+          <div class="hero-stat">
+            <span class="hero-stat-value">LAN</span>
+            <span class="hero-stat-label">Multi-PC Sync</span>
+          </div>
+          <div class="hero-stat">
+            <span class="hero-stat-value">GST</span>
+            <span class="hero-stat-label">Tax Invoices</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="login-form-panel">
+      <main class="login-card">
+        <div class="login-logo">K</div>
+        <div class="login-heading">
+          <p class="eyebrow">Kusum ERP</p>
+          <h1>Welcome back</h1>
+          <p class="muted">Sign in with your shop credentials to continue.</p>
+        </div>
+        <% if (typeof message !== 'undefined' && message) { %>
+          <div class="flash success"><span>✓</span><%= message %></div>
+        <% } %>
+        <% if (typeof error !== 'undefined' && error) { %>
+          <div class="flash error"><span>!</span><%= error %></div>
+        <% } %>
+        <form method="post" action="/login">
+          <label>Username<input name="username" autocomplete="username" required autofocus></label>
+          <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+          <button class="login-submit" type="submit">Sign in →</button>
+        </form>
+        <div class="login-footer">
+          <a href="/connection-repair">Set up or change this PC's database connection</a>
+          <div class="version">Kusum ERP v1.0</div>
+        </div>
+      </main>
+    </div>
+  </div>
+</body>
+
 </html>
