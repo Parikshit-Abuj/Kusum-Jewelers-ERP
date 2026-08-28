@@ -103,9 +103,10 @@ function invoiceHeader(doc, sale, continuation = false) {
     labelValue(doc, 'Mob.', sale.customer?.phone || '-', 27, 105, y + 57, 192, 8.8);
   }
 
-  labelValue(doc, 'Invoice No.', sale.invoiceNumber, 326, 410, y + 10, 148, 9.2);
-  labelValue(doc, 'Date & Time', formattedDateTime(sale.saleDate), 326, 410, y + 31, 148, 8.5);
-  labelValue(doc, 'GST Type', 'SGST + CGST', 326, 410, y + 57, 148, 8.8);
+  labelValue(doc, 'Invoice No.', sale.invoiceNumber, 326, 410, y + 8, 148, 9.0);
+  labelValue(doc, 'Date & Time', formattedDateTime(sale.saleDate), 326, 410, y + 24, 148, 8.2);
+  labelValue(doc, 'GSTIN No.', '27ABDFKO780F1ZG', 326, 410, y + 43, 148, 8.5);
+  labelValue(doc, 'GST Type', 'SGST + CGST', 326, 410, y + 59, 148, 8.5);
   return y + height + 5;
 }
 
@@ -246,7 +247,8 @@ function signatureBox(doc, y) {
   box(doc, page.left, y, page.right - page.left, height);
   line(doc, split, y, split, y + height, 0.45);
   doc.fillColor('#111').font('Helvetica-Bold').fontSize(9.2).text('Customer Signature', page.left + 10, y + 62, { width: split - page.left - 20, align: 'center' });
-  doc.text('Authorised Signature', split + 10, y + 62, { width: page.right - split - 20, align: 'center' });
+  doc.text('For Kusum Jewellers', split + 10, y + 12, { width: page.right - split - 20, align: 'center' });
+  doc.text('Authorised Signatory', split + 10, y + 62, { width: page.right - split - 20, align: 'center' });
 }
 
 function writeSaleInvoice(res, sale) {
