@@ -200,7 +200,7 @@ function footerTotals(doc, sale, y) {
     ['Gross Amt.', amount(gross)],
     [`ADD CGST ${compactNumber(taxRate)}%`, amount(cgst)],
     [`ADD SGST ${compactNumber(taxRate)}%`, amount(sgst)],
-    ['', ''],
+    ['ADD IGST 3.0%', '0.00'],
     ['Less URD', amount(urd)],
     ['Less Disc.', amount(discount)],
     ['Round Off', amount(roundOff)],
