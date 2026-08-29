@@ -1,4 +1,4 @@
-<% const unpaidCount = customer.sales.filter((sale) => Number(sale.balance) > 0).length; %>
+<% const unpaidCount = typeof unpaidSalesCount !== 'undefined' ? unpaidSalesCount : customer.sales.filter((sale) => Number(sale.balance) > 0).length; %>
 <header class="page-header">
   <div><p class="eyebrow">Customer credit sheet</p><h1><%= customer.name %></h1><p class="muted"><%= customer.phone || 'No phone saved' %><%= customer.address ? ` · ${customer.address}` : '' %></p></div>
   <div class="header-actions"><a class="button ghost" href="/customers">All customers</a><a class="button ghost" href="/data-management?resource=customer-ledger">Export ledger</a><a class="button secondary" href="/sales/new">New sale</a></div>
@@ -12,10 +12,11 @@
     <div class="panel-heading"><div><h2>Credit &amp; payment log</h2><p>Each credit sale and received payment is recorded here.</p></div></div>
     <% if (customer.ledger.length) { %>
       <div class="table-wrap"><table><thead><tr><th>Date</th><th>Entry</th><th>Reference</th><th>Method</th><th class="right">Amount</th><th class="right">Running due</th></tr></thead><tbody>
-        <% let running = 0; customer.ledger.slice().reverse().forEach((entry) => { running += Number(entry.amount); %>
-          <tr><td><%= entry.createdAt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) %></td><td><span class="pill <%= Number(entry.amount) < 0 ? 'success' : 'warning' %>"><%= entry.type === 'SALE_CREDIT' ? 'Credit sale' : entry.type === 'PAYMENT_RECEIVED' ? 'Payment received' : 'Adjustment' %></span><small><%= entry.note || '' %></small></td><td><%= entry.sale?.invoiceNumber || entry.reference || '—' %></td><td><%= entry.paymentMethod?.replace('_', ' ') || '—' %></td><td class="right"><strong class="<%= Number(entry.amount) < 0 ? 'paid-amount' : 'credit-amount' %>"><%= Number(entry.amount) < 0 ? '− ' : '' %><%= money(Math.abs(Number(entry.amount))) %></strong></td><td class="right"><%= money(running) %></td></tr>
+        <% customer.ledger.slice().reverse().forEach((entry) => { %>
+          <tr><td><%= entry.createdAt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) %></td><td><span class="pill <%= Number(entry.amount) < 0 ? 'success' : 'warning' %>"><%= entry.type === 'SALE_CREDIT' ? 'Credit sale' : entry.type === 'PAYMENT_RECEIVED' ? 'Payment received' : 'Adjustment' %></span><small><%= entry.note || '' %></small></td><td><%= entry.sale?.invoiceNumber || entry.reference || '—' %></td><td><%= entry.paymentMethod?.replace('_', ' ') || '—' %></td><td class="right"><strong class="<%= Number(entry.amount) < 0 ? 'paid-amount' : 'credit-amount' %>"><%= Number(entry.amount) < 0 ? '− ' : '' %><%= money(Math.abs(Number(entry.amount))) %></strong></td><td class="right"><%= money(entry.runningDue !== undefined ? entry.runningDue : outstanding) %></td></tr>
         <% }) %>
       </tbody></table></div>
+      <%- include('../_pagination', { pagination: typeof pagination !== 'undefined' ? pagination : null }) %>
     <% } else { %>
       <div class="empty-state compact"><span>✓</span><h3>No credit entries</h3><p>This customer currently has no payment due.</p></div>
     <% } %>

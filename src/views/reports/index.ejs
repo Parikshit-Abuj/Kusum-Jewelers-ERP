@@ -1,3 +1,4 @@
+<% const reportItemQ = typeof itemQ !== 'undefined' ? itemQ : ''; %>
 <header class="page-header">
   <div>
     <p class="eyebrow">Business overview</p>
@@ -117,9 +118,12 @@
       <h2>Item-wise stock &amp; weight report</h2>
       <p>Detailed gross and net weight for every piece in stock.</p>
     </div>
-    <div class="report-item-search-box">
-      <input type="text" id="reportItemSearchInput" placeholder="Search by name, category, metal, barcode or SKU…" autocomplete="off">
-    </div>
+    <form class="report-item-search-box" method="get" action="/reports">
+      <input type="hidden" name="from" value="<%= dateInput(from) %>">
+      <input type="hidden" name="to" value="<%= dateInput(to) %>">
+      <input type="text" name="itemQ" id="reportItemSearchInput" value="<%= reportItemQ %>" placeholder="Search by name, category, metal, barcode or SKU…" autocomplete="off">
+      <button class="button secondary small" type="submit">Search</button>
+    </form>
   </div>
 
   <% if (itemWiseStock && itemWiseStock.length) { %>
@@ -167,7 +171,7 @@
         <tfoot>
           <tr class="report-table-total-row">
             <td colspan="4">
-              <strong>Total (<span id="reportVisibleCount"><%= itemWiseStock.length %></span> items)</strong>
+              <strong>Page total (<span id="reportVisibleCount"><%= itemWiseStock.length %></span> items)</strong>
             </td>
             <td class="right"><strong id="reportTotalPieces"><%= itemWiseStock.reduce((sum, item) => sum + item.quantity, 0) %></strong></td>
             <td colspan="2"></td>
@@ -178,6 +182,7 @@
         </tfoot>
       </table>
     </div>
+    <%- include('../_pagination', { pagination }) %>
     <div class="empty-state compact" id="reportNoMatches" style="display: none;">
       <span>🔍</span>
       <h3>No items match your search</h3>

@@ -137,11 +137,12 @@
     }
 
     .hero-subtitle {
-      color: rgba(255, 255, 255, .5);
+      color: rgba(255, 255, 255, .72);
       font-size: 14.5px;
       line-height: 1.7;
       max-width: 380px;
       margin-bottom: 36px;
+      text-shadow: 0 1px 14px rgba(0, 0, 0, .9);
     }
 
     .hero-stats {
@@ -382,6 +383,7 @@
         min-height: 100vh;
       }
     }
+
   </style>
 </head>
 
@@ -392,26 +394,26 @@
       <div class="hero-content">
         <div class="hero-badge">
           <span class="badge-dot"></span>
-          Kusum ERP
+          Business control · simplified
         </div>
         <h2 class="hero-title">
-          Crafting Legacy<br>
-          <span>In Gold</span>
+          Precision at work.<br>
+          <span>Clarity in control.</span>
         </h2>
-        <p class="hero-subtitle">Trusted jewellers since generations. Managing your entire business — from weighing to
-          billing — with precision and pride.</p>
+        <p class="hero-subtitle">Inventory, billing, customer balances and daily cash flow — connected in one calm,
+          reliable workspace.</p>
         <div class="hero-stats">
           <div class="hero-stat">
-            <span class="hero-stat-value">ERP</span>
-            <span class="hero-stat-label">Software</span>
+            <span class="hero-stat-value">Live</span>
+            <span class="hero-stat-label">Inventory</span>
           </div>
           <div class="hero-stat">
-            <span class="hero-stat-value">LAN</span>
-            <span class="hero-stat-label">Multi-PC Sync</span>
+            <span class="hero-stat-value">Fast</span>
+            <span class="hero-stat-label">Billing</span>
           </div>
           <div class="hero-stat">
-            <span class="hero-stat-value">GST</span>
-            <span class="hero-stat-label">Tax Invoices</span>
+            <span class="hero-stat-value">Clear</span>
+            <span class="hero-stat-label">Accounts</span>
           </div>
         </div>
       </div>
@@ -423,7 +425,7 @@
         <div class="login-heading">
           <p class="eyebrow">Kusum ERP</p>
           <h1>Welcome back</h1>
-          <p class="muted">Sign in with your shop credentials to continue.</p>
+          <p class="muted">Sign in to continue to your ERP workspace.</p>
         </div>
         <% if (typeof message !=='undefined' && message) { %>
           <div class="flash success"><span>✓</span>

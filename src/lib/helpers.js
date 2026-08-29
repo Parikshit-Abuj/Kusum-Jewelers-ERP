@@ -1,13 +1,42 @@
-// The ERP is used in India. Keeping dates in this business timezone prevents
-// a date-only form value from becoming the previous calendar day in invoices.
-const SHOP_TIME_ZONE = 'Asia/Kolkata';
+// The shop asked that every operational date follow the Windows computer.
+// Use local Date getters rather than UTC conversion or a hard-coded timezone.
+function localDateParts(value = new Date()) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) throw new Error('Invalid date or time.');
+  const pad = (part) => String(part).padStart(2, '0');
+  return {
+    year: String(date.getFullYear()),
+    month: pad(date.getMonth() + 1),
+    day: pad(date.getDate()),
+    hour: pad(date.getHours()),
+    minute: pad(date.getMinutes()),
+    second: pad(date.getSeconds())
+  };
+}
 
-function shopDateParts(value = new Date()) {
-  return Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
-    timeZone: SHOP_TIME_ZONE,
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
-  }).formatToParts(new Date(value)).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+function localTimeZoneName(value = new Date()) {
+  return new Intl.DateTimeFormat('en-IN', { timeZoneName: 'long' })
+    .formatToParts(new Date(value))
+    .find((part) => part.type === 'timeZoneName')?.value || 'Windows local time';
+}
+
+function localDateBoundary(value, endOfDay = false) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || '').trim());
+  if (!match) throw new Error('Choose a valid date.');
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = endOfDay
+    ? new Date(year, month - 1, day, 23, 59, 59, 999)
+    : new Date(year, month - 1, day, 0, 0, 0, 0);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+    throw new Error('Choose a valid date.');
+  }
+  return date;
+}
+
+function localDateTimeRange(from, to) {
+  return { gte: localDateBoundary(from), lte: localDateBoundary(to, true) };
 }
 
 function number(value, fallback = 0) {
@@ -26,19 +55,22 @@ function asArray(value) {
 }
 
 function dateInput(value = new Date()) {
-  const parts = shopDateParts(value);
+  const parts = localDateParts(value);
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
 function startOfToday() {
-  return new Date(`${dateInput()}T00:00:00+05:30`);
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
 }
 
 function dateTimeFromInput(value) {
   const input = String(value || '').trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input)) return new Date(value || Date.now());
-  const now = shopDateParts();
-  return new Date(`${input}T${now.hour}:${now.minute}:${now.second}+05:30`);
+  const now = new Date();
+  const date = localDateBoundary(input);
+  date.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
+  return date;
 }
 
 function money(value) {
@@ -89,6 +121,36 @@ async function nextDocumentNumber(db, prefix, value = new Date()) {
   return reserveDocumentNumber(db, prefix, value);
 }
 
+async function reserveBatchNumber(tx, value = new Date()) {
+  const day = dateInput(value).replaceAll('-', '');
+  const prefix = `BATCH-${day}`;
+  const [existingRow] = await tx.$queryRaw`
+    SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(\`batchDocNo\`, '-', -1) AS UNSIGNED)), 0) AS lastNumber
+    FROM \`Product\`
+    WHERE \`batchDocNo\` LIKE ${`${prefix}-%`}
+  `;
+  const existingMaximum = Math.max(0, Number(existingRow?.lastNumber || 0));
+  const key = `BATCH-${day}`;
+  await tx.$executeRaw`
+    INSERT INTO \`DocumentSequence\` (\`key\`, \`lastNumber\`, \`updatedAt\`)
+    VALUES (${key}, LAST_INSERT_ID(${existingMaximum + 1}), CURRENT_TIMESTAMP(3))
+    ON DUPLICATE KEY UPDATE
+      \`lastNumber\` = LAST_INSERT_ID(GREATEST(\`lastNumber\`, ${existingMaximum}) + 1),
+      \`updatedAt\` = CURRENT_TIMESTAMP(3)
+  `;
+  const rows = await tx.$queryRaw`SELECT LAST_INSERT_ID() AS lastNumber`;
+  const serial = Number(rows?.[0]?.lastNumber);
+  if (!Number.isInteger(serial) || serial < 1) throw new Error('Could not reserve a unique batch document number.');
+  return `${prefix}-${String(serial).padStart(2, '0')}`;
+}
+
+async function nextBatchDocumentNumber(db, value = new Date()) {
+  if (typeof db.$transaction === 'function') {
+    return db.$transaction((tx) => reserveBatchNumber(tx, value));
+  }
+  return reserveBatchNumber(db, value);
+}
+
 function barcodePrefix(metal, purity) {
   const normalizedPurity = String(purity || '').toUpperCase().replaceAll(' ', '');
   if (metal === 'GOLD' && normalizedPurity === '24K') return 'G24';
@@ -113,4 +175,9 @@ function makingAmount(type, value, metalAmount, weight, quantity = 1) {
   return charge * number(weight) * quantity;
 }
 
-module.exports = { number, nullableNumber, asArray, dateInput, startOfToday, dateTimeFromInput, money, grams, nextDocumentNumber, barcodePrefix, metalRateFromDailyRate, makingAmount };
+module.exports = {
+  number, nullableNumber, asArray, dateInput, startOfToday, dateTimeFromInput,
+  localDateParts, localDateBoundary, localDateTimeRange, localTimeZoneName,
+  money, grams, nextDocumentNumber, nextBatchDocumentNumber, barcodePrefix,
+  metalRateFromDailyRate, makingAmount
+};

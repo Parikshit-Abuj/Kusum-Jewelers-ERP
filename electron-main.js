@@ -43,6 +43,15 @@ app.setAppUserModelId('KusumJewelersERP');
 let erpWindow;
 let localPort;
 
+function isTrustedLocalUrl(value) {
+  try {
+    const target = new URL(value);
+    return target.protocol === 'http:' && target.hostname === '127.0.0.1' && Number(target.port) === localPort;
+  } catch (_) {
+    return false;
+  }
+}
+
 function portIsFree(port) {
   return new Promise((resolve) => {
     const listener = net.createServer();
@@ -103,15 +112,20 @@ async function openErpWindow() {
       minWidth: 1040,
       minHeight: 720,
       title: 'Kusum ERP',
-      webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: false }
+      webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false }
     });
 
     erpWindow.webContents.setWindowOpenHandler(({ url }) => {
-      if (url.startsWith('https://') || url.startsWith('http://') && !url.includes(`127.0.0.1:${localPort}`)) {
-        shell.openExternal(url);
+      if (!isTrustedLocalUrl(url)) {
+        if (url.startsWith('https://') || url.startsWith('http://')) shell.openExternal(url);
         return { action: 'deny' };
       }
       return { action: 'allow' };
+    });
+    erpWindow.webContents.on('will-navigate', (event, url) => {
+      if (isTrustedLocalUrl(url)) return;
+      event.preventDefault();
+      if (url.startsWith('https://') || url.startsWith('http://')) shell.openExternal(url);
     });
 
     await erpWindow.loadURL(`http://127.0.0.1:${localPort}`);

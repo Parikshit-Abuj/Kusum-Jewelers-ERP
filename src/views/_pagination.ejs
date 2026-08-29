@@ -1,0 +1,10 @@
+<% if (typeof pagination !== 'undefined' && pagination) { %>
+<nav class="pagination" aria-label="Record pages">
+  <span>Showing <strong><%= pagination.fromItem %>–<%= pagination.toItem %></strong> of <strong><%= pagination.totalItems %></strong></span>
+  <div>
+    <% if (pagination.previousUrl) { %><a class="button ghost small" href="<%= pagination.previousUrl %>">← Previous</a><% } %>
+    <span class="pagination-page">Page <strong><%= pagination.page %></strong> of <%= pagination.totalPages %></span>
+    <% if (pagination.nextUrl) { %><a class="button ghost small" href="<%= pagination.nextUrl %>">Next →</a><% } %>
+  </div>
+</nav>
+<% } %>

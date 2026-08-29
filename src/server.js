@@ -1,4 +1,6 @@
 const os = require('os');
+const fs = require('fs');
+const fsPromises = require('fs/promises');
 const dotenv = require('dotenv');
 const express = require('express');
 const expressLayouts = require('express-ejs-layouts');
@@ -13,30 +15,44 @@ const shopDataDirectory = process.env.KUSUM_APP_DATA
 const configPath = process.env.KUSUM_CONFIG_PATH
   || (process.env.KUSUM_APP_DATA ? path.join(shopDataDirectory, '.env') : path.join(appRoot, '.env'));
 dotenv.config({ path: configPath });
+// Keep one unpredictable signing secret for the whole desktop process. Fresh
+// setup persists this exact value so restarting the ERP does not invalidate all
+// active sessions merely because setup occurred after the server booted.
+process.env.SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(48).toString('base64url');
 const { createPrisma } = require('./lib/prisma');
 const { writeUrdPurchaseInvoice } = require('./lib/urd-invoice-pdf');
 const { writeSaleInvoice } = require('./lib/sale-invoice-pdf');
 const { buildTsplJob, checkTcpPrinter, sendTsplToPrinter } = require('./lib/tspl-labels');
 const { resolveTscPrinter, cachedTscPrinterStatus } = require('./lib/windows-printers');
-const { provisionShopDatabase, enableNetworkSharing, updatePrinterConfiguration, parseDatabaseConnection, isLocalHost, runBundledMigrations } = require('./lib/shop-provisioning');
+const { provisionShopDatabase, enableNetworkSharing, updatePrinterConfiguration, updateLoginConfiguration, parseDatabaseConnection, isLocalHost, runBundledMigrations, verifyClientConnection } = require('./lib/shop-provisioning');
 const { buildExcelExport } = require('./lib/excel-export');
 const { RESOURCE_LIST, resourceFor, parseDateRange, getExportPayload, archiveData } = require('./lib/data-lifecycle');
-const { generateSqlBackup, importSqlBackup } = require('./lib/sql-backup-restore');
-const { number, asArray, dateInput, startOfToday, dateTimeFromInput, money, grams, nextDocumentNumber, metalRateFromDailyRate, makingAmount } = require('./lib/helpers');
+const { generateSqlBackupFile, cleanupSqlBackupFile, importSqlBackupFile } = require('./lib/sql-backup-restore');
+const { paymentMethodFromComponents, reverseAndDeleteCashbookEntry, deleteSettledUrdPurchase } = require('./lib/accounting-reversal');
+const { number, asArray, dateInput, startOfToday, dateTimeFromInput, localDateTimeRange, money, grams, nextDocumentNumber, nextBatchDocumentNumber, metalRateFromDailyRate, makingAmount } = require('./lib/helpers');
 const { nextBarcode } = require('./lib/barcode-sequence');
 const { upsertItemName } = require('./lib/item-names');
+const { hasConfiguredPassword, passwordMatchesEnvironment, secureTextMatch, usesKnownDefaultPassword } = require('./lib/auth-security');
+const { PrismaSessionStore } = require('./lib/mysql-session-store');
 const multer = require('multer');
 
+const sqlUploadDirectory = process.env.KUSUM_APP_DATA
+  ? path.join(shopDataDirectory, 'sql-uploads')
+  : path.join(os.tmpdir(), 'kusum-erp-sql-uploads');
+fs.mkdirSync(sqlUploadDirectory, { recursive: true });
 const sqlUpload = multer({
-  limits: { fileSize: 100 * 1024 * 1024 },
-  storage: multer.memoryStorage()
+  limits: { fileSize: 512 * 1024 * 1024 },
+  storage: multer.diskStorage({
+    destination: sqlUploadDirectory,
+    filename: (req, file, callback) => callback(null, `${crypto.randomUUID()}.sql`)
+  })
 });
 
 function receiveSqlUpload(req, res, next) {
   sqlUpload.single('sqlFile')(req, res, (error) => {
     if (!error) return next();
     const message = error.code === 'LIMIT_FILE_SIZE'
-      ? 'The SQL backup is larger than 100 MB. Archive old records or restore it with MySQL tools on the main PC.'
+      ? 'The SQL backup is larger than 512 MB. Restore it with MySQL tools on the Main database PC.'
       : (error.message || 'Could not read the uploaded SQL backup.');
     return redirectWith(res, '/data-management', 'error', message);
   });
@@ -55,7 +71,9 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 app.use(morgan('dev'));
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'replace-this-local-session-secret',
+  name: 'kusum.erp.sid',
+  secret: process.env.SESSION_SECRET,
+  store: new PrismaSessionStore(() => prisma, () => !shopSetupRequired()),
   resave: false,
   saveUninitialized: false,
   cookie: { httpOnly: true, sameSite: 'lax', maxAge: 8 * 60 * 60 * 1000 }
@@ -78,6 +96,25 @@ app.use((req, res, next) => {
 
 // ── Real-Time Multi-PC Synchronization Hub (SSE) ─────────────
 const sseClients = new Set();
+let syncRevisionQueue = Promise.resolve();
+
+async function bumpSharedSyncRevision(attempt = 1) {
+  try {
+    await prisma.$executeRaw`
+      INSERT INTO \`SyncRevision\` (\`id\`, \`revision\`, \`updatedAt\`)
+      VALUES (1, 1, CURRENT_TIMESTAMP(3))
+      ON DUPLICATE KEY UPDATE
+        \`revision\` = \`revision\` + 1,
+        \`updatedAt\` = CURRENT_TIMESTAMP(3)
+    `;
+  } catch (error) {
+    if (attempt < 3) {
+      await new Promise((resolve) => setTimeout(resolve, attempt * 75));
+      return bumpSharedSyncRevision(attempt + 1);
+    }
+    console.error('Could not update the shared ERP sync revision:', error.message || error);
+  }
+}
 
 function broadcastSyncEvent(type, payload = {}) {
   const data = JSON.stringify({ type, payload, timestamp: Date.now() });
@@ -92,8 +129,7 @@ function broadcastSyncEvent(type, payload = {}) {
   // Separate Electron installations have separate in-memory SSE hubs. Bump a
   // shared MySQL revision so every PC can notice this committed change too.
   if (!shopSetupRequired()) {
-    prisma.$executeRaw`UPDATE \`SyncRevision\` SET \`revision\` = \`revision\` + 1, \`updatedAt\` = NOW(3) WHERE \`id\` = 1`
-      .catch(() => {});
+    syncRevisionQueue = syncRevisionQueue.then(() => bumpSharedSyncRevision(), () => bumpSharedSyncRevision());
   }
 }
 
@@ -141,6 +177,30 @@ app.get('/api/realtime-events', (req, res) => {
 function redirectWith(res, route, type, message) {
   const separator = route.includes('?') ? '&' : '?';
   res.redirect(`${route}${separator}${type}=${encodeURIComponent(message)}`);
+}
+
+function paginationFor(req, totalItems, requestedPage, pageSize) {
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const page = Math.min(totalPages, Math.max(1, Math.floor(number(requestedPage, 1))));
+  const pageUrl = (targetPage) => {
+    const params = new URLSearchParams();
+    Object.entries(req.query || {}).forEach(([key, value]) => {
+      if (key === 'page' || value === undefined || value === null || value === '') return;
+      params.set(key, String(Array.isArray(value) ? value[0] : value));
+    });
+    params.set('page', String(targetPage));
+    return `${req.path}?${params.toString()}`;
+  };
+  return {
+    page,
+    pageSize,
+    totalItems,
+    totalPages,
+    fromItem: totalItems ? (page - 1) * pageSize + 1 : 0,
+    toItem: Math.min(totalItems, page * pageSize),
+    previousUrl: page > 1 ? pageUrl(page - 1) : null,
+    nextUrl: page < totalPages ? pageUrl(page + 1) : null
+  };
 }
 
 function isLoopbackRequest(req) {
@@ -251,12 +311,16 @@ function salePaymentBreakdown(body) {
       paid,
       cashPaid: selectedMethod === 'CASH' ? paid : 0,
       upiPaid: selectedMethod === 'UPI' ? paid : 0,
+      cardPaid: selectedMethod === 'CARD' ? paid : 0,
+      bankPaid: selectedMethod === 'BANK_TRANSFER' ? paid : 0,
       paymentMethod: paid > 0 ? selectedMethod : 'CREDIT',
       cashbookPayments: paid > 0 ? [{ method: selectedMethod, amount: paid }] : []
     };
   }
   const cashPaid = Math.max(0, roundedMoney(number(body.cashPaid)));
   const upiPaid = Math.max(0, roundedMoney(number(body.upiPaid)));
+  const cardPaid = Math.max(0, roundedMoney(number(body.cardPaid)));
+  const bankPaid = Math.max(0, roundedMoney(number(body.bankPaid)));
   const cashbookPayments = [];
   if (cashPaid > 0) {
     cashbookPayments.push({ method: 'CASH', amount: cashPaid });
@@ -264,11 +328,21 @@ function salePaymentBreakdown(body) {
   if (upiPaid > 0) {
     cashbookPayments.push({ method: 'UPI', amount: upiPaid });
   }
+  if (cardPaid > 0) {
+    cashbookPayments.push({ method: 'CARD', amount: cardPaid });
+  }
+  if (bankPaid > 0) {
+    cashbookPayments.push({ method: 'BANK_TRANSFER', amount: bankPaid });
+  }
+  const components = { CASH: cashPaid, UPI: upiPaid, CARD: cardPaid, BANK_TRANSFER: bankPaid };
+  const paid = roundedMoney(cashPaid + upiPaid + cardPaid + bankPaid);
   return {
-    paid: roundedMoney(cashPaid + upiPaid),
+    paid,
     cashPaid,
     upiPaid,
-    paymentMethod: cashPaid > 0 && upiPaid > 0 ? 'MIXED' : cashPaid > 0 ? 'CASH' : upiPaid > 0 ? 'UPI' : 'CREDIT',
+    cardPaid,
+    bankPaid,
+    paymentMethod: paymentMethodFromComponents(components, paid),
     cashbookPayments
   };
 }
@@ -277,6 +351,8 @@ function receiptMethodAmounts(paymentMethod, amount) {
   const paymentData = {};
   if (paymentMethod === 'CASH') paymentData.cashPaid = { increment: amount };
   if (paymentMethod === 'UPI') paymentData.upiPaid = { increment: amount };
+  if (paymentMethod === 'CARD') paymentData.cardPaid = { increment: amount };
+  if (paymentMethod === 'BANK_TRANSFER') paymentData.bankPaid = { increment: amount };
   return paymentData;
 }
 
@@ -317,7 +393,7 @@ async function lockCustomerForLedger(tx, customerId) {
   if (!rows.length) throw new Error('The selected customer no longer exists.');
 }
 
-async function allocateCustomerPayment(tx, { customerId, amount, paymentMethod, reference, note }) {
+async function allocateCustomerPayment(tx, { customerId, amount, paymentMethod, reference, note, cashbookEntryId = null }) {
   await lockCustomerForLedger(tx, customerId);
 
   const ledgerTotal = await tx.customerLedger.aggregate({
@@ -359,6 +435,7 @@ async function allocateCustomerPayment(tx, { customerId, amount, paymentMethod, 
         type: 'PAYMENT_RECEIVED',
         amount: -allocation,
         paymentMethod,
+        cashbookEntryId,
         reference,
         note: note || `Payment received against ${sale.invoiceNumber}`
       }
@@ -375,6 +452,7 @@ async function allocateCustomerPayment(tx, { customerId, amount, paymentMethod, 
         type: 'PAYMENT_RECEIVED',
         amount: -remaining,
         paymentMethod,
+        cashbookEntryId,
         reference,
         note: note || 'Payment received against customer loan / adjustment'
       }
@@ -416,14 +494,8 @@ async function resolveBillingCustomer(tx, body) {
   } });
 }
 
-function secureCredentialMatch(value, expected) {
-  const left = Buffer.from(String(value || ''));
-  const right = Buffer.from(String(expected || ''));
-  return left.length === right.length && crypto.timingSafeEqual(left, right);
-}
-
 function shopSetupRequired() {
-  return !process.env.DATABASE_URL || !process.env.AUTH_USERNAME || !process.env.AUTH_PASSWORD;
+  return !process.env.DATABASE_URL || !process.env.AUTH_USERNAME || !hasConfiguredPassword(process.env);
 }
 
 async function reloadPrismaClient() {
@@ -527,6 +599,7 @@ app.post('/setup', requireLoopback, async (req, res) => {
   try {
     const values = await provisionShopDatabase({ appRoot, configPath, form: req.body });
     Object.assign(process.env, values);
+    if (values.AUTH_PASSWORD_HASH) delete process.env.AUTH_PASSWORD;
     await reloadPrismaClient();
     res.redirect('/login?message=Shop setup is complete. Sign in to begin.');
   } catch (error) {
@@ -542,6 +615,7 @@ app.post('/connection-repair', requireLoopback, async (req, res) => {
   try {
     const values = await provisionShopDatabase({ appRoot, configPath, form: req.body });
     Object.assign(process.env, values);
+    if (values.AUTH_PASSWORD_HASH) delete process.env.AUTH_PASSWORD;
     await reloadPrismaClient();
     res.redirect('/login?message=ERP connection saved. Sign in to continue.');
   } catch (error) {
@@ -559,15 +633,87 @@ app.get('/login', async (req, res) => {
 app.post('/login', async (req, res) => {
   if (shopSetupRequired()) return res.redirect('/setup');
   if (await databaseConnectionError(true)) return redirectWith(res, '/connection-repair', 'error', 'The saved database connection is unavailable. Enter the current database details below.');
-  const usernameOk = secureCredentialMatch(req.body.username, process.env.AUTH_USERNAME);
-  const passwordOk = secureCredentialMatch(req.body.password, process.env.AUTH_PASSWORD);
+  const usernameOk = secureTextMatch(req.body.username, process.env.AUTH_USERNAME);
+  const passwordOk = passwordMatchesEnvironment(req.body.password, process.env);
   if (!usernameOk || !passwordOk) return redirectWith(res, '/login', 'error', 'Incorrect username or password.');
+
+  if (usesKnownDefaultPassword(process.env)) {
+    return req.session.regenerate((error) => {
+      if (error) return res.status(500).render('error', { title: 'Sign-in failed', detail: error.message });
+      req.session.pendingPasswordChange = true;
+      req.session.username = process.env.AUTH_USERNAME;
+      res.redirect('/change-password?message=Choose your own ERP password before continuing.');
+    });
+  }
+
+  // Transparently replace plaintext credentials from older releases after the
+  // user has proved that password. No business data or database login changes.
+  if (!process.env.AUTH_PASSWORD_HASH && process.env.NODE_ENV !== 'test') {
+    try {
+      const updated = updateLoginConfiguration({
+        configPath,
+        currentEnv: process.env,
+        username: process.env.AUTH_USERNAME,
+        password: req.body.password
+      });
+      Object.assign(process.env, updated);
+      delete process.env.AUTH_PASSWORD;
+    } catch (error) {
+      return redirectWith(res, '/login', 'error', `Could not secure the saved ERP login: ${error.message}`);
+    }
+  }
   req.session.regenerate((error) => {
     if (error) return res.status(500).render('error', { title: 'Sign-in failed', detail: error.message });
     req.session.authenticated = true;
     req.session.username = process.env.AUTH_USERNAME;
     res.redirect('/');
   });
+});
+
+app.get('/change-password', (req, res) => {
+  if (shopSetupRequired()) return res.redirect('/setup');
+  if (!req.session?.authenticated && !req.session?.pendingPasswordChange) return res.redirect('/login');
+  res.render('auth/change-password', {
+    layout: false,
+    title: 'Change ERP password',
+    requireCurrentPassword: Boolean(req.session.authenticated),
+    username: req.session.username || process.env.AUTH_USERNAME,
+    error: req.query.error || null,
+    message: req.query.message || null
+  });
+});
+
+app.post('/change-password', async (req, res) => {
+  if (shopSetupRequired()) return res.redirect('/setup');
+  if (!req.session?.authenticated && !req.session?.pendingPasswordChange) return res.redirect('/login');
+  try {
+    if (req.session.authenticated && !passwordMatchesEnvironment(req.body.currentPassword, process.env)) {
+      throw new Error('Current ERP password is incorrect.');
+    }
+    const newPassword = String(req.body.newPassword || '');
+    const confirmation = String(req.body.confirmPassword || '');
+    if (!newPassword) throw new Error('Choose a new ERP password.');
+    if (newPassword !== confirmation) throw new Error('New password and confirmation do not match.');
+    if (secureTextMatch(process.env.AUTH_USERNAME, 'kusum') && secureTextMatch(newPassword, 'kusum@123')) {
+      throw new Error('Choose your own password instead of the old default password.');
+    }
+    const updated = updateLoginConfiguration({
+      configPath,
+      currentEnv: process.env,
+      username: process.env.AUTH_USERNAME,
+      password: newPassword
+    });
+    Object.assign(process.env, updated);
+    delete process.env.AUTH_PASSWORD;
+    req.session.regenerate((error) => {
+      if (error) return res.status(500).render('error', { title: 'Password change failed', detail: error.message });
+      req.session.authenticated = true;
+      req.session.username = process.env.AUTH_USERNAME;
+      res.redirect('/?message=ERP login password changed securely.');
+    });
+  } catch (error) {
+    redirectWith(res, '/change-password', 'error', error.message || 'Could not change the ERP password.');
+  }
 });
 
 app.post('/logout', (req, res) => {
@@ -684,85 +830,106 @@ app.post('/data/archive', async (req, res) => {
 });
 
 app.get('/data/backup-sql', async (req, res) => {
+  let backup;
   try {
-    const backup = await generateSqlBackup(process.env.DATABASE_URL);
+    backup = await generateSqlBackupFile(process.env.DATABASE_URL);
     res.setHeader('Content-Type', 'application/sql; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${backup.filename}"`);
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.send(backup.sql);
+    res.sendFile(backup.filePath, async (error) => {
+      await cleanupSqlBackupFile(backup);
+      if (error && !res.headersSent) redirectWith(res, '/data-management', 'error', `Could not send SQL backup: ${error.message}`);
+    });
   } catch (error) {
+    await cleanupSqlBackupFile(backup);
     redirectWith(res, '/data-management', 'error', `Could not generate SQL backup: ${error.message}`);
   }
 });
 
 app.post('/data/restore-sql', receiveSqlUpload, async (req, res) => {
   let restoreAttempted = false;
+  let uploadedPath = null;
   try {
     const connection = parseDatabaseConnection(process.env.DATABASE_URL);
     if (!isLocalHost(connection.host) || String(process.env.KUSUM_DEPLOYMENT_MODE || 'SERVER').toUpperCase() === 'CLIENT') {
       throw new Error('For safety, database restore is available only on the Main database PC.');
     }
-    if (!req.file || !req.file.buffer) {
+    if (!req.file || !req.file.path) {
       throw new Error('Please choose a .sql backup file to upload.');
     }
+    uploadedPath = req.file.path;
     if (path.extname(req.file.originalname || '').toLowerCase() !== '.sql') {
       throw new Error('Choose a Kusum ERP backup file with the .sql extension.');
     }
     if (req.body.restoreAcknowledged !== 'on') {
       throw new Error('Please tick the confirmation box to restore the database.');
     }
-    const sqlText = req.file.buffer.toString('utf8');
     restoreAttempted = true;
-    const result = await importSqlBackup(process.env.DATABASE_URL, sqlText, appRoot);
+    const result = await importSqlBackupFile(process.env.DATABASE_URL, uploadedPath, appRoot);
     await reloadPrismaClient();
     broadcastSyncEvent('DATABASE_RESTORED', { tables: result.tableCount });
     redirectWith(res, '/data-management', 'message', `Database backup imported successfully! Restored ${result.tableCount} tables (${result.executedStatements} SQL statements executed). All records are ready.`);
   } catch (error) {
     if (restoreAttempted) await reloadPrismaClient().catch(() => {});
     redirectWith(res, '/data-management', 'error', `Could not restore database from SQL backup: ${error.message}`);
+  } finally {
+    if (uploadedPath) await fsPromises.rm(uploadedPath, { force: true }).catch(() => {});
   }
 });
 
 app.get('/', async (req, res, next) => {
   try {
     const today = startOfToday();
-    const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
     const todayKey = dateInput(today);
-    const [productCount, stockProducts, todaySales, lowStock, recentSales, todayCashbook, customerDue] = await Promise.all([
-      prisma.product.count({ where: { status: 'AVAILABLE' } }),
-      prisma.product.findMany({ where: { quantity: { gt: 0 }, status: 'AVAILABLE' }, select: { quantity: true, netWeight: true, grossWeight: true, metal: true, name: true, category: true } }),
+    const [productCount, stockSummaryRows, itemBreakdownRows, todaySales, lowStock, recentSales, todayCashbook, customerDue] = await Promise.all([
+      prisma.product.count({ where: { quantity: { gt: 0 }, status: 'AVAILABLE' } }),
+      prisma.$queryRaw`
+        SELECT metal, SUM(quantity) AS pieces, SUM(netWeight * quantity) AS weight
+        FROM Product
+        WHERE quantity > 0 AND status = 'AVAILABLE'
+        GROUP BY metal
+      `,
+      prisma.$queryRaw`
+        SELECT name, category, metal, SUM(quantity) AS pieces, SUM(netWeight * quantity) AS weight
+        FROM Product
+        WHERE quantity > 0 AND status = 'AVAILABLE'
+        GROUP BY name, category, metal
+        ORDER BY weight DESC, name ASC
+        LIMIT 100
+      `,
       prisma.sale.aggregate({ where: { saleDate: { gte: today, lt: tomorrow } }, _sum: { total: true, paid: true, balance: true, urdOffset: true }, _count: true }),
       prisma.product.findMany({ where: { quantity: { lte: 1 }, status: 'AVAILABLE' }, orderBy: { quantity: 'asc' }, take: 6 }),
       prisma.sale.findMany({ include: { customer: true }, orderBy: { saleDate: 'desc' }, take: 6 }),
-      prisma.cashbookEntry.findMany({ where: { entryDate: todayKey }, select: { type: true, amount: true } }),
+      prisma.cashbookEntry.groupBy({ by: ['type'], where: { entryDate: todayKey }, _sum: { amount: true } }),
       prisma.customerLedger.aggregate({ _sum: { amount: true } })
     ]);
     const cashFlow = todayCashbook.reduce((summary, entry) => {
-      if (entry.type === 'IN') summary.in += Number(entry.amount);
-      if (entry.type === 'OUT') summary.out += Number(entry.amount);
+      if (entry.type === 'IN') summary.in += Number(entry._sum.amount || 0);
+      if (entry.type === 'OUT') summary.out += Number(entry._sum.amount || 0);
       return summary;
     }, { in: 0, out: 0 });
-    // Compute per-metal weight totals and item-wise breakdown
     const metalWeights = { GOLD: { pieces: 0, weight: 0 }, SILVER: { pieces: 0, weight: 0 }, OTHER: { pieces: 0, weight: 0 } };
-    const itemMap = new Map();
-    stockProducts.forEach((p) => {
-      const w = Number(p.netWeight) * p.quantity;
-      const bucket = p.metal === 'GOLD' ? metalWeights.GOLD : p.metal === 'SILVER' ? metalWeights.SILVER : metalWeights.OTHER;
-      bucket.pieces += p.quantity;
-      bucket.weight += w;
-      const key = `${p.name}|||${p.category}|||${p.metal}`;
-      const existing = itemMap.get(key);
-      if (existing) { existing.pieces += p.quantity; existing.weight += w; }
-      else itemMap.set(key, { name: p.name, category: p.category, metal: p.metal, pieces: p.quantity, weight: w });
+    stockSummaryRows.forEach((row) => {
+      const bucket = row.metal === 'GOLD' ? metalWeights.GOLD : row.metal === 'SILVER' ? metalWeights.SILVER : metalWeights.OTHER;
+      bucket.pieces += Number(row.pieces || 0);
+      bucket.weight += Number(row.weight || 0);
     });
-    const itemWeightBreakdown = [...itemMap.values()].sort((a, b) => b.weight - a.weight);
+    const itemWeightBreakdown = itemBreakdownRows.map((row) => ({
+      name: row.name,
+      category: row.category,
+      metal: row.metal,
+      pieces: Number(row.pieces || 0),
+      weight: Number(row.weight || 0)
+    }));
     res.render('dashboard', {
       title: 'Dashboard',
       stats: {
         productCount,
-        stockPieces: stockProducts.reduce((total, product) => total + product.quantity, 0),
-        stockWeight: stockProducts.reduce((total, product) => total + Number(product.netWeight) * product.quantity, 0),
+        stockPieces: metalWeights.GOLD.pieces + metalWeights.SILVER.pieces + metalWeights.OTHER.pieces,
+        stockWeight: metalWeights.GOLD.weight + metalWeights.SILVER.weight + metalWeights.OTHER.weight,
         goldPieces: metalWeights.GOLD.pieces, goldWeight: metalWeights.GOLD.weight,
         silverPieces: metalWeights.SILVER.pieces, silverWeight: metalWeights.SILVER.weight,
         otherPieces: metalWeights.OTHER.pieces, otherWeight: metalWeights.OTHER.weight,
@@ -880,10 +1047,17 @@ app.get('/inventory', async (req, res, next) => {
       }
       where = { AND: conditions };
     }
-    const products = await prisma.product.findMany({ where, orderBy: [{ status: 'asc' }, { updatedAt: 'desc' }] });
+    const totalItems = await prisma.product.count({ where });
+    const pagination = paginationFor(req, totalItems, req.query.page, 150);
+    const products = await prisma.product.findMany({
+      where,
+      orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+      skip: (pagination.page - 1) * pagination.pageSize,
+      take: pagination.pageSize
+    });
     const printerStatus = await resolveLabelPrinter(req.query.checkPrinter === '1');
     const printerTransport = configuredLabelPrinter();
-    res.render('inventory/index', { title: 'Inventory', products, q, printerName: printerStatus.name || printerTransport.name, printerStatus, printerTransport });
+    res.render('inventory/index', { title: 'Inventory', products, q, pagination, printerName: printerStatus.name || printerTransport.name, printerStatus, printerTransport });
   } catch (error) { next(error); }
 });
 
@@ -963,25 +1137,17 @@ app.post('/labels/print', express.json(), async (req, res, next) => {
   }
 });
 
-app.get('/api/inventory/batch-docs/next', async (req, res, next) => {
+async function reserveBatchDocumentRoute(req, res, next) {
   try {
-    const today = dateInput().replace(/-/g, '');
-    const prefix = `BATCH-${today}`;
-    const latest = await prisma.product.findFirst({
-      where: { batchDocNo: { startsWith: prefix } },
-      orderBy: { batchDocNo: 'desc' },
-      select: { batchDocNo: true }
-    });
-    let nextSeq = 1;
-    if (latest?.batchDocNo) {
-      const parts = latest.batchDocNo.split('-');
-      const lastNum = parseInt(parts[parts.length - 1], 10);
-      if (!isNaN(lastNum)) nextSeq = lastNum + 1;
-    }
-    const batchDocNo = `${prefix}-${String(nextSeq).padStart(2, '0')}`;
+    const batchDocNo = await nextBatchDocumentNumber(prisma);
     res.json({ batchDocNo });
   } catch (error) { next(error); }
-});
+}
+
+app.post('/api/inventory/batch-docs/reserve', reserveBatchDocumentRoute);
+// Compatibility for an already-open browser window from the previous source.
+// This path now reserves atomically too; fresh UI uses the POST endpoint above.
+app.get('/api/inventory/batch-docs/next', reserveBatchDocumentRoute);
 
 app.get('/api/inventory/batch-docs', async (req, res, next) => {
   try {
@@ -1248,13 +1414,26 @@ app.post('/inventory/:id', async (req, res, next) => {
     const reorderLevel = req.body.reorderLevel !== undefined && req.body.reorderLevel !== ''
       ? Math.max(0, Math.floor(number(req.body.reorderLevel, 0)))
       : 0;
-    await prisma.product.update({ where: { id }, data: {
-       sku: req.body.sku.trim().toUpperCase(), name: req.body.name.trim(), category: req.body.category.trim(), metal: req.body.metal,
-       purity: req.body.purity || null, grossWeight: number(req.body.grossWeight), stoneWeight: number(req.body.stoneWeight), netWeight: number(req.body.netWeight),
-       reorderLevel, purchasePrice: number(req.body.purchasePrice), sellingPrice: number(req.body.sellingPrice),
-       makingChargePerGram: req.body.makingChargeType === 'PER_GRAM' ? number(req.body.makingChargeValue) : 0,
-       makingChargeType: req.body.makingChargeType, makingChargeValue: number(req.body.makingChargeValue), location: req.body.location || null, notes: req.body.notes || null, status: req.body.status
-    } });
+    await prisma.$transaction(async (tx) => {
+      const existing = await tx.product.findUniqueOrThrow({ where: { id } });
+      const metal = req.body.metal;
+      const purity = req.body.purity || null;
+      const netWeight = number(req.body.netWeight);
+      const makingChargeType = ['FIXED', 'PER_GRAM', 'PERCENTAGE'].includes(req.body.makingChargeType) ? req.body.makingChargeType : 'PER_GRAM';
+      const makingChargeValue = Math.max(0, number(req.body.makingChargeValue));
+      if (netWeight <= 0) throw new Error('Net weight must be greater than zero.');
+      const rateInfo = await getRateForDate(tx);
+      const metalAmount = metalRateFromDailyRate({ metal, purity }, rateInfo.rate) * netWeight;
+      const suggestedPrice = roundedMoney(metalAmount + makingAmount(makingChargeType, makingChargeValue, metalAmount, netWeight));
+      await tx.product.update({ where: { id }, data: {
+        sku: String(req.body.sku || existing.sku).trim().toUpperCase(), name: req.body.name.trim(), category: req.body.category.trim(), metal,
+        purity, grossWeight: number(req.body.grossWeight), stoneWeight: number(req.body.stoneWeight), netWeight,
+        reorderLevel, purchasePrice: number(req.body.purchasePrice), sellingPrice: suggestedPrice,
+        makingChargePerGram: makingChargeType === 'PER_GRAM' ? makingChargeValue : 0,
+        makingChargeType, makingChargeValue, location: req.body.location || null, notes: req.body.notes || null, status: req.body.status
+      } });
+      await upsertItemName(tx, req.body.name.trim(), req.body.category.trim(), { updateCategory: false });
+    });
     broadcastSyncEvent('INVENTORY_CHANGED', { action: 'PRODUCT_UPDATED', id });
     redirectWith(res, '/inventory', 'message', 'Item details updated.');
   } catch (error) { next(error); }
@@ -1285,17 +1464,26 @@ app.get('/customers', async (req, res, next) => {
       { phone: { contains: q } },
       { email: { contains: q } }
     ] } : {};
+    const totalItems = await prisma.customer.count({ where });
+    const pagination = paginationFor(req, totalItems, req.query.page, 100);
     const customers = await prisma.customer.findMany({
       where,
-      include: { _count: { select: { sales: true } }, ledger: { select: { amount: true } } },
-      orderBy: { name: 'asc' },
-      take: 250
+      include: { _count: { select: { sales: true } } },
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+      skip: (pagination.page - 1) * pagination.pageSize,
+      take: pagination.pageSize
     });
+    const balances = customers.length ? await prisma.customerLedger.groupBy({
+      by: ['customerId'],
+      where: { customerId: { in: customers.map((customer) => customer.id) } },
+      _sum: { amount: true }
+    }) : [];
+    const balanceByCustomer = new Map(balances.map((row) => [row.customerId, Number(row._sum.amount || 0)]));
     const customerRows = customers.map((customer) => ({
       ...customer,
-      outstanding: customer.ledger.reduce((total, entry) => total + Number(entry.amount), 0)
+      outstanding: balanceByCustomer.get(customer.id) || 0
     }));
-    res.render('contacts/customers', { title: 'Customers', customers: customerRows, q });
+    res.render('contacts/customers', { title: 'Customers', customers: customerRows, q, pagination });
   } catch (error) { next(error); }
 });
 
@@ -1314,15 +1502,42 @@ app.post('/customers', async (req, res, next) => {
 
 app.get('/customers/:id', async (req, res, next) => {
   try {
-    const customer = await prisma.customer.findUniqueOrThrow({
-      where: { id: Number(req.params.id) },
-      include: {
-        ledger: { include: { sale: true }, orderBy: { createdAt: 'desc' } },
-        sales: { orderBy: { saleDate: 'desc' }, take: 10 }
-      }
+    const customerId = Number(req.params.id);
+    const [customer, ledgerCount, ledgerTotal, unpaidSalesCount] = await Promise.all([
+      prisma.customer.findUniqueOrThrow({
+        where: { id: customerId },
+        include: { sales: { orderBy: { saleDate: 'desc' }, take: 10 } }
+      }),
+      prisma.customerLedger.count({ where: { customerId } }),
+      prisma.customerLedger.aggregate({ where: { customerId }, _sum: { amount: true } }),
+      prisma.sale.count({ where: { customerId, balance: { gt: 0 } } })
+    ]);
+    const pagination = paginationFor(req, ledgerCount, req.query.page, 200);
+    const skip = (pagination.page - 1) * pagination.pageSize;
+    const ledger = await prisma.customerLedger.findMany({
+      where: { customerId },
+      include: { sale: true },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      skip,
+      take: pagination.pageSize
     });
-    const outstanding = customer.ledger.reduce((total, entry) => total + Number(entry.amount), 0);
-    res.render('contacts/customer-detail', { title: customer.name, customer, outstanding });
+    const outstanding = Number(ledgerTotal._sum.amount || 0);
+    const [newerTotalRow] = skip > 0 ? await prisma.$queryRaw`
+      SELECT COALESCE(SUM(recent.amount), 0) AS amount
+      FROM (
+        SELECT amount FROM CustomerLedger
+        WHERE customerId = ${customerId}
+        ORDER BY createdAt DESC, id DESC
+        LIMIT ${skip}
+      ) AS recent
+    ` : [{ amount: 0 }];
+    let runningDue = roundedMoney(outstanding - Number(newerTotalRow?.amount || 0));
+    ledger.forEach((entry) => {
+      entry.runningDue = runningDue;
+      runningDue = roundedMoney(runningDue - Number(entry.amount));
+    });
+    customer.ledger = ledger;
+    res.render('contacts/customer-detail', { title: customer.name, customer, outstanding, unpaidSalesCount, pagination });
   } catch (error) { next(error); }
 });
 
@@ -1334,18 +1549,19 @@ app.post('/customers/:id/payments', async (req, res, next) => {
     if (amount <= 0) return redirectWith(res, `/customers/${customerId}`, 'error', 'Enter a valid payment amount.');
     await prisma.$transaction(async (tx) => {
       const receipt = req.body.reference?.trim() || `RCPT-${String(Date.now()).slice(-7)}`;
+      const cashbookEntry = await tx.cashbookEntry.create({ data: {
+        entryDate: dateInput(), type: 'IN', paymentMethod, amount,
+        description: `Customer payment received — ${receipt}`, reference: receipt, customerId, syncLedger: true,
+        notes: req.body.note || null
+      } });
       await allocateCustomerPayment(tx, {
         customerId,
         amount,
         paymentMethod,
         reference: receipt,
-        note: req.body.note || null
+        note: req.body.note || null,
+        cashbookEntryId: cashbookEntry.id
       });
-      await tx.cashbookEntry.create({ data: {
-        entryDate: dateInput(), type: 'IN', paymentMethod, amount,
-        description: `Customer payment received — ${receipt}`, reference: receipt, customerId, syncLedger: true,
-        notes: req.body.note || null
-      } });
     });
     broadcastSyncEvent('CUSTOMER_UPDATED', { customerId, action: 'PAYMENT_RECEIVED', amount });
     broadcastSyncEvent('CASHBOOK_UPDATED', { type: 'IN', amount });
@@ -1376,8 +1592,17 @@ app.post('/api/item-names', express.json(), async (req, res, next) => {
 
 app.get('/item-names', async (req, res, next) => {
   try {
-    const items = await prisma.itemName.findMany({ orderBy: { name: 'asc' } });
-    res.render('item-names/index', { title: 'Item Names', items });
+    const q = String(req.query.q || '').trim();
+    const where = q ? { OR: [{ name: { contains: q } }, { category: { contains: q } }] } : {};
+    const totalItems = await prisma.itemName.count({ where });
+    const pagination = paginationFor(req, totalItems, req.query.page, 200);
+    const items = await prisma.itemName.findMany({
+      where,
+      orderBy: { name: 'asc' },
+      skip: (pagination.page - 1) * pagination.pageSize,
+      take: pagination.pageSize
+    });
+    res.render('item-names/index', { title: 'Item Names', items, q, pagination });
   } catch (error) { next(error); }
 });
 
@@ -1433,17 +1658,19 @@ app.get('/sales', async (req, res, next) => {
     // Date range filter on saleDate
     if (from || to) {
       where.saleDate = {};
-      if (from) where.saleDate.gte = new Date(from + 'T00:00:00');
-      if (to) where.saleDate.lte = new Date(to + 'T23:59:59');
+      if (from) where.saleDate.gte = localDateTimeRange(from, from).gte;
+      if (to) where.saleDate.lte = localDateTimeRange(to, to).lte;
     }
-    const hasFilters = q || from || to;
+    const totalItems = await prisma.sale.count({ where });
+    const pagination = paginationFor(req, totalItems, req.query.page, 100);
     const sales = await prisma.sale.findMany({
       where,
       include: { customer: true, _count: { select: { items: true } } },
       orderBy: { saleDate: 'desc' },
-      take: hasFilters ? 500 : 100
+      skip: (pagination.page - 1) * pagination.pageSize,
+      take: pagination.pageSize
     });
-    res.render('sales/index', { title: 'Sales', sales, filters: { q, from, to } });
+    res.render('sales/index', { title: 'Sales', sales, filters: { q, from, to }, pagination });
   } catch (error) { next(error); }
 });
 
@@ -1490,10 +1717,11 @@ app.get('/api/customers/phone/:phone', async (req, res, next) => {
     if (!validCustomerPhone(phone)) return res.status(400).json({ error: 'Enter a valid customer mobile number.' });
     const customer = await prisma.customer.findUnique({
       where: { phone },
-      include: { ledger: { select: { amount: true } }, sales: { orderBy: { saleDate: 'desc' }, take: 5, select: { invoiceNumber: true, saleDate: true, total: true, balance: true } } }
+      include: { sales: { orderBy: { saleDate: 'desc' }, take: 5, select: { invoiceNumber: true, saleDate: true, total: true, balance: true } } }
     });
     if (!customer) return res.json({ found: false, phone });
-    const outstanding = customer.ledger.reduce((total, entry) => total + Number(entry.amount), 0);
+    const ledgerTotal = await prisma.customerLedger.aggregate({ where: { customerId: customer.id }, _sum: { amount: true } });
+    const outstanding = Number(ledgerTotal._sum.amount || 0);
     res.json({
       found: true,
       customer: { id: customer.id, name: customer.name, phone: customer.phone, email: customer.email, address: customer.address, panNumber: customer.panNumber, outstanding, recentSales: customer.sales.map((sale) => ({ ...sale, total: Number(sale.total), balance: Number(sale.balance) })) }
@@ -1584,7 +1812,7 @@ app.post('/sales', async (req, res, next) => {
       const sale = await tx.sale.create({ data: {
         invoiceNumber: req.body.invoiceNumber || await nextDocumentNumber(tx, 'INV', saleDate), customerId, customerPan, saleDate,
         subtotal, discount: appliedDiscount, gstRate, gstAmount, total, urdOffset: urdAmount, paid: acceptedPaid,
-        cashPaid: payment.cashPaid, upiPaid: payment.upiPaid, balance,
+        cashPaid: payment.cashPaid, upiPaid: payment.upiPaid, cardPaid: payment.cardPaid, bankPaid: payment.bankPaid, balance,
         paymentMethod: payment.paymentMethod, notes: req.body.notes || null,
         items: { create: pricedRows.map((row) => ({
           productId: row.productId, productBarcode: row.product.barcode, productSku: row.product.sku,
@@ -1613,20 +1841,20 @@ app.post('/sales', async (req, res, next) => {
       if (acceptedPaid > 0) {
         for (const recordedPayment of payment.cashbookPayments) {
           await tx.cashbookEntry.create({ data: {
-            entryDate: dateInput(saleDate), type: 'IN', paymentMethod: recordedPayment.method, amount: recordedPayment.amount,
-            description: `Sale payment — ${sale.invoiceNumber}`, reference: sale.invoiceNumber, customerId, syncLedger: Boolean(customerId),
-            notes: req.body.notes || null
+             entryDate: dateInput(saleDate), type: 'IN', paymentMethod: recordedPayment.method, amount: recordedPayment.amount,
+             description: `Sale payment — ${sale.invoiceNumber}`, reference: sale.invoiceNumber, customerId, syncLedger: Boolean(customerId),
+             saleId: sale.id,
+             notes: req.body.notes || null
           } });
         }
       }
       for (const product of products) {
         const quantitySold = rows.filter((row) => row.productId === product.id).reduce((total, row) => total + row.quantity, 0);
-        const remaining = product.quantity - quantitySold;
         await tx.stockMovement.create({ data: stockMovementSnapshot(product, 'SALE', -quantitySold, `Sold via ${sale.invoiceNumber}`) });
-        // Sale-line snapshots preserve invoices and exports. A fully sold
-        // barcode can therefore be removed permanently from inventory.
-        if (remaining <= 0) await tx.product.delete({ where: { id: product.id } });
-        else await tx.product.update({ where: { id: product.id }, data: { quantity: remaining, status: 'AVAILABLE' } });
+        // One barcode represents one physical jewellery item. Once that barcode
+        // appears on a committed bill, remove its inventory row permanently.
+        // SaleItem and StockMovement snapshots preserve all historical details.
+        await tx.product.delete({ where: { id: product.id } });
       }
       return sale;
     });
@@ -1669,14 +1897,16 @@ app.get('/cashbook', async (req, res, next) => {
       entryDate: { gte: fromDate, lte: toDate },
       ...(methodFilter ? { paymentMethod: methodFilter } : {})
     };
+    const totalItems = await prisma.cashbookEntry.count({ where });
+    const pagination = paginationFor(req, totalItems, req.query.page, 200);
     const [entries, totals, customers] = await Promise.all([
-      prisma.cashbookEntry.findMany({ where, include: { customer: true }, orderBy: [{ entryDate: 'desc' }, { createdAt: 'desc' }] }),
+      prisma.cashbookEntry.findMany({ where, include: { customer: true }, orderBy: [{ entryDate: 'desc' }, { createdAt: 'desc' }], skip: (pagination.page - 1) * pagination.pageSize, take: pagination.pageSize }),
       prisma.cashbookEntry.groupBy({
         by: ['type', 'paymentMethod'],
         where,
         _sum: { amount: true }
       }),
-      prisma.customer.findMany({ orderBy: { name: 'asc' } })
+      prisma.customer.findMany({ orderBy: { name: 'asc' }, take: 500 })
     ]);
     const summary = { totalIn: 0, totalOut: 0, cashIn: 0, cashOut: 0, upiIn: 0, upiOut: 0, bankIn: 0, bankOut: 0 };
     totals.forEach((row) => {
@@ -1690,7 +1920,7 @@ app.get('/cashbook', async (req, res, next) => {
     summary.cashNet = (summary.cashIn || 0) - (summary.cashOut || 0);
     summary.upiNet = (summary.upiIn || 0) - (summary.upiOut || 0);
     summary.bankNet = (summary.bankIn || 0) - (summary.bankOut || 0);
-    res.render('cashbook/index', { title: 'Cashbook', entries, summary, fromDate, toDate, selectedDate, methodFilter, customers });
+    res.render('cashbook/index', { title: 'Cashbook', entries, summary, fromDate, toDate, selectedDate, methodFilter, customers, pagination });
   } catch (error) { next(error); }
 });
 
@@ -1709,30 +1939,31 @@ app.post('/cashbook', async (req, res, next) => {
 
     await prisma.$transaction(async (tx) => {
       const receipt = req.body.reference?.trim() || `CB-${String(Date.now()).slice(-7)}`;
+      const cashbookEntry = await tx.cashbookEntry.create({
+        data: {
+          entryDate, type: entryType, paymentMethod, description, amount,
+          reference: receipt, notes: req.body.notes || null,
+          customerId, syncLedger: Boolean(syncLedger)
+        }
+      });
       if (syncLedger && entryType === 'IN') {
         await allocateCustomerPayment(tx, {
           customerId,
           amount,
           paymentMethod,
           reference: receipt,
-          note: `Payment via cashbook · ${description}`
+          note: `Payment via cashbook · ${description}`,
+          cashbookEntryId: cashbookEntry.id
         });
       } else if (syncLedger) {
         await lockCustomerForLedger(tx, customerId);
       }
-      await tx.cashbookEntry.create({
-        data: {
-          entryDate, type: entryType, paymentMethod, description, amount,
-          reference: req.body.reference || null, notes: req.body.notes || null,
-          customerId, syncLedger: Boolean(syncLedger)
-        }
-      });
       if (syncLedger && entryType === 'OUT') {
         // Money going out to a customer is money they owe back to the shop.
         await tx.customerLedger.create({
           data: {
-            customerId, type: 'ADJUSTMENT', amount,
-            paymentMethod, reference: req.body.reference || null, note: `Cashbook out · ${description}`
+            customerId, type: 'ADJUSTMENT', amount, cashbookEntryId: cashbookEntry.id,
+            paymentMethod, reference: receipt, note: `Cashbook out · ${description}`
           }
         });
       }
@@ -1747,10 +1978,11 @@ app.post('/cashbook', async (req, res, next) => {
 
 app.post('/cashbook/:id/delete', async (req, res, next) => {
   try {
-    await prisma.cashbookEntry.delete({ where: { id: Number(req.params.id) } });
+    const result = await prisma.$transaction((tx) => reverseAndDeleteCashbookEntry(tx, Number(req.params.id)));
     broadcastSyncEvent('CASHBOOK_UPDATED', { action: 'DELETED' });
-    redirectWith(res, '/cashbook', 'message', 'Entry deleted.');
-  } catch (error) { next(error); }
+    if (result.affectedSales.length) broadcastSyncEvent('CUSTOMER_UPDATED', { action: 'PAYMENT_REVERSED', saleIds: result.affectedSales });
+    redirectWith(res, '/cashbook', 'message', 'Entry deleted and all linked accounting records reversed.');
+  } catch (error) { redirectWith(res, '/cashbook', 'error', error.message || 'Could not safely delete this cashbook entry.'); }
 });
 
 /* ── URD Purchases (old gold/silver from customers) ────── */
@@ -1759,23 +1991,34 @@ app.get('/urd-purchases', async (req, res, next) => {
     const q = (req.query.q || '').trim();
     const where = {};
     if (q) {
+      const metalMatch = ['GOLD', 'SILVER', 'PLATINUM', 'DIAMOND', 'OTHER'].includes(q.toUpperCase())
+        ? [{ metal: q.toUpperCase() }]
+        : [];
       where.OR = [
         { purchaseNumber: { contains: q } },
         { customer: { name: { contains: q } } },
         { customer: { phone: { contains: q } } },
-        { metal: { contains: q } },
-        { description: { contains: q } }
+        { description: { contains: q } },
+        ...metalMatch
       ];
     }
-    const purchases = await prisma.urdPurchase.findMany({ where, include: { customer: true }, orderBy: { purchaseDate: 'desc' } });
-    res.render('urd-purchases/index', { title: 'URD Purchases', purchases, q });
+    const totalItems = await prisma.urdPurchase.count({ where });
+    const pagination = paginationFor(req, totalItems, req.query.page, 100);
+    const purchases = await prisma.urdPurchase.findMany({
+      where,
+      include: { customer: true },
+      orderBy: { purchaseDate: 'desc' },
+      skip: (pagination.page - 1) * pagination.pageSize,
+      take: pagination.pageSize
+    });
+    res.render('urd-purchases/index', { title: 'URD Purchases', purchases, q, pagination });
   } catch (error) { next(error); }
 });
 
 app.get('/urd-purchases/new', async (req, res, next) => {
   try {
     const [customers, rateInfo] = await Promise.all([
-      prisma.customer.findMany({ orderBy: { name: 'asc' } }),
+      prisma.customer.findMany({ orderBy: { name: 'asc' }, take: 500 }),
       getRateForDate(prisma, dateInput())
     ]);
     const purchaseNumber = await nextDocumentNumber(prisma, 'URD');
@@ -1819,7 +2062,7 @@ app.post('/urd-purchases', async (req, res, next) => {
         await tx.cashbookEntry.create({ data: {
           entryDate: dateInput(record.purchaseDate), type: 'OUT', paymentMethod,
           description: `URD purchase — ${record.purchaseNumber}`, amount: paid, reference: record.purchaseNumber,
-          customerId: record.customerId, syncLedger: false, notes: req.body.notes || null
+          customerId: record.customerId, urdPurchaseId: record.id, syncLedger: false, notes: req.body.notes || null
         } });
       }
       return record;
@@ -1865,6 +2108,7 @@ app.post('/urd-purchases/:id/payments', async (req, res) => {
           description: `URD payout — ${purchase.purchaseNumber}`,
           reference,
           customerId: purchase.customerId,
+          urdPurchaseId: purchase.id,
           syncLedger: false,
           notes: req.body.notes || null
         }
@@ -1891,12 +2135,16 @@ app.get('/urd-purchases/:id/invoice.pdf', async (req, res, next) => {
 
 app.post('/urd-purchases/:id/delete', async (req, res, next) => {
   try {
-    const purchase = await prisma.urdPurchase.findUniqueOrThrow({ where: { id: Number(req.params.id) } });
-    const outstanding = Math.max(0, Number(purchase.totalAmount) - Number(purchase.paid) - Number(purchase.saleOffset));
-    if (outstanding > 0) throw new Error(`This URD purchase has ${money(outstanding)} still payable to the customer and cannot be deleted.`);
-    await prisma.urdPurchase.delete({ where: { id: purchase.id } });
+    const purchase = await prisma.$transaction(async (tx) => {
+      const record = await tx.urdPurchase.findUniqueOrThrow({ where: { id: Number(req.params.id) } });
+      const outstanding = Math.max(0, Number(record.totalAmount) - Number(record.paid) - Number(record.saleOffset));
+      if (outstanding > 0) throw new Error(`This URD purchase has ${money(outstanding)} still payable to the customer and cannot be deleted.`);
+      await deleteSettledUrdPurchase(tx, record);
+      return record;
+    });
     broadcastSyncEvent('URD_UPDATED', { id: purchase.id, action: 'DELETED' });
-    redirectWith(res, '/urd-purchases', 'message', 'Purchase deleted.');
+    broadcastSyncEvent('CASHBOOK_UPDATED', { action: 'URD_DELETED', reference: purchase.purchaseNumber });
+    redirectWith(res, '/urd-purchases', 'message', 'Purchase and its linked payout entries deleted.');
   } catch (error) {
     redirectWith(res, '/urd-purchases', 'error', error.message || 'Could not delete this URD purchase.');
   }
@@ -1907,59 +2155,84 @@ app.get('/reports', async (req, res, next) => {
     const todayKey = dateInput();
     const fromKey = req.query.from || `${todayKey.slice(0, 7)}-01`;
     const toKey = req.query.to || todayKey;
-    const from = new Date(`${fromKey}T00:00:00.000+05:30`);
-    const to = new Date(`${toKey}T23:59:59.999+05:30`);
-    const [sales, saleItemsInPeriod, stockProducts, receivables] = await Promise.all([
+    const { gte: from, lte: to } = localDateTimeRange(fromKey, toKey);
+    const itemQ = String(req.query.itemQ || '').trim();
+    const metalSearch = ['GOLD', 'SILVER', 'PLATINUM', 'DIAMOND', 'OTHER'].includes(itemQ.toUpperCase())
+      ? [{ metal: itemQ.toUpperCase() }]
+      : [];
+    const itemWhere = {
+      quantity: { gt: 0 },
+      status: 'AVAILABLE',
+      ...(itemQ ? { OR: [
+        { barcode: { contains: itemQ } },
+        { sku: { contains: itemQ } },
+        { name: { contains: itemQ } },
+        { category: { contains: itemQ } },
+        { purity: { contains: itemQ } },
+        { location: { contains: itemQ } },
+        ...metalSearch
+      ] } : {})
+    };
+    const itemTotal = await prisma.product.count({ where: itemWhere });
+    const pagination = paginationFor(req, itemTotal, req.query.page, 100);
+
+    const topSelling = (metal) => prisma.$queryRaw`
+      SELECT
+        ${metal} AS metal,
+        COALESCE(NULLIF(si.productName, ''), p.name, 'Jewellery item') AS name,
+        COALESCE(NULLIF(si.productSku, ''), p.sku, '') AS sku,
+        COALESCE(si.productPurity, p.purity, '') AS purity,
+        SUM(si.quantity) AS quantity,
+        SUM(si.lineTotal) AS billed
+      FROM SaleItem si
+      INNER JOIN Sale s ON s.id = si.saleId
+      LEFT JOIN Product p ON p.id = si.productId
+      WHERE s.saleDate >= ${from} AND s.saleDate <= ${to}
+        AND COALESCE(si.productMetal, p.metal) = ${metal}
+      GROUP BY
+        COALESCE(NULLIF(si.productName, ''), p.name, 'Jewellery item'),
+        COALESCE(NULLIF(si.productSku, ''), p.sku, ''),
+        COALESCE(si.productPurity, p.purity, '')
+      ORDER BY billed DESC
+      LIMIT 1
+    `;
+
+    const [sales, topGoldRows, topSilverRows, stockSummaryRows, stockProducts, receivables] = await Promise.all([
       prisma.sale.aggregate({ where: { saleDate: { gte: from, lte: to } }, _sum: { subtotal: true, discount: true, gstAmount: true, total: true, paid: true, balance: true }, _count: true }),
-      prisma.saleItem.findMany({
-        where: { sale: { saleDate: { gte: from, lte: to } } },
-        select: {
-          productId: true, productName: true, productSku: true, productMetal: true, productPurity: true,
-          quantity: true, lineTotal: true, product: { select: { id: true, name: true, sku: true, metal: true, purity: true } }
-        }
-      }),
+      topSelling('GOLD'),
+      topSelling('SILVER'),
+      prisma.$queryRaw`
+        SELECT metal, SUM(quantity) AS quantity,
+          SUM(netWeight * quantity) AS netWeight,
+          SUM(grossWeight * quantity) AS grossWeight
+        FROM Product
+        WHERE quantity > 0 AND status = 'AVAILABLE'
+        GROUP BY metal
+        ORDER BY metal
+      `,
       prisma.product.findMany({
-        where: { quantity: { gt: 0 }, status: 'AVAILABLE' },
+        where: itemWhere,
         select: { id: true, barcode: true, sku: true, name: true, category: true, metal: true, purity: true, grossWeight: true, netWeight: true, quantity: true, location: true },
-        orderBy: [{ metal: 'asc' }, { name: 'asc' }]
+        orderBy: [{ metal: 'asc' }, { name: 'asc' }, { id: 'asc' }],
+        skip: (pagination.page - 1) * pagination.pageSize,
+        take: pagination.pageSize
       }),
       prisma.sale.aggregate({ _sum: { balance: true } })
     ]);
-
-    const goldItemsMap = new Map();
-    const silverItemsMap = new Map();
-
-    for (const item of saleItemsInPeriod) {
-      const metal = (item.product?.metal || item.productMetal || 'GOLD').toUpperCase();
-      const name = item.product?.name || item.productName || 'Jewellery item';
-      const sku = item.product?.sku || item.productSku || '';
-      const purity = item.product?.purity || item.productPurity || '';
-      const key = `${name}|||${sku}|||${purity}`;
-      const amount = Number(item.lineTotal || 0);
-      const qty = Number(item.quantity || 0);
-
-      const targetMap = metal === 'GOLD' ? goldItemsMap : metal === 'SILVER' ? silverItemsMap : null;
-      if (targetMap) {
-        const existing = targetMap.get(key);
-        if (existing) {
-          existing.quantity += qty;
-          existing.billed += amount;
-        } else {
-          targetMap.set(key, { metal, name, sku, purity, quantity: qty, billed: amount });
-        }
-      }
-    }
-
-    const topGold = [...goldItemsMap.values()].sort((a, b) => b.billed - a.billed)[0] || null;
-    const topSilver = [...silverItemsMap.values()].sort((a, b) => b.billed - a.billed)[0] || null;
-    const topProducts = [topGold, topSilver].filter(Boolean);
-    const stockByMetal = Object.values(stockProducts.reduce((summary, product) => {
-      if (!summary[product.metal]) summary[product.metal] = { metal: product.metal, quantity: 0, netWeight: 0, grossWeight: 0 };
-      summary[product.metal].quantity += product.quantity;
-      summary[product.metal].netWeight += Number(product.netWeight) * product.quantity;
-      summary[product.metal].grossWeight += Number(product.grossWeight) * product.quantity;
-      return summary;
-    }, {})).sort((a, b) => a.metal.localeCompare(b.metal));
+    const topProducts = [...topGoldRows, ...topSilverRows].map((row) => ({
+      metal: row.metal,
+      name: row.name,
+      sku: row.sku,
+      purity: row.purity,
+      quantity: Number(row.quantity || 0),
+      billed: Number(row.billed || 0)
+    }));
+    const stockByMetal = stockSummaryRows.map((row) => ({
+      metal: row.metal,
+      quantity: Number(row.quantity || 0),
+      netWeight: Number(row.netWeight || 0),
+      grossWeight: Number(row.grossWeight || 0)
+    }));
 
     const itemWiseStock = stockProducts.map((p) => {
       const netWt = Number(p.netWeight);
@@ -1989,7 +2262,9 @@ app.get('/reports', async (req, res, next) => {
       stockByMetal,
       receivables: receivables._sum.balance || 0,
       topProducts,
-      itemWiseStock
+      itemWiseStock,
+      itemQ,
+      pagination
     });
   } catch (error) { next(error); }
 });
@@ -2010,20 +2285,7 @@ async function startApplicationServer() {
     } else {
       // Client PCs never migrate the shared schema. They fail clearly until
       // the updated ERP has first been opened on the Main database PC.
-      const probe = mysql.createConnection({
-        host: connection.host,
-        port: connection.port,
-        user: connection.username,
-        password: connection.password,
-        database: connection.database,
-        connectTimeout: 12000
-      });
-      const client = await probe;
-      try {
-        await client.query('SELECT `revision` FROM `SyncRevision` WHERE `id` = 1');
-      } finally {
-        await client.end();
-      }
+      await verifyClientConnection(process.env.DATABASE_URL, appRoot);
     }
   }
   const mode = String(process.env.KUSUM_DEPLOYMENT_MODE || 'SERVER').toUpperCase();

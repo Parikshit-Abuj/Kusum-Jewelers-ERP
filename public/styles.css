@@ -1477,3 +1477,27 @@ input:focus, select:focus, textarea:focus { border-color: #c08a32; box-shadow: 0
   -webkit-overflow-scrolling: touch;
   scrollbar-width: thin;
 }
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.pagination > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pagination-page {
+  white-space: nowrap;
+}
+
+@media (max-width: 620px) {
+  .pagination { align-items: flex-start; flex-direction: column; }
+  .pagination > div { width: 100%; justify-content: space-between; }
+}

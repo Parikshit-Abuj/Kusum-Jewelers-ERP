@@ -27,6 +27,7 @@
   </tr><% }) %>
   </tbody></table></div><% } else { %><div class="empty-state"><span>◇</span><h3>No jewellery items found</h3><p>Add stock to start billing and tracking inventory.</p><button type="button" class="button" data-open-batch-modal>⚡ Batch Add Pieces</button></div><% } %>
   </div>
+  <%- include('../_pagination', { pagination }) %>
 </section>
 
 <%- include('_batch_modal') %>

@@ -17,6 +17,21 @@ function n(value) {
   return Number.isFinite(v) ? v : 0;
 }
 
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[character]);
+}
+
+function replaceWithTextElements(container, elements) {
+  container.replaceChildren(...elements.map(({ tag, text, className }) => {
+    const element = document.createElement(tag);
+    if (className) element.className = className;
+    element.textContent = String(text ?? '');
+    return element;
+  }));
+}
+
 /* ── Flash auto-dismiss ──────────────────────────────────────── */
 document.querySelectorAll('.flash').forEach((el) => {
   setTimeout(() => {
@@ -79,6 +94,7 @@ document.querySelectorAll('.flash').forEach((el) => {
   const stoneWeightInput = form.querySelector('[data-weight-stone]');
   const makingTypeSelect = form.querySelector('[data-making-type]');
   const makingValueInput = form.querySelector('[data-making-value]');
+  const sellingPriceInput = form.querySelector('[data-selling-price]');
 
   // Purity options per metal
   const purityOptions = {
@@ -130,9 +146,13 @@ document.querySelectorAll('.flash').forEach((el) => {
     const metal = metalSel.value;
     const opts = purityOptions[metal] || [{ value: 'OTHER', label: 'Other' }];
     const current = puritySel.value;
-    puritySel.innerHTML = opts.map((o) =>
-      `<option value="${o.value}"${o.value === current ? ' selected' : ''}>${o.label}</option>`
-    ).join('');
+    puritySel.replaceChildren(...opts.map((option) => {
+      const element = document.createElement('option');
+      element.value = option.value;
+      element.textContent = option.label;
+      element.selected = option.value === current;
+      return element;
+    }));
   }
 
   function updateReadouts() {
@@ -155,7 +175,9 @@ document.querySelectorAll('.flash').forEach((el) => {
       const makingType = makingTypeSelect ? makingTypeSelect.value : 'PER_GRAM';
       const makingValue = makingValueInput ? n(makingValueInput.value) : 0;
       const making = calcMaking(makingType, makingValue, metalAmount, netWeight);
-      suggestedDisplay.textContent = fmt(metalAmount + making);
+      const suggestedPrice = metalAmount + making;
+      suggestedDisplay.textContent = fmt(suggestedPrice);
+      if (sellingPriceInput) sellingPriceInput.value = suggestedPrice.toFixed(2);
     }
   }
 
@@ -376,6 +398,8 @@ document.querySelectorAll('.flash').forEach((el) => {
   const splitPayment = form.querySelector('[data-split-payment]');
   const cashPaidInput = form.querySelector('[data-cash-paid]');
   const upiPaidInput = form.querySelector('[data-upi-paid]');
+  const cardPaidInput = form.querySelector('[data-card-paid]');
+  const bankPaidInput = form.querySelector('[data-bank-paid]');
   const balanceEl = form.querySelector('[data-balance]');
   const saleDateInput = form.querySelector('[data-sale-date]');
   const urdEnabled = form.querySelector('[data-urd-enabled]');
@@ -427,7 +451,10 @@ document.querySelectorAll('.flash').forEach((el) => {
     let lookupController = null;
 
     function getSaleDate() {
-      return saleDateInput ? saleDateInput.value : new Date().toISOString().slice(0, 10);
+      if (saleDateInput?.value) return saleDateInput.value;
+      const now = new Date();
+      const pad = (part) => String(part).padStart(2, '0');
+      return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
     }
 
     function calcMaking(type, value, metalAmount, weight, qty) {
@@ -477,14 +504,17 @@ document.querySelectorAll('.flash').forEach((el) => {
 
         if (!resp.ok) {
           setRowStatus(row, 'error', data.error || 'Not found.');
-          itemDetails.innerHTML = `<strong class="err-text">${data.error || 'Item not found'}</strong>`;
+          replaceWithTextElements(itemDetails, [{ tag: 'strong', className: 'err-text', text: data.error || 'Item not found' }]);
           return;
         }
 
         productData = data.product;
         productIdInput.value = data.product.id;
 
-        itemDetails.innerHTML = `<strong>${data.product.name}</strong><small>${data.product.barcode} · ${data.product.category} · ${data.product.purity || data.product.metal} · ${Number(data.product.netWeight).toFixed(3)} g</small>`;
+        replaceWithTextElements(itemDetails, [
+          { tag: 'strong', text: data.product.name },
+          { tag: 'small', text: `${data.product.barcode} · ${data.product.category} · ${data.product.purity || data.product.metal} · ${Number(data.product.netWeight).toFixed(3)} g` }
+        ]);
 
         weightInput.value = Number(data.product.netWeight).toFixed(3);
         metalRateInput.value = Number(data.metalRate).toFixed(2);
@@ -523,7 +553,10 @@ document.querySelectorAll('.flash').forEach((el) => {
       if (lookupController) lookupController.abort();
       productIdInput.value = '';
       productData = null;
-      itemDetails.innerHTML = '<strong>Waiting for barcode…</strong><small>Item details will appear here after lookup</small>';
+      replaceWithTextElements(itemDetails, [
+        { tag: 'strong', text: 'Waiting for barcode…' },
+        { tag: 'small', text: 'Item details will appear here after lookup' }
+      ]);
       const val = barcodeInput.value.trim();
       if (val.length >= 1) {
         lookupTimer = setTimeout(() => lookupBarcode(val), 500);
@@ -596,7 +629,7 @@ document.querySelectorAll('.flash').forEach((el) => {
     const urdAdjustment = urdEnabled?.checked ? Math.max(0, n(urdAmount?.value)) : 0;
     const netPayable = Math.max(0, total - urdAdjustment);
     const paid = paymentMethodInput?.value === 'MIXED'
-      ? n(cashPaidInput?.value) + n(upiPaidInput?.value)
+      ? n(cashPaidInput?.value) + n(upiPaidInput?.value) + n(cardPaidInput?.value) + n(bankPaidInput?.value)
       : n(paidInput ? paidInput.value : 0);
     if (paymentMethodInput?.value === 'MIXED' && paidInput) paidInput.value = paid.toFixed(2);
     const balance = Math.max(0, netPayable - paid);
@@ -618,11 +651,15 @@ document.querySelectorAll('.flash').forEach((el) => {
   if (paidInput) paidInput.addEventListener('input', updateFormTotals);
   if (cashPaidInput) cashPaidInput.addEventListener('input', updateFormTotals);
   if (upiPaidInput) upiPaidInput.addEventListener('input', updateFormTotals);
+  if (cardPaidInput) cardPaidInput.addEventListener('input', updateFormTotals);
+  if (bankPaidInput) bankPaidInput.addEventListener('input', updateFormTotals);
   if (paymentMethodInput) paymentMethodInput.addEventListener('change', () => {
     const mixed = paymentMethodInput.value === 'MIXED';
     if (splitPayment) splitPayment.hidden = !mixed;
     if (cashPaidInput) cashPaidInput.disabled = !mixed;
     if (upiPaidInput) upiPaidInput.disabled = !mixed;
+    if (cardPaidInput) cardPaidInput.disabled = !mixed;
+    if (bankPaidInput) bankPaidInput.disabled = !mixed;
     if (paidInput) paidInput.disabled = mixed;
     updateFormTotals();
   });
@@ -768,7 +805,7 @@ function updateInventoryLabelBatchState() {
     }
     listEl.innerHTML = items.map((item, i) =>
       `<li data-index="${i}" class="${i === highlighted ? 'highlighted' : ''}">
-        <strong>${item.name}</strong><small>${item.category || ''}</small>
+        <strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.category || '')}</small>
       </li>`
     ).join('');
     listEl.classList.add('open');
@@ -1003,7 +1040,7 @@ function updateInventoryLabelBatchState() {
   // Fetch next Batch Doc No
   async function fetchNextBatchDocNo() {
     try {
-      const res = await fetch('/api/inventory/batch-docs/next');
+      const res = await fetch('/api/inventory/batch-docs/reserve', { method: 'POST' });
       if (res.ok) {
         const data = await res.json();
         if (docNoInput) docNoInput.value = data.batchDocNo;
@@ -1087,7 +1124,10 @@ function updateInventoryLabelBatchState() {
         items.forEach((item) => {
           const li = document.createElement('li');
           li.className = 'autocomplete-item';
-          li.innerHTML = `<strong>${item.name}</strong><small>${item.category}</small>`;
+          replaceWithTextElements(li, [
+            { tag: 'strong', text: item.name },
+            { tag: 'small', text: item.category }
+          ]);
           li.addEventListener('mousedown', (e) => {
             e.preventDefault();
             isSelectingAutocomplete = true;
@@ -1263,13 +1303,13 @@ function updateInventoryLabelBatchState() {
       }
       docListTbody.innerHTML = data.docs.map((d) => `
         <tr>
-          <td><strong style="font-family:monospace;font-size:13px;color:#825512;">${d.batchDocNo}</strong></td>
-          <td><strong>${d.name || 'Jewellery Pieces'}</strong><small>${d.metal || ''} ${d.purity || ''}</small></td>
+          <td><strong style="font-family:monospace;font-size:13px;color:#825512;">${escapeHtml(d.batchDocNo)}</strong></td>
+          <td><strong>${escapeHtml(d.name || 'Jewellery Pieces')}</strong><small>${escapeHtml(`${d.metal || ''} ${d.purity || ''}`)}</small></td>
           <td class="right"><strong>${d.pieceCount}</strong></td>
           <td class="right">${Number(d.totalWeight).toFixed(3)}g</td>
           <td class="right">${fmt(d.totalValue)}</td>
           <td class="center">
-            <button type="button" class="button small accent" data-load-batch-btn="${d.batchDocNo}" style="padding:3px 10px;font-size:11px;background:#b47a21;color:#fff;border:none;">
+            <button type="button" class="button small accent" data-load-batch-btn="${escapeHtml(d.batchDocNo)}" style="padding:3px 10px;font-size:11px;background:#b47a21;color:#fff;border:none;">
               Load &amp; Print →
             </button>
           </td>
@@ -1284,7 +1324,7 @@ function updateInventoryLabelBatchState() {
       });
 
     } catch (err) {
-      docListTbody.innerHTML = `<tr><td colspan="6" class="center text-danger" style="padding: 20px;">Error loading batches: ${err.message}</td></tr>`;
+      docListTbody.innerHTML = `<tr><td colspan="6" class="center text-danger" style="padding: 20px;">Error loading batches: ${escapeHtml(err.message)}</td></tr>`;
     }
   }
 
@@ -1518,12 +1558,12 @@ function updateInventoryLabelBatchState() {
           <td class="label-select" style="text-align:center;">
             <input type="checkbox" data-batch-item-cb value="${p.id}" checked>
           </td>
-          <td><span class="batch-barcode-pill">${p.barcode}</span></td>
-          <td><strong>${p.name}</strong></td>
-          <td><span class="metal-dot ${(p.metal || '').toLowerCase()}"></span>${p.metal}</td>
+          <td><span class="batch-barcode-pill">${escapeHtml(p.barcode)}</span></td>
+          <td><strong>${escapeHtml(p.name)}</strong></td>
+          <td><span class="metal-dot ${escapeHtml((p.metal || '').toLowerCase())}"></span>${escapeHtml(p.metal)}</td>
           <td class="right"><strong>${Number(p.netWeight).toFixed(3)}g</strong></td>
-          <td><small>${p.makingChargeType === 'PERCENTAGE' ? `${p.makingChargeValue}%` : `₹${p.makingChargeValue}/g`}</small></td>
-          <td class="right"><strong>${p.formattedSellingPrice || fmt(p.sellingPrice)}</strong></td>
+          <td><small>${escapeHtml(p.makingChargeType === 'PERCENTAGE' ? `${p.makingChargeValue}%` : `₹${p.makingChargeValue}/g`)}</small></td>
+          <td class="right"><strong>${escapeHtml(p.formattedSellingPrice || fmt(p.sellingPrice))}</strong></td>
           <td class="center">${statusHtml}</td>
           <td class="center" style="white-space:nowrap;">
             <button type="button" class="batch-action-btn" data-batch-edit-btn="${p.id}" title="Edit weight or details">✎ Edit</button>
@@ -1677,7 +1717,10 @@ function updateInventoryLabelBatchState() {
     }
     const toast = document.createElement('div');
     toast.className = `sync-toast ${type}`;
-    toast.innerHTML = `<span class="sync-toast-icon">⚡</span><span class="sync-toast-msg">${message}</span>`;
+    replaceWithTextElements(toast, [
+      { tag: 'span', className: 'sync-toast-icon', text: '⚡' },
+      { tag: 'span', className: 'sync-toast-msg', text: message }
+    ]);
     container.appendChild(toast);
     setTimeout(() => {
       toast.classList.add('fade-out');
@@ -1715,14 +1758,14 @@ function updateInventoryLabelBatchState() {
       const currentInventory = document.querySelector('[data-inventory-live-content]');
       const newInventory = newDoc.querySelector('[data-inventory-live-content]');
       if (currentInventory && newInventory && !isFormPage) {
-        currentInventory.innerHTML = newInventory.innerHTML;
+        currentInventory.replaceChildren(...Array.from(newInventory.childNodes, (node) => node.cloneNode(true)));
         updateInventoryLabelBatchState();
       } else {
         // Live Refresh Table Bodies (Sales, Cashbook, URD, Customers, Rates)
         const currentTable = document.querySelector('.table-wrap table tbody');
         const newTable = newDoc.querySelector('.table-wrap table tbody');
         if (currentTable && newTable && !isFormPage) {
-          currentTable.innerHTML = newTable.innerHTML;
+          currentTable.replaceChildren(...Array.from(newTable.childNodes, (node) => node.cloneNode(true)));
         }
       }
 
@@ -1730,7 +1773,7 @@ function updateInventoryLabelBatchState() {
       const currentStats = document.querySelector('.stats-grid');
       const newStats = newDoc.querySelector('.stats-grid');
       if (currentStats && newStats) {
-        currentStats.innerHTML = newStats.innerHTML;
+        currentStats.replaceChildren(...Array.from(newStats.childNodes, (node) => node.cloneNode(true)));
       }
 
       // 3. Live Refresh Dashboard Breakdown Panels
@@ -1739,7 +1782,7 @@ function updateInventoryLabelBatchState() {
       if (currentPanels.length > 0 && newPanels.length === currentPanels.length) {
         currentPanels.forEach((panel, idx) => {
           if (!panel.querySelector('form')) {
-            panel.innerHTML = newPanels[idx].innerHTML;
+            panel.replaceChildren(...Array.from(newPanels[idx].childNodes, (node) => node.cloneNode(true)));
           }
         });
       }
@@ -1748,7 +1791,7 @@ function updateInventoryLabelBatchState() {
       const currentCount = document.querySelector('.page-header .eyebrow, .page-header small');
       const newCount = newDoc.querySelector('.page-header .eyebrow, .page-header small');
       if (currentCount && newCount) {
-        currentCount.innerHTML = newCount.innerHTML;
+        currentCount.replaceChildren(...Array.from(newCount.childNodes, (node) => node.cloneNode(true)));
       }
 
       // Visual flash indicator
@@ -1835,8 +1878,8 @@ function updateInventoryLabelBatchState() {
 
     else if (type === 'INVENTORY_CHANGED') {
       // If Batch Modal is open, reload items in real-time
-      const batchModal = document.getElementById('batch-modal');
-      const docInput = document.getElementById('batchDocNo');
+      const batchModal = document.getElementById('batchPieceModal');
+      const docInput = document.getElementById('batchDocNoInput');
       if (batchModal && batchModal.style.display !== 'none' && docInput && docInput.value) {
         const currentDoc = docInput.value.trim();
         if (!payload.batchDocNo || payload.batchDocNo === currentDoc) {
@@ -1899,7 +1942,9 @@ function updateInventoryLabelBatchState() {
     connect();
   }
   pollSharedDatabaseRevision();
-  setInterval(pollSharedDatabaseRevision, 10000);
+  // Keep multiple shop PCs and mobile clients visibly in sync without
+  // continuously reloading heavy pages.
+  setInterval(pollSharedDatabaseRevision, 3000);
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) pollSharedDatabaseRevision();
   });

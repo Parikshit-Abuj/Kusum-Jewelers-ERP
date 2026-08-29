@@ -1,12 +1,17 @@
 const mysql = require('mysql2/promise');
 const mysqlCore = require('mysql2');
 const crypto = require('crypto');
+const fs = require('fs');
+const fsPromises = require('fs/promises');
+const os = require('os');
 const path = require('path');
+const { once } = require('events');
 const { runBundledMigrations } = require('./shop-provisioning');
-const { dateInput } = require('./helpers');
+const { dateInput, localDateParts, localTimeZoneName } = require('./helpers');
 
 const KNOWN_ERP_TABLES = new Set([
   '_prisma_migrations',
+  'AppSession',
   'BarcodeSequence',
   'CashbookEntry',
   'Customer',
@@ -29,37 +34,41 @@ const KNOWN_ERP_TABLES = new Set([
 ]);
 
 const CURRENT_ERP_TABLES = [
-  '_prisma_migrations', 'BarcodeSequence', 'CashbookEntry', 'Customer',
+  '_prisma_migrations', 'AppSession', 'BarcodeSequence', 'CashbookEntry', 'Customer',
   'CustomerLedger', 'DailyRate', 'DocumentSequence', 'ItemName', 'Product',
   'Sale', 'SaleItem', 'StockMovement', 'SyncRevision', 'UrdPurchase'
 ];
 
-const REQUIRED_BACKUP_TABLES = [...CURRENT_ERP_TABLES];
+// These six tables existed in the first ERP schema and are sufficient to
+// identify a complete historical business backup. Bundled migrations recreate
+// newer tables after the old snapshot is restored.
+const REQUIRED_BACKUP_TABLES = [
+  '_prisma_migrations', 'Customer', 'Product', 'Sale', 'SaleItem', 'StockMovement'
+];
+const LEGACY_STABLE_COUNT_TABLES = ['Customer', 'Product', 'Sale', 'SaleItem'];
 
 const ERP_SCHEMA_COLUMNS = {
   _prisma_migrations: ['id', 'checksum', 'finished_at', 'migration_name', 'logs', 'rolled_back_at', 'started_at', 'applied_steps_count'],
+  AppSession: ['id', 'data', 'expiresAt', 'createdAt', 'updatedAt'],
   BarcodeSequence: ['prefix', 'lastNumber', 'updatedAt'],
-  CashbookEntry: ['id', 'entryDate', 'type', 'paymentMethod', 'description', 'amount', 'reference', 'notes', 'customerId', 'syncLedger', 'createdAt'],
+  CashbookEntry: ['id', 'entryDate', 'type', 'paymentMethod', 'description', 'amount', 'reference', 'notes', 'customerId', 'saleId', 'urdPurchaseId', 'syncLedger', 'createdAt'],
   Customer: ['id', 'name', 'phone', 'email', 'address', 'panNumber', 'createdAt', 'updatedAt'],
-  CustomerLedger: ['id', 'customerId', 'saleId', 'type', 'amount', 'paymentMethod', 'reference', 'note', 'createdAt'],
+  CustomerLedger: ['id', 'customerId', 'saleId', 'cashbookEntryId', 'type', 'amount', 'paymentMethod', 'reference', 'note', 'createdAt'],
   DailyRate: ['id', 'rateDate', 'gold22k', 'gold24k', 'silver', 'note', 'createdAt', 'updatedAt'],
   DocumentSequence: ['key', 'lastNumber', 'updatedAt'],
   ItemName: ['id', 'name', 'category', 'createdAt'],
   Product: ['id', 'barcode', 'sku', 'name', 'category', 'metal', 'purity', 'grossWeight', 'stoneWeight', 'netWeight', 'quantity', 'reorderLevel', 'purchasePrice', 'sellingPrice', 'makingChargePerGram', 'makingChargeType', 'makingChargeValue', 'location', 'batchDocNo', 'notes', 'status', 'createdAt', 'updatedAt'],
-  Sale: ['id', 'invoiceNumber', 'customerId', 'customerPan', 'saleDate', 'subtotal', 'discount', 'gstRate', 'gstAmount', 'total', 'urdOffset', 'paid', 'cashPaid', 'upiPaid', 'balance', 'paymentMethod', 'notes', 'createdAt', 'updatedAt'],
+  Sale: ['id', 'invoiceNumber', 'customerId', 'customerPan', 'saleDate', 'subtotal', 'discount', 'gstRate', 'gstAmount', 'total', 'urdOffset', 'paid', 'cashPaid', 'upiPaid', 'cardPaid', 'bankPaid', 'balance', 'paymentMethod', 'notes', 'createdAt', 'updatedAt'],
   SaleItem: ['id', 'saleId', 'productId', 'productBarcode', 'productSku', 'productName', 'productMetal', 'productPurity', 'grossWeight', 'quantity', 'weight', 'unitPrice', 'metalRate', 'metalAmount', 'makingCharge', 'makingChargeType', 'makingChargeValue', 'taxableAmount', 'lineTotal', 'hsnCode', 'huidCode'],
   StockMovement: ['id', 'productId', 'productBarcode', 'productSku', 'productName', 'productMetal', 'productPurity', 'netWeight', 'type', 'quantity', 'note', 'createdAt'],
   SyncRevision: ['id', 'revision', 'updatedAt'],
   UrdPurchase: ['id', 'purchaseNumber', 'customerId', 'purchaseDate', 'metal', 'purity', 'grossWeight', 'netWeight', 'ratePerGram', 'totalAmount', 'saleOffset', 'paid', 'paymentMethod', 'description', 'notes', 'saleId', 'createdAt', 'updatedAt']
 };
 
-function indiaTimestamp(value = new Date()) {
-  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
-  }).formatToParts(value).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+function windowsTimestamp(value = new Date()) {
+  const parts = localDateParts(value);
   return {
-    display: `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second} IST`,
+    display: `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second} ${localTimeZoneName(value)}`,
     filenameTime: `${parts.hour}${parts.minute}${parts.second}`
   };
 }
@@ -79,6 +88,148 @@ function parseDatabaseConnection(databaseUrl) {
     };
   } catch (error) {
     throw new Error(`Invalid DATABASE_URL configured: ${error.message || error}`);
+  }
+}
+
+function sqlValue(value) {
+  if (value === null || value === undefined) return 'NULL';
+  if (value instanceof Date) return mysqlCore.escape(value.toISOString().slice(0, 19).replace('T', ' '));
+  if (Buffer.isBuffer(value)) return `0x${value.toString('hex')}`;
+  if (typeof value === 'object') return mysqlCore.escape(JSON.stringify(value));
+  return mysqlCore.escape(value);
+}
+
+async function writeStreamChunk(stream, value) {
+  if (stream.write(value, 'utf8')) return;
+  await once(stream, 'drain');
+}
+
+/**
+ * Writes the SQL backup incrementally to disk. This is the production download
+ * path: years of shop rows no longer have to coexist as one giant JS string.
+ */
+async function generateSqlBackupFile(databaseUrl, destinationDirectory = null) {
+  const config = parseDatabaseConnection(databaseUrl);
+  const connection = await mysql.createConnection({
+    host: config.host, port: config.port, user: config.username, password: config.password,
+    database: config.database, charset: 'utf8mb4', dateStrings: true
+  });
+  const temporaryDirectory = destinationDirectory
+    ? path.resolve(destinationDirectory)
+    : await fsPromises.mkdtemp(path.join(os.tmpdir(), 'kusum-erp-sql-'));
+  await fsPromises.mkdir(temporaryDirectory, { recursive: true });
+  const now = new Date();
+  const timestamp = windowsTimestamp(now);
+  const filename = `kusum-erp-backup-${dateInput(now)}-${timestamp.filenameTime}.sql`;
+  const filePath = path.join(temporaryDirectory, `${crypto.randomUUID()}-${filename}`);
+  const output = fs.createWriteStream(filePath, { encoding: 'utf8', flags: 'wx' });
+  const hash = crypto.createHash('sha256');
+  let snapshotStarted = false;
+  let streamEnded = false;
+
+  const writeProtected = async (value) => {
+    hash.update(value, 'utf8');
+    await writeStreamChunk(output, value);
+  };
+
+  try {
+    await connection.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+    await connection.query('START TRANSACTION WITH CONSISTENT SNAPSHOT');
+    snapshotStarted = true;
+    const [tableRows] = await connection.query("SHOW FULL TABLES WHERE Table_type = 'BASE TABLE'");
+    const tableKey = Object.keys(tableRows[0] || {})[0];
+    const tables = tableRows.map((row) => canonicalTableName(row[tableKey])).filter(Boolean);
+    const missing = CURRENT_ERP_TABLES.filter((table) => !tables.includes(table));
+    if (missing.length) throw new Error(`The ERP schema is incomplete and cannot be backed up: ${missing.join(', ')} missing. Restart the Main database PC ERP to apply updates first.`);
+
+    await writeProtected([
+      '-- ========================================================',
+      '-- Kusum ERP — Full MySQL Database Backup',
+      `-- Database: ${config.database}`,
+      `-- Backup Date & Time: ${timestamp.display}`,
+      '-- Compatible with: MySQL Workbench, mysqldump, and Kusum ERP',
+      '-- Backup Format: 2',
+      '-- ========================================================', '',
+      'SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT;',
+      'SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS;',
+      'SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION;',
+      'SET NAMES utf8mb4;',
+      'SET @OLD_TIME_ZONE=@@TIME_ZONE;',
+      "SET TIME_ZONE='+00:00';",
+      'SET @OLD_UNIQUE_CHECKS=@@UNIQUE_CHECKS, UNIQUE_CHECKS=0;',
+      'SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0;',
+      "SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO';",
+      'SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0;', ''
+    ].join('\n'));
+
+    const rowCounts = {};
+    for (const table of tables) {
+      await writeProtected(`\n-- --------------------------------------------------------\n-- Structure and Data for table \`${table}\`\n-- --------------------------------------------------------\n\nDROP TABLE IF EXISTS \`${table}\`;\n`);
+      const [[createResult]] = await connection.query(`SHOW CREATE TABLE \`${table}\``);
+      await writeProtected(`${createResult['Create Table']};\n\n`);
+
+      const [[countRow]] = table === 'AppSession'
+        ? [[{ rowCount: 0 }]]
+        : await connection.query(`SELECT COUNT(*) AS rowCount FROM \`${table}\``);
+      const rowCount = Number(countRow.rowCount || 0);
+      rowCounts[table] = rowCount;
+      if (!rowCount) continue;
+
+      const [columnRows] = await connection.query(`SHOW COLUMNS FROM \`${table}\``);
+      const columns = columnRows.map((column) => column.Field);
+      const columnList = columns.map((column) => `\`${column}\``).join(', ');
+      await writeProtected(`LOCK TABLES \`${table}\` WRITE;\n`);
+      const batchSize = 500;
+      for (let offset = 0; offset < rowCount; offset += batchSize) {
+        const [rows] = await connection.query(`SELECT * FROM \`${table}\` LIMIT ? OFFSET ?`, [batchSize, offset]);
+        if (!rows.length) throw new Error(`The consistent backup snapshot ended early while reading ${table}.`);
+        const values = rows.map((row) => `(${columns.map((column) => sqlValue(row[column])).join(', ')})`);
+        await writeProtected(`INSERT INTO \`${table}\` (${columnList}) VALUES\n${values.join(',\n')};\n`);
+      }
+      await writeProtected('UNLOCK TABLES;\n\n');
+    }
+
+    const manifest = Buffer.from(JSON.stringify({ formatVersion: 2, tables: rowCounts }), 'utf8').toString('base64');
+    await writeProtected(`\n-- Kusum ERP Backup Manifest: ${manifest}\n`);
+    const backupHash = hash.digest('hex');
+    await writeStreamChunk(output, [
+      `-- Kusum ERP Backup SHA256: ${backupHash}`, '',
+      '-- --------------------------------------------------------',
+      '-- Restore Environment Variables',
+      '-- --------------------------------------------------------',
+      'SET TIME_ZONE=@OLD_TIME_ZONE;',
+      'SET SQL_MODE=@OLD_SQL_MODE;',
+      'SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS;',
+      'SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS;',
+      'SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT;',
+      'SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS;',
+      'SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION;',
+      'SET SQL_NOTES=@OLD_SQL_NOTES;', '',
+      '-- End of Kusum ERP Backup'
+    ].join('\n'));
+    output.end();
+    await once(output, 'finish');
+    streamEnded = true;
+    await connection.commit();
+    snapshotStarted = false;
+    return { filePath, directory: temporaryDirectory, filename, tableCount: tables.length };
+  } catch (error) {
+    output.destroy();
+    await fsPromises.rm(filePath, { force: true }).catch(() => {});
+    if (!destinationDirectory) await fsPromises.rm(temporaryDirectory, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  } finally {
+    if (!streamEnded) output.destroy();
+    if (snapshotStarted) await connection.rollback().catch(() => {});
+    await connection.end();
+  }
+}
+
+async function cleanupSqlBackupFile(backup) {
+  if (!backup) return;
+  await fsPromises.rm(backup.filePath, { force: true }).catch(() => {});
+  if (backup.directory && path.basename(backup.directory).startsWith('kusum-erp-sql-')) {
+    await fsPromises.rm(backup.directory, { recursive: true, force: true }).catch(() => {});
   }
 }
 
@@ -119,7 +270,7 @@ async function generateSqlBackup(databaseUrl) {
     }
 
     const now = new Date();
-    const timestamp = indiaTimestamp(now);
+    const timestamp = windowsTimestamp(now);
     const header = [
       '-- ========================================================',
       '-- Kusum ERP — Full MySQL Database Backup',
@@ -156,7 +307,12 @@ async function generateSqlBackup(databaseUrl) {
       sql += `${createSql};\n\n`;
 
       // Fetch all rows in batches
-      const [rows] = await connection.query(`SELECT * FROM \`${table}\``);
+      // Login sessions are runtime-only and must never be copied to another PC
+      // or revived after a disaster restore. Preserve the table schema but
+      // intentionally export it empty.
+      const [rows] = table === 'AppSession'
+        ? [[]]
+        : await connection.query(`SELECT * FROM \`${table}\``);
       rowCounts[table] = rows.length;
       if (rows.length > 0) {
         sql += `LOCK TABLES \`${table}\` WRITE;\n`;
@@ -318,10 +474,9 @@ function validateSqlBackup(sqlContent) {
     if (manifest?.formatVersion !== 2 || !manifest.tables || typeof manifest.tables !== 'object') {
       throw new Error('The SQL backup manifest is incomplete. Download the backup again.');
     }
-    for (const table of CURRENT_ERP_TABLES) {
-      if (!Number.isInteger(manifest.tables[table]) || manifest.tables[table] < 0) {
-        throw new Error(`The SQL backup manifest is missing the row count for ${table}.`);
-      }
+    for (const [tableName, rowCount] of Object.entries(manifest.tables)) {
+      if (!canonicalTableName(tableName)) throw new Error(`The SQL backup manifest contains an unknown table: ${tableName}.`);
+      if (!Number.isInteger(rowCount) || rowCount < 0) throw new Error(`The SQL backup manifest has an invalid row count for ${tableName}.`);
     }
   }
 
@@ -334,11 +489,199 @@ function validateSqlBackup(sqlContent) {
       throw new Error(`The SQL backup is incomplete: table ${table} is missing.`);
     }
   }
+  if (manifest) {
+    for (const table of tables.created) {
+      if (!Object.hasOwn(manifest.tables, table)) throw new Error(`The SQL backup manifest is missing the row count for ${table}.`);
+    }
+  }
 
-  return { normalized, statements, tables, manifest };
+  const isCurrentSchemaBackup = CURRENT_ERP_TABLES.every((table) => tables.created.has(table));
+  return { normalized, statements, tables, manifest, isCurrentSchemaBackup };
 }
 
-async function executeRestoreStatements(databaseUrl, statements) {
+// Parse one SQL statement at a time from disk. Memory use is bounded by the
+// largest individual INSERT batch instead of the size of the whole backup.
+async function forEachSqlFileStatement(filePath, handler) {
+  const input = fs.createReadStream(filePath, { encoding: 'utf8', highWaterMark: 256 * 1024 });
+  let buffer = '';
+  let current = '';
+  let inString = false;
+  let quoteChar = '';
+  let inLineComment = false;
+  let inBlockComment = false;
+  let firstText = true;
+
+  const consume = async (final = false) => {
+    let index = 0;
+    while (index < buffer.length) {
+      if (!final && index + 1 >= buffer.length) break;
+      const char = buffer[index];
+      const next = buffer[index + 1] || '';
+
+      if (firstText) {
+        firstText = false;
+        if (char === '\uFEFF') { index += 1; continue; }
+      }
+      if (inLineComment) {
+        index += 1;
+        if (char === '\n') { inLineComment = false; current += '\n'; }
+        continue;
+      }
+      if (inBlockComment) {
+        if (char === '*' && next === '/') { inBlockComment = false; index += 2; }
+        else index += 1;
+        continue;
+      }
+      if (inString) {
+        current += char;
+        if (char === '\\') {
+          if (!next && !final) break;
+          if (next) { current += next; index += 2; continue; }
+        } else if (char === quoteChar) {
+          if (next === quoteChar) { current += next; index += 2; continue; }
+          inString = false;
+          quoteChar = '';
+        }
+        index += 1;
+        continue;
+      }
+      if (char === '-' && next === '-') { inLineComment = true; index += 2; continue; }
+      if (char === '#') { inLineComment = true; index += 1; continue; }
+      if (char === '/' && next === '*') { inBlockComment = true; index += 2; continue; }
+      if (char === "'" || char === '"' || char === '`') {
+        inString = true;
+        quoteChar = char;
+        current += char;
+        index += 1;
+        continue;
+      }
+      if (char === ';') {
+        const statement = current.trim();
+        current = '';
+        index += 1;
+        if (statement) await handler(statement);
+        continue;
+      }
+      current += char;
+      index += 1;
+    }
+    buffer = buffer.slice(index);
+  };
+
+  for await (const chunk of input) {
+    buffer += chunk;
+    await consume(false);
+  }
+  await consume(true);
+  if (inString || inBlockComment) throw new Error('The SQL backup ends inside an unfinished string or comment.');
+  const finalStatement = current.trim();
+  if (finalStatement) await handler(finalStatement);
+}
+
+async function inspectSqlBackupFile(filePath) {
+  const marker = Buffer.from('-- Kusum ERP Backup SHA256:', 'utf8');
+  const input = fs.createReadStream(filePath, { highWaterMark: 256 * 1024 });
+  const hash = crypto.createHash('sha256');
+  const firstParts = [];
+  let firstLength = 0;
+  let tail = Buffer.alloc(0);
+  let pending = Buffer.alloc(0);
+  let markerFound = false;
+  let firstChunk = true;
+  let fileBytes = 0;
+
+  for await (let chunk of input) {
+    if (firstChunk) {
+      firstChunk = false;
+      if (chunk.length >= 3 && chunk[0] === 0xef && chunk[1] === 0xbb && chunk[2] === 0xbf) chunk = chunk.subarray(3);
+    }
+    fileBytes += chunk.length;
+    if (firstLength < 64 * 1024) {
+      const portion = chunk.subarray(0, Math.min(chunk.length, 64 * 1024 - firstLength));
+      firstParts.push(portion);
+      firstLength += portion.length;
+    }
+    tail = Buffer.concat([tail, chunk]);
+    if (tail.length > 128 * 1024) tail = tail.subarray(tail.length - 128 * 1024);
+
+    if (!markerFound) {
+      const combined = Buffer.concat([pending, chunk]);
+      const markerIndex = combined.indexOf(marker);
+      if (markerIndex >= 0) {
+        hash.update(combined.subarray(0, markerIndex));
+        markerFound = true;
+        pending = Buffer.alloc(0);
+      } else {
+        const keep = Math.min(marker.length - 1, combined.length);
+        hash.update(combined.subarray(0, combined.length - keep));
+        pending = combined.subarray(combined.length - keep);
+      }
+    }
+  }
+  if (!fileBytes) throw new Error('The uploaded SQL backup file is empty.');
+  if (!markerFound) hash.update(pending);
+
+  const header = Buffer.concat(firstParts).toString('utf8');
+  const ending = tail.toString('utf8');
+  if (!/--\s*Kusum ERP\s+[^\r\n]*Full MySQL Database Backup/i.test(header)) {
+    throw new Error('This is not a Kusum ERP SQL backup. Download a fresh backup from Data management.');
+  }
+  if (!/--\s*End of Kusum ERP Backup\s*$/i.test(ending.trim())) {
+    throw new Error('The SQL backup is incomplete or truncated. Download it again before restoring.');
+  }
+
+  const format2 = /-- Backup Format: 2\s*$/im.test(header);
+  const manifestMatch = ending.match(/-- Kusum ERP Backup Manifest: ([A-Za-z0-9+/=]+)\r?\n-- Kusum ERP Backup SHA256: ([a-f0-9]{64})/i);
+  if (format2 && !manifestMatch) throw new Error('The SQL backup integrity information is missing. Download the backup again.');
+  let manifest = null;
+  if (manifestMatch) {
+    const actualHash = hash.digest('hex');
+    if (actualHash.toLowerCase() !== manifestMatch[2].toLowerCase()) {
+      throw new Error('The SQL backup failed its SHA-256 integrity check. The file is incomplete or was changed.');
+    }
+    try {
+      manifest = JSON.parse(Buffer.from(manifestMatch[1], 'base64').toString('utf8'));
+    } catch (_) {
+      throw new Error('The SQL backup manifest is invalid. Download the backup again.');
+    }
+    if (manifest?.formatVersion !== 2 || !manifest.tables || typeof manifest.tables !== 'object') {
+      throw new Error('The SQL backup manifest is incomplete. Download the backup again.');
+    }
+    for (const [tableName, rowCount] of Object.entries(manifest.tables)) {
+      if (!canonicalTableName(tableName)) throw new Error(`The SQL backup manifest contains an unknown table: ${tableName}.`);
+      if (!Number.isInteger(rowCount) || rowCount < 0) throw new Error(`The SQL backup manifest has an invalid row count for ${tableName}.`);
+    }
+  }
+  return { manifest };
+}
+
+async function validateSqlBackupFile(filePath) {
+  const inspected = await inspectSqlBackupFile(filePath);
+  const tables = { created: new Set(), dropped: new Set(), inserted: new Set() };
+  let statementCount = 0;
+  await forEachSqlFileStatement(filePath, async (statement) => {
+    validateBackupStatement(statement, tables);
+    statementCount += 1;
+  });
+  for (const table of REQUIRED_BACKUP_TABLES) {
+    if (!tables.created.has(table) || !tables.dropped.has(table)) {
+      throw new Error(`The SQL backup is incomplete: table ${table} is missing.`);
+    }
+  }
+  if (inspected.manifest) {
+    for (const table of tables.created) {
+      if (!Object.hasOwn(inspected.manifest.tables, table)) throw new Error(`The SQL backup manifest is missing the row count for ${table}.`);
+    }
+  }
+  return {
+    ...inspected,
+    tables,
+    statementCount,
+    isCurrentSchemaBackup: CURRENT_ERP_TABLES.every((table) => tables.created.has(table))
+  };
+}
+
+async function executeRestoreStatements(databaseUrl, statements, { resetSchema = false } = {}) {
   const config = parseDatabaseConnection(databaseUrl);
   const connection = await mysql.createConnection({
     host: config.host,
@@ -359,6 +702,15 @@ async function executeRestoreStatements(databaseUrl, statements) {
       SET @KUSUM_OLD_SQL_MODE = @@SQL_MODE, SQL_MODE = 'NO_AUTO_VALUE_ON_ZERO';
     `);
 
+    if (resetSchema) {
+      // Remove current-only tables before loading an older snapshot. Otherwise
+      // records from the database being replaced could survive in tables that
+      // did not yet exist when the historical backup was created.
+      for (const table of [...KNOWN_ERP_TABLES]) {
+        await connection.query(`DROP TABLE IF EXISTS ${mysqlCore.escapeId(table)}`);
+      }
+    }
+
     for (const statement of statements) {
       if (!statement.trim()) continue;
       await connection.query(statement);
@@ -376,7 +728,47 @@ async function executeRestoreStatements(databaseUrl, statements) {
   }
 }
 
-async function verifyRestoredDatabase(databaseUrl, expectedManifest = null) {
+async function executeRestoreFile(databaseUrl, filePath, { resetSchema = false } = {}) {
+  const config = parseDatabaseConnection(databaseUrl);
+  const connection = await mysql.createConnection({
+    host: config.host,
+    port: config.port,
+    user: config.username,
+    password: config.password,
+    database: config.database,
+    multipleStatements: true,
+    connectTimeout: 30000,
+    charset: 'utf8mb4'
+  });
+  let executedCount = 0;
+  try {
+    await connection.query(`
+      SET @KUSUM_OLD_FOREIGN_KEY_CHECKS = @@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS = 0;
+      SET @KUSUM_OLD_UNIQUE_CHECKS = @@UNIQUE_CHECKS, UNIQUE_CHECKS = 0;
+      SET @KUSUM_OLD_SQL_MODE = @@SQL_MODE, SQL_MODE = 'NO_AUTO_VALUE_ON_ZERO';
+    `);
+    if (resetSchema) {
+      for (const table of [...KNOWN_ERP_TABLES]) {
+        await connection.query(`DROP TABLE IF EXISTS ${mysqlCore.escapeId(table)}`);
+      }
+    }
+    await forEachSqlFileStatement(filePath, async (statement) => {
+      if (!statement.trim()) return;
+      await connection.query(statement);
+      executedCount += 1;
+    });
+    await connection.query(`
+      SET FOREIGN_KEY_CHECKS = IFNULL(@KUSUM_OLD_FOREIGN_KEY_CHECKS, 1);
+      SET UNIQUE_CHECKS = IFNULL(@KUSUM_OLD_UNIQUE_CHECKS, 1);
+      SET SQL_MODE = IFNULL(@KUSUM_OLD_SQL_MODE, '');
+    `);
+    return executedCount;
+  } finally {
+    await connection.end();
+  }
+}
+
+async function verifyRestoredDatabase(databaseUrl, expectedManifest = null, { legacyBackup = false } = {}) {
   const config = parseDatabaseConnection(databaseUrl);
   const connection = await mysql.createConnection({
     host: config.host,
@@ -410,6 +802,9 @@ async function verifyRestoredDatabase(databaseUrl, expectedManifest = null) {
       UNION ALL SELECT 'CustomerLedger.customerId', COUNT(*) FROM \`CustomerLedger\` child LEFT JOIN \`Customer\` parent ON parent.id = child.customerId WHERE parent.id IS NULL
       UNION ALL SELECT 'CustomerLedger.saleId', COUNT(*) FROM \`CustomerLedger\` child LEFT JOIN \`Sale\` parent ON parent.id = child.saleId WHERE child.saleId IS NOT NULL AND parent.id IS NULL
       UNION ALL SELECT 'CashbookEntry.customerId', COUNT(*) FROM \`CashbookEntry\` child LEFT JOIN \`Customer\` parent ON parent.id = child.customerId WHERE child.customerId IS NOT NULL AND parent.id IS NULL
+      UNION ALL SELECT 'CashbookEntry.saleId', COUNT(*) FROM \`CashbookEntry\` child LEFT JOIN \`Sale\` parent ON parent.id = child.saleId WHERE child.saleId IS NOT NULL AND parent.id IS NULL
+      UNION ALL SELECT 'CashbookEntry.urdPurchaseId', COUNT(*) FROM \`CashbookEntry\` child LEFT JOIN \`UrdPurchase\` parent ON parent.id = child.urdPurchaseId WHERE child.urdPurchaseId IS NOT NULL AND parent.id IS NULL
+      UNION ALL SELECT 'CustomerLedger.cashbookEntryId', COUNT(*) FROM \`CustomerLedger\` child LEFT JOIN \`CashbookEntry\` parent ON parent.id = child.cashbookEntryId WHERE child.cashbookEntryId IS NOT NULL AND parent.id IS NULL
       UNION ALL SELECT 'UrdPurchase.customerId', COUNT(*) FROM \`UrdPurchase\` child LEFT JOIN \`Customer\` parent ON parent.id = child.customerId WHERE parent.id IS NULL
       UNION ALL SELECT 'UrdPurchase.saleId', COUNT(*) FROM \`UrdPurchase\` child LEFT JOIN \`Sale\` parent ON parent.id = child.saleId WHERE child.saleId IS NOT NULL AND parent.id IS NULL
     `);
@@ -419,7 +814,10 @@ async function verifyRestoredDatabase(databaseUrl, expectedManifest = null) {
     }
 
     if (expectedManifest?.tables) {
-      for (const table of CURRENT_ERP_TABLES) {
+      const countTables = legacyBackup
+        ? LEGACY_STABLE_COUNT_TABLES.filter((table) => Object.hasOwn(expectedManifest.tables, table))
+        : CURRENT_ERP_TABLES;
+      for (const table of countTables) {
         const [[count]] = await connection.query(`SELECT COUNT(*) AS rowCount FROM ${mysqlCore.escapeId(table)}`);
         const expected = Number(expectedManifest.tables[table]);
         if (Number(count.rowCount) !== expected) {
@@ -438,16 +836,19 @@ async function verifyRestoredDatabase(databaseUrl, expectedManifest = null) {
  * Restores a backup created by Kusum ERP. The file is fully validated before
  * the current tables are touched. A private in-memory safety backup is created
  * first and is restored automatically if execution, migration, or integrity
- * verification fails.
+ * verification fails. This string API remains for compatibility with internal
+ * audits; the production upload route uses importSqlBackupFile below.
  */
 async function importSqlBackup(databaseUrl, sqlContent, appRoot) {
   const validated = validateSqlBackup(sqlContent);
-  const safetyBackup = await generateSqlBackup(databaseUrl);
+  // Keep the automatic pre-restore snapshot on disk instead of duplicating a
+  // potentially large shop database in process memory.
+  const safetyBackup = await generateSqlBackupFile(databaseUrl);
 
   try {
-    const executedStatements = await executeRestoreStatements(databaseUrl, validated.statements);
+    const executedStatements = await executeRestoreStatements(databaseUrl, validated.statements, { resetSchema: true });
     if (appRoot) await runBundledMigrations(appRoot, databaseUrl);
-    const verified = await verifyRestoredDatabase(databaseUrl, validated.manifest);
+    const verified = await verifyRestoredDatabase(databaseUrl, validated.manifest, { legacyBackup: !validated.isCurrentSchemaBackup });
     return {
       success: true,
       executedStatements,
@@ -456,13 +857,48 @@ async function importSqlBackup(databaseUrl, sqlContent, appRoot) {
     };
   } catch (restoreError) {
     try {
-      const recovery = validateSqlBackup(safetyBackup.sql);
-      await executeRestoreStatements(databaseUrl, recovery.statements);
-      await verifyRestoredDatabase(databaseUrl, recovery.manifest);
+      const recoverySql = await fsPromises.readFile(safetyBackup.filePath, 'utf8');
+      const recovery = validateSqlBackup(recoverySql);
+      await executeRestoreStatements(databaseUrl, recovery.statements, { resetSchema: true });
+      await verifyRestoredDatabase(databaseUrl, recovery.manifest, { legacyBackup: !recovery.isCurrentSchemaBackup });
     } catch (recoveryError) {
       throw new Error(`SQL import failed: ${restoreError.message || restoreError}. Automatic recovery also failed: ${recoveryError.message || recoveryError}. Restore the latest downloaded backup before using the ERP.`);
     }
     throw new Error(`SQL import failed: ${restoreError.message || restoreError}. Existing ERP data was restored automatically.`);
+  } finally {
+    await cleanupSqlBackupFile(safetyBackup);
+  }
+}
+
+/**
+ * Bounded-memory production restore for large uploaded backups. Validation and
+ * execution are separate file passes, so no current tables are touched until
+ * the complete file, allowlist, manifest and SHA-256 have all been accepted.
+ */
+async function importSqlBackupFile(databaseUrl, filePath, appRoot) {
+  const validated = await validateSqlBackupFile(filePath);
+  const safetyBackup = await generateSqlBackupFile(databaseUrl);
+  try {
+    const executedStatements = await executeRestoreFile(databaseUrl, filePath, { resetSchema: true });
+    if (appRoot) await runBundledMigrations(appRoot, databaseUrl);
+    const verified = await verifyRestoredDatabase(databaseUrl, validated.manifest, { legacyBackup: !validated.isCurrentSchemaBackup });
+    return {
+      success: true,
+      executedStatements,
+      tableCount: verified.tableCount,
+      tables: verified.tables
+    };
+  } catch (restoreError) {
+    try {
+      const recovery = await validateSqlBackupFile(safetyBackup.filePath);
+      await executeRestoreFile(databaseUrl, safetyBackup.filePath, { resetSchema: true });
+      await verifyRestoredDatabase(databaseUrl, recovery.manifest, { legacyBackup: !recovery.isCurrentSchemaBackup });
+    } catch (recoveryError) {
+      throw new Error(`SQL import failed: ${restoreError.message || restoreError}. Automatic recovery also failed: ${recoveryError.message || recoveryError}. Restore the latest downloaded backup before using the ERP.`);
+    }
+    throw new Error(`SQL import failed: ${restoreError.message || restoreError}. Existing ERP data was restored automatically.`);
+  } finally {
+    await cleanupSqlBackupFile(safetyBackup);
   }
 }
 
@@ -568,8 +1004,12 @@ function splitSqlStatements(sql) {
 
 module.exports = {
   generateSqlBackup,
+  generateSqlBackupFile,
+  cleanupSqlBackupFile,
   importSqlBackup,
+  importSqlBackupFile,
   parseDatabaseConnection,
   splitSqlStatements,
-  validateSqlBackup
+  validateSqlBackup,
+  validateSqlBackupFile
 };

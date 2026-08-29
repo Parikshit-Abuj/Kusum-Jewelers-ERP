@@ -16,7 +16,7 @@
   </form>
 
   <% if (qVal) { %>
-    <p class="filter-result-count"><strong><%= purchaseList.length %></strong> purchase<%= purchaseList.length === 1 ? '' : 's' %> found</p>
+    <p class="filter-result-count"><strong><%= pagination.totalItems %></strong> purchase<%= pagination.totalItems === 1 ? '' : 's' %> found</p>
   <% } %>
 
   <% if (purchaseList.length) { %>
@@ -78,6 +78,7 @@
       </tbody>
     </table>
   </div>
+  <%- include('../_pagination', { pagination }) %>
   <% } else { %>
     <% if (qVal) { %>
     <div class="empty-state compact">

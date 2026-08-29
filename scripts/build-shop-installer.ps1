@@ -24,8 +24,20 @@ if (Test-Path -LiteralPath $outputPath) {
 New-Item -ItemType Directory -Path $payloadPath -Force | Out-Null
 New-Item -ItemType Directory -Path $installerFilesPath -Force | Out-Null
 
-foreach ($item in @('public', 'prisma', 'scripts', 'package.json', 'package-lock.json', '.env.example', 'README.md')) {
+foreach ($item in @('public', 'package.json', 'package-lock.json', '.env.example', 'README.md')) {
   Copy-Item -LiteralPath (Join-Path $projectRoot $item) -Destination $payloadPath -Recurse -Force
+}
+
+# Runtime allowlist: never ship database audit, seed, backfill, test, build or
+# development scripts to the shop PC.
+$payloadPrismaPath = Join-Path $payloadPath 'prisma'
+New-Item -ItemType Directory -Path $payloadPrismaPath -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $projectRoot 'prisma\schema.prisma') -Destination $payloadPrismaPath -Force
+Copy-Item -LiteralPath (Join-Path $projectRoot 'prisma\migrations') -Destination $payloadPrismaPath -Recurse -Force
+$payloadScriptsPath = Join-Path $payloadPath 'scripts'
+New-Item -ItemType Directory -Path $payloadScriptsPath -Force | Out-Null
+foreach ($runtimeScript in @('print-tspl.ps1', 'list-printers.ps1')) {
+  Copy-Item -LiteralPath (Join-Path $projectRoot "scripts\$runtimeScript") -Destination $payloadScriptsPath -Force
 }
 
 # The development workspace exposes Excel libraries through a linked
@@ -62,6 +74,18 @@ if (-not (Test-Path -LiteralPath $generatedClientSource)) { throw 'The generated
 New-Item -ItemType Directory -Path (Split-Path $generatedClientDestination -Parent) -Force | Out-Null
 Copy-Item -LiteralPath $generatedClientSource -Destination $generatedClientDestination -Recurse -Force
 Get-ChildItem -LiteralPath $generatedClientDestination -Filter '*.tmp*' -File -Force | Remove-Item -Force
+
+# Retain only the generated ORM runtime, never Prisma's development CLI or its
+# migration/config download helpers.
+$prismaCli = Join-Path $payloadPath 'node_modules\prisma'
+if (Test-Path -LiteralPath $prismaCli) { Remove-Item -LiteralPath $prismaCli -Recurse -Force }
+$prismaNamespace = Join-Path $payloadPath 'node_modules\@prisma'
+if (Test-Path -LiteralPath $prismaNamespace) {
+  Get-ChildItem -LiteralPath $prismaNamespace -Directory -Force | Where-Object { $_.Name -ne 'client' } | Remove-Item -Recurse -Force
+}
+$deepMerge = Join-Path $payloadPath 'node_modules\deepmerge-ts'
+if (Test-Path -LiteralPath $deepMerge) { Remove-Item -LiteralPath $deepMerge -Recurse -Force }
+if (Test-Path -LiteralPath $prismaCli) { throw 'Unsafe installer: Prisma development CLI remained in the payload.' }
 
 $runtimePath = Join-Path $payloadPath 'runtime'
 New-Item -ItemType Directory -Path $runtimePath -Force | Out-Null

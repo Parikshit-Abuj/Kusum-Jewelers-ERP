@@ -137,10 +137,15 @@ async function main() {
     const customer = await database.customer.create({
       data: { name: 'Automatic Sync Audit Customer', phone: '9000099928' }
     });
+    await database.dailyRate.create({
+      data: { rateDate: '2026-08-28', gold22k: 1000, gold24k: 1100, silver: 100 }
+    });
     const product = await database.product.create({
       data: {
         barcode: 'G22 SYNC QA 1', sku: 'SYNC-WEIGHT-QA-1', name: 'Billing Weight Audit Ring', category: 'Ring',
-        metal: 'GOLD', purity: '22K', grossWeight: 8, stoneWeight: 0, netWeight: 8, quantity: 1,
+        // Legacy releases could retain quantity > 1 on one barcode. The current
+        // invariant must still delete that barcode after it is billed once.
+        metal: 'GOLD', purity: '22K', grossWeight: 8, stoneWeight: 0, netWeight: 8, quantity: 3,
         purchasePrice: 0, sellingPrice: 0, makingChargeType: 'PER_GRAM', makingChargeValue: 100, status: 'AVAILABLE'
       }
     });
@@ -168,6 +173,35 @@ async function main() {
       form: { username: auditUser, password: auditPassword }
     });
     assert(login.status === 302 && cookie, 'Could not authenticate with the isolated audit ERP.');
+    let persistedSessions = 0;
+    for (let attempt = 0; attempt < 20 && persistedSessions < 1; attempt += 1) {
+      persistedSessions = await database.appSession.count();
+      if (persistedSessions < 1) await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert(persistedSessions >= 1, 'Authenticated session was not persisted in MySQL.');
+    for (const route of ['/', '/inventory', '/customers']) {
+      const page = await request(route);
+      assert(page.status === 200, `${route} failed after the performance and pagination changes.`);
+    }
+
+    const editResponse = await request(`/inventory/${product.id}`, {
+      method: 'POST',
+      form: {
+        sku: product.sku, name: product.name, category: product.category,
+        metal: 'GOLD', purity: '22K', grossWeight: 8, stoneWeight: 0, netWeight: 8,
+        purchasePrice: 0, sellingPrice: 1, makingChargeType: 'PER_GRAM', makingChargeValue: 100,
+        status: 'AVAILABLE'
+      }
+    });
+    assert(editResponse.status === 302, `Inventory edit failed with HTTP ${editResponse.status}.`);
+    const recalculatedProduct = await database.product.findUniqueOrThrow({ where: { id: product.id } });
+    assert(Number(recalculatedProduct.sellingPrice) === 8800, `Inventory edit trusted stale submitted price instead of recalculating: ${recalculatedProduct.sellingPrice}.`);
+
+    for (const route of ['/reports', '/sales', '/cashbook', '/item-names', '/urd-purchases', `/customers/${customer.id}`]) {
+      const page = await request(route);
+      const pageBody = await page.text();
+      assert(page.status === 200, `${route} did not render after pagination/query changes (HTTP ${page.status}).\n${pageBody}\n${logs.join('')}`);
+    }
 
     const salesForm = await request('/sales/new');
     const salesHtml = await salesForm.text();
@@ -175,6 +209,7 @@ async function main() {
     assert(/name="weight"[^>]*data-weight/.test(salesHtml), 'Sales form is missing the editable billing weight field.');
     assert(!/name="weight"[^>]*readonly/.test(salesHtml), 'Billing weight is still read-only.');
     assert(!salesHtml.includes('name="syncCashbook"'), 'Sales form still shows an optional cashbook sync field.');
+    assert(salesHtml.includes('name="cardPaid"') && salesHtml.includes('name="bankPaid"'), 'Sales form is missing Card/Bank split-payment inputs.');
 
     const invoiceNumber = '202608289901';
     const saleResponse = await request('/sales', {
@@ -203,6 +238,9 @@ async function main() {
     assert(Number(sale.items[0].metalAmount) === 7125, `Metal value did not use edited weight: ${sale.items[0].metalAmount}.`);
     assert(Number(sale.items[0].makingCharge) === 712.5, `Per-gram making charge did not use edited weight: ${sale.items[0].makingCharge}.`);
     assert(await database.product.findUnique({ where: { id: product.id } }) === null, 'Sold barcode was not removed from inventory.');
+    const saleCredit = await database.customerLedger.findFirst({ where: { saleId: sale.id, type: 'SALE_CREDIT' } });
+    assert(saleCredit && Math.abs(Number(saleCredit.amount) - Number(sale.balance)) < 0.011,
+      'Sale balance due was not synchronized exactly to the customer ledger.');
 
     const saleCashbook = await database.cashbookEntry.findMany({ where: { reference: invoiceNumber } });
     assert(saleCashbook.length === 1 && saleCashbook[0].paymentMethod === 'CASH' && Number(saleCashbook[0].amount) === 5000,
@@ -294,7 +332,10 @@ async function main() {
       urdAutoSynced: true,
       customerReceiptAutoSynced: true,
       customerLinkedCashbookAutoSynced: true,
+      balanceDueSyncedToLedger: true,
+      mysqlSessionStore: true,
       soldBarcodeRemoved: true,
+      legacyMultiQuantityBarcodeRemoved: true,
       invoicePdf: true,
       sqlDownloadRoute: true,
       sqlImportRoute: true,

@@ -31,7 +31,10 @@
   },
   "devDependencies": {
     "@electron/packager": "^20.3.0",
-    "electron": "^30.5.1",
+    "electron": "43.4.1",
     "prisma": "^6.19.1"
+  },
+  "overrides": {
+    "uuid": "11.1.1"
   }
 }

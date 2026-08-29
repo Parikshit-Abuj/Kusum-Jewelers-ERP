@@ -26,9 +26,14 @@
   </div>
 </section>
 
-<% const allItems = typeof items !== 'undefined' && Array.isArray(items) ? items : []; %>
+<% const allItems = typeof items !== 'undefined' && Array.isArray(items) ? items : []; const pager = typeof pagination !== 'undefined' && pagination ? pagination : { totalItems: allItems.length }; %>
 <section class="panel">
-  <div class="panel-heading"><div><h2>All item names</h2><p><%= allItems.length %> registered name<%= allItems.length !== 1 ? 's' : '' %>.</p></div></div>
+  <div class="panel-heading"><div><h2>All item names</h2><p><%= pager.totalItems %> registered name<%= pager.totalItems !== 1 ? 's' : '' %>.</p></div></div>
+  <form class="search-bar" method="get" action="/item-names">
+    <input name="q" value="<%= q %>" placeholder="Search item name or category">
+    <button class="button secondary small" type="submit">Search</button>
+    <% if (q) { %><a class="button ghost small" href="/item-names">Clear</a><% } %>
+  </form>
   <% if (allItems.length) { %>
     <% allItems.forEach((item) => { %>
     <form class="item-name-row" method="post" action="/item-names/<%= item.id %>">
@@ -38,6 +43,7 @@
       <button class="button small ghost" type="submit" formaction="/item-names/<%= item.id %>/delete" onclick="return confirm('Delete this item name?')">✕</button>
     </form>
     <% }) %>
+    <%- include('../_pagination', { pagination }) %>
   <% } else { %>
     <div class="empty-state compact"><span>⊞</span><h3>No item names yet</h3><p>Add your first item name above, or they'll be auto-registered when you save inventory items.</p></div>
   <% } %>

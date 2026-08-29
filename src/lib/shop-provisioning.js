@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const mysql = require('mysql2/promise');
 const mysqlCore = require('mysql2');
+const { hashPassword, hasConfiguredPassword, requiredPassword } = require('./auth-security');
 
 function input(value) {
   return String(value || '').trim();
@@ -26,15 +27,9 @@ function accountName(value, label) {
   return name;
 }
 
-function requiredPassword(value, label) {
-  const password = String(value || '');
-  if (password.length < 8) throw new Error(`${label} must be at least 8 characters.`);
-  return password;
-}
-
 function databasePassword(value) {
   const password = String(value || '');
-  if (password.length < 12) throw new Error('Shared ERP database password must be at least 12 characters. It is used only by this ERP on the main and client PCs.');
+  if (!password) throw new Error('Shared ERP database password is required. It is used only by this ERP on the main and client PCs.');
   return password;
 }
 
@@ -101,6 +96,72 @@ function splitMigrationStatements(sql) {
   return statements;
 }
 
+async function migrationStatementAlreadyApplied(connection, statement, error) {
+  const compact = statement.replace(/\s+/g, ' ').trim();
+  const tableMatch = compact.match(/^(?:CREATE TABLE(?: IF NOT EXISTS)?|ALTER TABLE|CREATE(?: UNIQUE)? INDEX .*? ON)\s+`([^`]+)`/i)
+    || compact.match(/^CREATE(?: UNIQUE)? INDEX\s+`[^`]+`\s+ON\s+`([^`]+)`/i);
+  const table = tableMatch?.[1];
+  if (!table) return false;
+
+  if (error.code === 'ER_TABLE_EXISTS_ERROR' && /^CREATE TABLE/i.test(compact)) {
+    const [rows] = await connection.query(
+      'SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND LOWER(table_name) = LOWER(?) LIMIT 1',
+      [table]
+    );
+    return rows.length === 1;
+  }
+
+  if (error.code === 'ER_DUP_FIELDNAME' && /^ALTER TABLE/i.test(compact)) {
+    const columns = [...compact.matchAll(/ADD COLUMN\s+`([^`]+)`/gi)].map((match) => match[1]);
+    if (!columns.length) return false;
+    const [rows] = await connection.query(
+      'SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND LOWER(table_name) = LOWER(?)',
+      [table]
+    );
+    const found = new Set(rows.map((row) => String(row.COLUMN_NAME || row.column_name).toLowerCase()));
+    // A multi-column ALTER is safe only when every intended column exists.
+    return columns.every((column) => found.has(column.toLowerCase()));
+  }
+
+  if (error.code === 'ER_DUP_KEYNAME') {
+    const indexMatch = compact.match(/^CREATE(?: UNIQUE)? INDEX\s+`([^`]+)`/i);
+    const index = indexMatch?.[1];
+    if (!index) return false;
+    const [rows] = await connection.query(
+      'SELECT 1 FROM information_schema.statistics WHERE table_schema = DATABASE() AND LOWER(table_name) = LOWER(?) AND LOWER(index_name) = LOWER(?) LIMIT 1',
+      [table, index]
+    );
+    return rows.length === 1;
+  }
+
+  if (error.code === 'ER_FK_DUP_NAME') {
+    const constraints = [...compact.matchAll(/ADD CONSTRAINT\s+`([^`]+)`/gi)].map((match) => match[1]);
+    if (!constraints.length) return false;
+    const [rows] = await connection.query(
+      'SELECT constraint_name FROM information_schema.table_constraints WHERE table_schema = DATABASE() AND LOWER(table_name) = LOWER(?) AND constraint_type = \'FOREIGN KEY\'',
+      [table]
+    );
+    const found = new Set(rows.map((row) => String(row.CONSTRAINT_NAME || row.constraint_name).toLowerCase()));
+    return constraints.every((constraint) => found.has(constraint.toLowerCase()));
+  }
+
+  if (error.code === 'ER_CANT_DROP_FIELD_OR_KEY') {
+    const foreignKey = compact.match(/DROP FOREIGN KEY\s+`([^`]+)`/i)?.[1];
+    const index = compact.match(/DROP INDEX\s+`([^`]+)`/i)?.[1];
+    const objectName = foreignKey || index;
+    if (!objectName) return false;
+    const source = foreignKey ? 'information_schema.table_constraints' : 'information_schema.statistics';
+    const column = foreignKey ? 'constraint_name' : 'index_name';
+    const [rows] = await connection.query(
+      `SELECT 1 FROM ${source} WHERE table_schema = DATABASE() AND LOWER(table_name) = LOWER(?) AND LOWER(${column}) = LOWER(?) LIMIT 1`,
+      [table, objectName]
+    );
+    return rows.length === 0;
+  }
+
+  return false;
+}
+
 function printerFormValues(form) {
   const printerMode = String(form.printerMode || 'WINDOWS').trim().toUpperCase() === 'TCP' ? 'TCP' : 'WINDOWS';
   const printerName = input(form.printerName || 'TSC TTP-244 Pro');
@@ -111,13 +172,39 @@ function printerFormValues(form) {
   return { printerMode, printerName, printerHost, printerPort };
 }
 
+const REQUIRED_RUNTIME_SCHEMA = {
+  AppSession: ['id', 'data', 'expiresAt'],
+  Customer: ['id', 'phone', 'panNumber'],
+  Product: ['id', 'barcode', 'batchDocNo', 'makingChargeType', 'makingChargeValue'],
+  Sale: ['id', 'invoiceNumber', 'cashPaid', 'upiPaid', 'cardPaid', 'bankPaid', 'balance'],
+  SaleItem: ['id', 'saleId', 'productBarcode', 'productName', 'weight', 'makingChargeType', 'makingChargeValue'],
+  CashbookEntry: ['id', 'entryDate', 'paymentMethod', 'customerId', 'saleId', 'urdPurchaseId'],
+  CustomerLedger: ['id', 'customerId', 'saleId', 'cashbookEntryId', 'amount'],
+  UrdPurchase: ['id', 'purchaseNumber', 'customerId', 'saleId', 'saleOffset', 'paid'],
+  DocumentSequence: ['key', 'lastNumber'],
+  SyncRevision: ['id', 'revision']
+};
+
+async function verifyRuntimeSchema(connection) {
+  for (const [table, expectedColumns] of Object.entries(REQUIRED_RUNTIME_SCHEMA)) {
+    const [rows] = await connection.query(
+      'SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND LOWER(table_name) = LOWER(?)',
+      [table]
+    );
+    if (!rows.length) throw new Error(`Required ERP table ${table} is missing.`);
+    const columns = new Set(rows.map((row) => String(row.COLUMN_NAME || row.column_name).toLowerCase()));
+    const missing = expectedColumns.filter((column) => !columns.has(column.toLowerCase()));
+    if (missing.length) throw new Error(`ERP table ${table} is incomplete (${missing.join(', ')} missing).`);
+  }
+}
+
 function connectionValues({ host, mysqlPort, database, username, password, appUsername, appPassword, printerMode, printerName, printerHost, printerPort, mode }) {
   return {
     DATABASE_URL: mysqlUrl({ host, port: mysqlPort, username, password, database }),
     PORT: 3000,
     AUTH_USERNAME: appUsername,
-    AUTH_PASSWORD: appPassword,
-    SESSION_SECRET: crypto.randomBytes(48).toString('base64url'),
+    AUTH_PASSWORD_HASH: hashPassword(appPassword),
+    SESSION_SECRET: process.env.SESSION_SECRET || crypto.randomBytes(48).toString('base64url'),
     TSC_PRINTER_MODE: printerMode,
     TSC_PRINTER_NAME: printerName,
     TSC_PRINTER_HOST: printerHost,
@@ -151,14 +238,23 @@ async function runBundledMigrations(appRoot, databaseUrl) {
     for (const migrationName of folders) {
       const sqlPath = path.join(migrationsPath, migrationName, 'migration.sql');
       if (!fs.existsSync(sqlPath)) continue;
-      const [applied] = await connection.query(
-        'SELECT 1 FROM `_prisma_migrations` WHERE `migration_name` = ? AND `finished_at` IS NOT NULL LIMIT 1',
-        [migrationName]
-      );
-      if (applied.length) continue;
-
       const sql = fs.readFileSync(sqlPath, 'utf8');
       const checksum = crypto.createHash('sha256').update(sql).digest('hex');
+      const [applied] = await connection.query(
+        'SELECT `id`, `checksum`, `finished_at`, `rolled_back_at` FROM `_prisma_migrations` WHERE `migration_name` = ? ORDER BY `started_at` DESC',
+        [migrationName]
+      );
+      const completed = applied.find((row) => row.finished_at && !row.rolled_back_at);
+      if (completed) {
+        if (String(completed.checksum || '').toLowerCase() !== checksum.toLowerCase()) {
+          throw new Error(`Bundled migration ${migrationName} was changed after it was installed. Use an intact ERP release before opening the shop database.`);
+        }
+        continue;
+      }
+      if (applied.some((row) => !row.finished_at && !row.rolled_back_at)) {
+        throw new Error(`Migration ${migrationName} has an unfinished earlier attempt. Do not continue billing until the database migration is repaired from a verified backup.`);
+      }
+
       const migrationId = crypto.randomUUID();
       await connection.query(
         'INSERT INTO `_prisma_migrations` (`id`, `checksum`, `migration_name`, `started_at`, `applied_steps_count`) VALUES (?, ?, ?, NOW(3), 0)',
@@ -166,14 +262,12 @@ async function runBundledMigrations(appRoot, databaseUrl) {
       );
       try {
         let appliedSteps = 0;
-        const benignCodes = new Set(['ER_DUP_FIELDNAME', 'ER_TABLE_EXISTS_ERROR', 'ER_DUP_KEYNAME', 'ER_CANT_DROP_FIELD_OR_KEY', 'ER_FK_DUP_NAME']);
         for (const statement of splitMigrationStatements(sql)) {
           try {
             await connection.query(statement);
           } catch (error) {
-            // Continue only past the exact idempotency conflict and still run
-            // every later statement in the migration.
-            if (!benignCodes.has(error.code)) throw error;
+            const safeExistingEffect = await migrationStatementAlreadyApplied(connection, statement, error);
+            if (!safeExistingEffect) throw error;
           }
           appliedSteps += 1;
         }
@@ -186,6 +280,7 @@ async function runBundledMigrations(appRoot, databaseUrl) {
         throw error;
       }
     }
+    await verifyRuntimeSchema(connection);
   } catch (error) {
     throw new Error(`Could not apply the ERP database schema: ${error.message || error}`);
   } finally {
@@ -197,7 +292,7 @@ function writeEnvFile(configPath, values) {
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   const content = [
     '# Created by Kusum Jewelers ERP shop setup. The MySQL administrator password is never saved here.',
-    ...Object.entries(values).map(([key, value]) => `${key}=${JSON.stringify(String(value))}`)
+    ...Object.entries(values).filter(([, value]) => value !== undefined && value !== null).map(([key, value]) => `${key}=${JSON.stringify(String(value))}`)
   ].join('\r\n') + '\r\n';
   const temporary = `${configPath}.${process.pid}.tmp`;
   fs.writeFileSync(temporary, content, { encoding: 'utf8', mode: 0o600 });
@@ -233,7 +328,7 @@ async function verifyClientConnection(databaseUrl, appRoot) {
   let connection;
   try {
     connection = await mysql.createConnection({ uri: databaseUrl, connectTimeout: 12000 });
-    const requiredTables = ['_prisma_migrations', 'Customer', 'Product', 'Sale', 'SaleItem', 'CashbookEntry', 'CustomerLedger', 'UrdPurchase', 'SyncRevision'];
+    const requiredTables = ['_prisma_migrations', ...Object.keys(REQUIRED_RUNTIME_SCHEMA)];
     const [tables] = await connection.query(
       'SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN (?)',
       [requiredTables]
@@ -241,14 +336,24 @@ async function verifyClientConnection(databaseUrl, appRoot) {
     const found = new Set(tables.map((row) => String(row.TABLE_NAME || row.table_name).toLowerCase()));
     const missing = requiredTables.filter((table) => !found.has(table.toLowerCase()));
     if (missing.length) throw new Error(`The selected database is not fully initialized (${missing.join(', ')} missing). Complete or update Main database PC setup first.`);
+    await verifyRuntimeSchema(connection);
     if (appRoot) {
-      const latestMigration = fs.readdirSync(path.join(appRoot, 'prisma', 'migrations'), { withFileTypes: true })
-        .filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort().at(-1);
-      const [migration] = await connection.query(
-        'SELECT 1 FROM `_prisma_migrations` WHERE `migration_name` = ? AND `finished_at` IS NOT NULL LIMIT 1',
-        [latestMigration]
+      const migrationsPath = path.join(appRoot, 'prisma', 'migrations');
+      const bundled = fs.readdirSync(migrationsPath, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => {
+          const sql = fs.readFileSync(path.join(migrationsPath, entry.name, 'migration.sql'), 'utf8');
+          return { name: entry.name, checksum: crypto.createHash('sha256').update(sql).digest('hex') };
+        })
+        .sort((left, right) => left.name.localeCompare(right.name));
+      const [installed] = await connection.query(
+        'SELECT `migration_name`, `checksum` FROM `_prisma_migrations` WHERE `finished_at` IS NOT NULL AND `rolled_back_at` IS NULL'
       );
-      if (!migration.length) throw new Error('The main database PC is using an older ERP schema. Update and start the ERP on the main PC before connecting this client.');
+      const installedByName = new Map(installed.map((row) => [row.migration_name, String(row.checksum || '').toLowerCase()]));
+      const missingMigrations = bundled.filter((migration) => !installedByName.has(migration.name));
+      if (missingMigrations.length) throw new Error('The main database PC is using an older ERP schema. Update and start the ERP on the main PC before connecting this client.');
+      const changedMigration = bundled.find((migration) => installedByName.get(migration.name) !== migration.checksum.toLowerCase());
+      if (changedMigration) throw new Error(`The main database migration ${changedMigration.name} does not match this ERP release. Use the same intact release on every PC.`);
     }
   } catch (error) {
     throw new Error(`Could not connect to the main ERP database: ${error.message || error}`);
@@ -335,7 +440,9 @@ async function enableNetworkSharing({ databaseUrl, configPath, currentEnv, form 
       DATABASE_URL: mysqlUrl({ host: current.host, port: current.port, username: databaseUser, password, database: current.database }),
       PORT: currentEnv.PORT || 3000,
       AUTH_USERNAME: currentEnv.AUTH_USERNAME,
-      AUTH_PASSWORD: currentEnv.AUTH_PASSWORD,
+      ...(currentEnv.AUTH_PASSWORD_HASH
+        ? { AUTH_PASSWORD_HASH: currentEnv.AUTH_PASSWORD_HASH }
+        : { AUTH_PASSWORD: currentEnv.AUTH_PASSWORD }),
       SESSION_SECRET: currentEnv.SESSION_SECRET || crypto.randomBytes(48).toString('base64url'),
       TSC_PRINTER_MODE: currentEnv.TSC_PRINTER_MODE || 'WINDOWS',
       TSC_PRINTER_NAME: currentEnv.TSC_PRINTER_NAME || 'TSC TTP-244 Pro',
@@ -349,7 +456,7 @@ async function enableNetworkSharing({ databaseUrl, configPath, currentEnv, form 
 }
 
 function updatePrinterConfiguration({ configPath, currentEnv, form }) {
-  if (!currentEnv.DATABASE_URL || !currentEnv.AUTH_USERNAME || !currentEnv.AUTH_PASSWORD) {
+  if (!currentEnv.DATABASE_URL || !currentEnv.AUTH_USERNAME || !hasConfiguredPassword(currentEnv)) {
     throw new Error('Save a working ERP database connection before configuring the printer.');
   }
   const printer = printerFormValues(form);
@@ -357,7 +464,9 @@ function updatePrinterConfiguration({ configPath, currentEnv, form }) {
     DATABASE_URL: currentEnv.DATABASE_URL,
     PORT: currentEnv.PORT || 3000,
     AUTH_USERNAME: currentEnv.AUTH_USERNAME,
-    AUTH_PASSWORD: currentEnv.AUTH_PASSWORD,
+    ...(currentEnv.AUTH_PASSWORD_HASH
+      ? { AUTH_PASSWORD_HASH: currentEnv.AUTH_PASSWORD_HASH }
+      : { AUTH_PASSWORD: currentEnv.AUTH_PASSWORD }),
     SESSION_SECRET: currentEnv.SESSION_SECRET || crypto.randomBytes(48).toString('base64url'),
     TSC_PRINTER_MODE: printer.printerMode,
     TSC_PRINTER_NAME: printer.printerName,
@@ -369,4 +478,24 @@ function updatePrinterConfiguration({ configPath, currentEnv, form }) {
   return config;
 }
 
-module.exports = { provisionShopDatabase, enableNetworkSharing, updatePrinterConfiguration, parseDatabaseConnection, isLocalHost, runBundledMigrations };
+function updateLoginConfiguration({ configPath, currentEnv, username, password }) {
+  if (!currentEnv.DATABASE_URL) throw new Error('Save a working ERP database connection before changing the login.');
+  const appUsername = accountName(username || currentEnv.AUTH_USERNAME || 'kusum', 'ERP login username');
+  const appPassword = requiredPassword(password, 'ERP login password');
+  const config = {
+    DATABASE_URL: currentEnv.DATABASE_URL,
+    PORT: currentEnv.PORT || 3000,
+    AUTH_USERNAME: appUsername,
+    AUTH_PASSWORD_HASH: hashPassword(appPassword),
+    SESSION_SECRET: currentEnv.SESSION_SECRET || crypto.randomBytes(48).toString('base64url'),
+    TSC_PRINTER_MODE: currentEnv.TSC_PRINTER_MODE || 'WINDOWS',
+    TSC_PRINTER_NAME: currentEnv.TSC_PRINTER_NAME || 'TSC TTP-244 Pro',
+    TSC_PRINTER_HOST: currentEnv.TSC_PRINTER_HOST || '',
+    TSC_PRINTER_PORT: currentEnv.TSC_PRINTER_PORT || 9100,
+    KUSUM_DEPLOYMENT_MODE: currentEnv.KUSUM_DEPLOYMENT_MODE || 'SERVER'
+  };
+  writeEnvFile(configPath, config);
+  return config;
+}
+
+module.exports = { provisionShopDatabase, enableNetworkSharing, updatePrinterConfiguration, updateLoginConfiguration, parseDatabaseConnection, isLocalHost, runBundledMigrations, verifyClientConnection };

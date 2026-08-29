@@ -23,6 +23,14 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+function resignBackup(sql) {
+  const marker = '-- Kusum ERP Backup SHA256:';
+  const markerIndex = sql.indexOf(marker);
+  assert(markerIndex >= 0, 'Cannot re-sign a backup without its SHA-256 marker');
+  const hash = crypto.createHash('sha256').update(sql.slice(0, markerIndex), 'utf8').digest('hex');
+  return sql.replace(/-- Kusum ERP Backup SHA256: [a-f0-9]{64}/i, `${marker} ${hash}`);
+}
+
 async function expectFailure(operation, messagePattern, label) {
   let failure;
   try {
@@ -152,8 +160,10 @@ async function seedBoundaryFixtures(db) {
         total: 10197 + index * 103,
         urdOffset: index === 2 ? 1000 : 0,
         paid: 5000 + index * 100,
-        cashPaid: index === 1 ? 2000 : 0,
-        upiPaid: index === 1 ? 3100 : 0,
+        cashPaid: index === 1 ? 1500 : 0,
+        upiPaid: index === 1 ? 1600 : 0,
+        cardPaid: index === 1 ? 900 : 0,
+        bankPaid: index === 1 ? 1100 : index === 2 ? 5200 : 0,
         balance: 5197 + index * 3,
         paymentMethod: index === 1 ? 'MIXED' : 'BANK_TRANSFER',
         notes: `${moment.tag} sale note`,
@@ -238,6 +248,7 @@ async function seedBoundaryFixtures(db) {
       { entryDate: '2026-08-27', type: 'IN', paymentMethod: 'CASH', description: 'Previous IST day', amount: 10 },
       { entryDate: selectedDate, type: 'IN', paymentMethod: 'CASH', description: 'Cash sale received', amount: 1000, reference: 'CASH-28' },
       { entryDate: selectedDate, type: 'OUT', paymentMethod: 'UPI', description: 'UPI URD payout', amount: 250, reference: 'UPI-28' },
+      { entryDate: selectedDate, type: 'IN', paymentMethod: 'CARD', description: 'Card sale received', amount: 300, reference: 'CARD-28' },
       { entryDate: selectedDate, type: 'IN', paymentMethod: 'BANK_TRANSFER', description: 'Bank receipt', amount: 500, reference: 'BANK-28' },
       { entryDate: '2026-08-29', type: 'OUT', paymentMethod: 'CASH', description: 'Next IST day', amount: 20 }
     ]
@@ -306,7 +317,13 @@ async function buildAndCheckExports(db, suffix = '') {
     if (resource.key === 'sales') {
       assert(payload.sheets[0].rows.length === 2, 'Sales did not select both IST boundary invoices');
       assert(payload.sheets[0].columns.some((column) => column.key === 'cashPaid'), 'Sales summary is missing cash paid');
+      assert(payload.sheets[0].columns.some((column) => column.key === 'cardPaid'), 'Sales summary is missing card paid');
+      assert(payload.sheets[0].columns.some((column) => column.key === 'bankPaid'), 'Sales summary is missing bank transfer paid');
       assert(payload.sheets[0].columns.some((column) => column.key === 'cgstAmount'), 'Sales summary is missing CGST amount');
+      const mixedInvoice = payload.sheets[0].rows.find((row) => row.invoiceNumber.endsWith('0002'));
+      const bankInvoice = payload.sheets[0].rows.find((row) => row.invoiceNumber.endsWith('0003'));
+      assert(mixedInvoice?.cardPaid === 900 && mixedInvoice?.bankPaid === 1100, 'Sales mixed Card/Bank amounts are incorrect');
+      assert(bankInvoice?.bankPaid === 5200 && bankInvoice?.otherPaid === 0, 'Sales Bank transfer amount was not classified correctly');
     }
     if (resource.key === 'urd') {
       assert(payload.rows.length === 2, 'URD did not select both IST boundary purchases');
@@ -314,16 +331,18 @@ async function buildAndCheckExports(db, suffix = '') {
       assert(endRow?.outstanding === endRow.totalAmount - endRow.saleOffset - endRow.paid, 'URD outstanding did not subtract the sale adjustment');
     }
     if (resource.key === 'cashbook') {
-      assert(payload.rows.length === 3, 'Cashbook export did not select exactly three 28/08 entries');
+      assert(payload.rows.length === 4, 'Cashbook export did not select exactly four 28/08 entries');
       const names = payload.sheets.map((sheet) => sheet.name);
-      for (const required of ['All entries', 'Summary', 'Cash', 'UPI', 'Bank transfer']) {
+      for (const required of ['All entries', 'Summary', 'Cash', 'UPI', 'Card', 'Bank transfer']) {
         assert(names.includes(required), `Cashbook is missing ${required} sheet`);
       }
       const cashRows = payload.sheets.find((sheet) => sheet.name === 'Cash').rows;
       const upiRows = payload.sheets.find((sheet) => sheet.name === 'UPI').rows;
+      const cardRows = payload.sheets.find((sheet) => sheet.name === 'Card').rows;
       const bankRows = payload.sheets.find((sheet) => sheet.name === 'Bank transfer').rows;
       assert(cashRows.at(-1).runningBalance === 1000, 'Cash running balance is incorrect');
       assert(upiRows.at(-1).runningBalance === -250, 'UPI running balance is incorrect');
+      assert(cardRows.at(-1).runningBalance === 300, 'Card running balance is incorrect');
       assert(bankRows.at(-1).runningBalance === 500, 'Bank running balance is incorrect');
     }
     if (resource.key === 'inventory') {
@@ -457,7 +476,7 @@ async function main() {
     const afterUnsafeSnapshot = await canonicalDatabase(targetUrl);
     assert(afterUnsafeSnapshot.hash === targetSnapshot.hash, 'Rejected unsafe SQL changed the database');
 
-    const corruptBackup = backup.sql.replace(/CREATE TABLE `Customer` \(/i, 'CREATE TABLE `Customer` BROKEN (');
+    const corruptBackup = resignBackup(backup.sql.replace(/CREATE TABLE `Customer` \(/i, 'CREATE TABLE `Customer` BROKEN ('));
     assert(corruptBackup !== backup.sql, 'Could not construct the automatic-recovery test backup');
     await expectFailure(
       () => importSqlBackup(targetUrl, corruptBackup, appRoot),

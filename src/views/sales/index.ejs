@@ -1,5 +1,5 @@
 <header class="page-header"><div><p class="eyebrow">Billing desk</p><h1>Sales</h1><p class="muted">Invoices automatically reduce piece-wise stock.</p></div><div class="header-actions"><a class="button ghost" href="/data-management?resource=sales">Export / archive</a><a class="button" href="/sales/new">+ Create invoice</a></div></header>
-<% const f = typeof filters !== 'undefined' && filters ? filters : {}; %>
+<% const f = typeof filters !== 'undefined' && filters ? filters : {}; const pager = typeof pagination !== 'undefined' && pagination ? pagination : { totalItems: sales.length }; %>
 <section class="panel"><div class="panel-heading"><div><h2>Invoices</h2><p>Search by customer name, invoice number or date range.</p></div></div>
   <!-- Search / filter bar -->
   <div class="sales-filter">
@@ -26,7 +26,7 @@
   </div>
 
   <% if (f.q || f.from || f.to) { %>
-    <p class="filter-result-count"><strong><%= (typeof sales !== 'undefined' && sales ? sales.length : 0) %></strong> invoice<%= (typeof sales !== 'undefined' && sales && sales.length === 1) ? '' : 's' %> found</p>
+    <p class="filter-result-count"><strong><%= pager.totalItems %></strong> invoice<%= pager.totalItems === 1 ? '' : 's' %> found</p>
   <% } %>
 
   <% if (sales.length) { %>
@@ -59,6 +59,7 @@
         </tr>
       <% }) %>
     </tbody></table></div>
+    <%- include('../_pagination', { pagination }) %>
   <% } else { %>
     <% if (f.q || f.from || f.to) { %>
       <div class="empty-state"><span>🔍</span><h3>No invoices match your search</h3><p>Try a different name, invoice number, or date range.</p><a class="button" href="/sales">Clear filters</a></div>

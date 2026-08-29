@@ -3,7 +3,7 @@ Kusum Jewelers ERP - Shop PC installation
 1. Copy KusumJewelersERP-Setup.exe to the shop PC.
 2. Run it and allow Windows to open the installer if prompted.
 3. The installer creates a desktop shortcut and opens the ERP in your browser.
-4. On first use, select Main database PC and enter the local MySQL administrator password. It creates or upgrades the kusum_erp database automatically. The default ERP sign-in is kusum / kusum@123; change it in the setup form if needed.
+4. On first use, select Main database PC, enter the local MySQL administrator password, and choose the shop's own ERP login password. It creates or upgrades the kusum_erp database automatically. No default ERP password is supplied.
 5. The MySQL administrator password is never stored. The ERP creates one shared ERP database account, restricted to the one kusum_erp database.
 
 Main PC / client PC setup

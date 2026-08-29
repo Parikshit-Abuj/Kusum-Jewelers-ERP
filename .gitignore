@@ -11,3 +11,4 @@ tmp/
 .android-kusumapp/
 kusum-erp-mobile-apk/
 analytics.settings
+.electron-cache/

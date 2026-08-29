@@ -24,7 +24,26 @@ if (-not (Test-Path -LiteralPath $packager)) { throw 'Electron Packager is missi
 # electron-packager normally downloads Electron again. Create its expected ZIP
 # from the already installed runtime so an offline release build remains possible.
 $electronDist = Join-Path $projectRoot 'node_modules\electron\dist'
-if (-not (Test-Path -LiteralPath $electronDist)) { throw 'The local Electron runtime is missing. Run npm install first.' }
+$electronCache = Join-Path $projectRoot '.electron-cache'
+if (-not (Test-Path -LiteralPath $electronDist)) {
+  $electronInstaller = Join-Path $projectRoot 'node_modules\electron\install.js'
+  if (-not (Test-Path -LiteralPath $electronInstaller)) { throw 'The pinned Electron package is missing. Run npm install first.' }
+  $previousElectronCache = $env:ELECTRON_CACHE
+  $previousElectronConfigCache = $env:electron_config_cache
+  try {
+    $env:ELECTRON_CACHE = $electronCache
+    # Electron 43's installer passes this variable directly to @electron/get.
+    # Keep both names for compatibility with older and newer Electron tooling.
+    $env:electron_config_cache = $electronCache
+    & node $electronInstaller
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $electronDist)) {
+      throw 'Could not download the pinned Electron Windows runtime.'
+    }
+  } finally {
+    $env:ELECTRON_CACHE = $previousElectronCache
+    $env:electron_config_cache = $previousElectronConfigCache
+  }
+}
 $electronVersion = (& node -p "require('./node_modules/electron/package.json').version").Trim()
 $electronZipDirectory = Join-Path ([System.IO.Path]::GetTempPath()) 'kusum-erp-electron-zips'
 $electronZip = Join-Path $electronZipDirectory "electron-v$electronVersion-win32-x64.zip"
@@ -37,12 +56,29 @@ New-Item -ItemType Directory -Path $outputPath -Force | Out-Null
 # Package only the desktop ERP.  Android Studio, Gradle and pnpm caches may
 # live beside the source project on a development PC, but are never required
 # by the shop application and can otherwise add more than a gigabyte.
-& node $packager $projectRoot 'Kusum ERP' --platform=win32 --arch=x64 --out=$outputPath --overwrite --prune=true --asar=false --electron-zip-dir=$electronZipDirectory --ignore='^/(\.env|output|outputs|tmp|work|\.npm-cache|\.pnpm-store|\.kusumapp-gradle|\.android-kusumapp|kusum-erp-mobile-apk|analytics\.settings)(/|$)' --ignore='^/src/excel-runtime/node_modules(/|$)'
+# Use an allowlist-oriented set of filters. Only runtime application files and
+# production dependencies may enter the shop package; development/audit scripts
+# are deliberately unreachable from a client installation.
+& node $packager $projectRoot 'Kusum ERP' --platform=win32 --arch=x64 --out=$outputPath --overwrite --prune=true --asar=false --electron-zip-dir=$electronZipDirectory `
+  --ignore='^/(?!electron-main\.js$|package\.json$|package-lock\.json$|public(?:/|$)|src(?:/|$)|prisma(?:/|$)|scripts(?:/|$)|node_modules(?:/|$)).*' `
+  --ignore='^/scripts/(?!print-tspl\.ps1$|list-printers\.ps1$).*' `
+  --ignore='^/prisma/(?!schema\.prisma$|migrations(?:/|$)).*' `
+  --ignore='^/src/excel-runtime/node_modules(?:/|$)'
 if ($LASTEXITCODE -ne 0) { throw 'Could not package the Electron desktop ERP.' }
 
 $applicationDirectory = Join-Path $outputPath 'Kusum ERP-win32-x64'
 $desktopExe = Join-Path $applicationDirectory 'Kusum ERP.exe'
 if (-not (Test-Path -LiteralPath $desktopExe)) { throw 'The portable ERP executable was not created.' }
+
+$packagedScripts = Join-Path $applicationDirectory 'resources\app\scripts'
+if (-not (Test-Path -LiteralPath $packagedScripts)) { throw 'Unsafe build: the required runtime scripts directory is missing.' }
+$unexpectedScripts = @(Get-ChildItem -LiteralPath $packagedScripts -File -Force | Where-Object { $_.Name -notin @('print-tspl.ps1', 'list-printers.ps1') })
+if ($unexpectedScripts.Count -gt 0) {
+  throw "Unsafe build: unexpected scripts were packaged: $($unexpectedScripts.Name -join ', ')"
+}
+foreach ($requiredScript in @('print-tspl.ps1', 'list-printers.ps1')) {
+  if (-not (Test-Path -LiteralPath (Join-Path $packagedScripts $requiredScript))) { throw "Unsafe build: required runtime script $requiredScript is missing." }
+}
 
 # Electron Packager prunes development packages. Preserve the generated Prisma
 # Windows client required by the production ORM at runtime.
@@ -55,6 +91,19 @@ if (Test-Path -LiteralPath $generatedPrismaDirectory) { Remove-Item -LiteralPath
 New-Item -ItemType Directory -Path $generatedPrismaDirectory -Force | Out-Null
 Copy-Item -LiteralPath $generatedClientSource -Destination $generatedPrismaDirectory -Recurse -Force
 Get-ChildItem -LiteralPath $generatedClientDestination -Filter '*.tmp*' -File -Force | Remove-Item -Force
+
+# npm can retain Prisma's optional CLI peer while pruning. The generated client
+# and @prisma/client are the only Prisma runtime pieces the ERP needs; remove
+# migration/config/engine download tooling from the deliverable explicitly.
+$prismaCli = Join-Path $applicationNodeModules 'prisma'
+if (Test-Path -LiteralPath $prismaCli) { Remove-Item -LiteralPath $prismaCli -Recurse -Force }
+$prismaNamespace = Join-Path $applicationNodeModules '@prisma'
+if (Test-Path -LiteralPath $prismaNamespace) {
+  Get-ChildItem -LiteralPath $prismaNamespace -Directory -Force | Where-Object { $_.Name -ne 'client' } | Remove-Item -Recurse -Force
+}
+$deepMerge = Join-Path $applicationNodeModules 'deepmerge-ts'
+if (Test-Path -LiteralPath $deepMerge) { Remove-Item -LiteralPath $deepMerge -Recurse -Force }
+if (Test-Path -LiteralPath $prismaCli) { throw 'Unsafe build: Prisma development CLI remained in the portable application.' }
 
 # Neither cache is used at runtime. Removing them makes the portable folder
 # smaller without changing the ERP's production dependencies.

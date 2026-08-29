@@ -215,9 +215,15 @@
       <label>UPI paid (₹)
         <input name="upiPaid" type="number" min="0" step="0.01" value="0" data-upi-paid disabled>
       </label>
+      <label>Card paid (₹)
+        <input name="cardPaid" type="number" min="0" step="0.01" value="0" data-card-paid disabled>
+      </label>
+      <label>Bank transfer paid (₹)
+        <input name="bankPaid" type="number" min="0" step="0.01" value="0" data-bank-paid disabled>
+      </label>
     </div>
 
-    <p class="credit-hint">Choose <strong>Mixed</strong> to enter cash and UPI separately. Payments sync automatically to Daily Cashbook, and any remaining balance is tracked in the customer ledger.</p>
+    <p class="credit-hint">Choose <strong>Mixed</strong> to enter Cash, UPI, Card and Bank separately. Payments sync automatically to Daily Cashbook, and any remaining balance is tracked in the customer ledger.</p>
 
     <button class="button full large" type="submit">Generate bill →</button>
 

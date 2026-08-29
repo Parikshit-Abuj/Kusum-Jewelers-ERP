@@ -1,9 +1,10 @@
-const { dateInput } = require('./helpers');
+const { dateInput, localDateTimeRange, localTimeZoneName } = require('./helpers');
+const { reverseAndDeleteCashbookEntry, deleteSettledUrdPurchase } = require('./accounting-reversal');
 
 const RESOURCE_LIST = [
   { key: 'sales', label: 'Sales invoices', dateLabel: 'Invoice date', archiveNote: 'Only invoices with no credit balance due can be removed. URD settlements do not block deletion.' },
   { key: 'urd', label: 'URD purchases', dateLabel: 'URD purchase date', archiveNote: 'Only URD purchases with no amount still payable to the customer can be removed.' },
-  { key: 'cashbook', label: 'Daily cashbook', dateLabel: 'Entry date', archiveNote: 'Cashbook entries in the chosen period are permanently removed.' },
+  { key: 'cashbook', label: 'Daily cashbook', dateLabel: 'Entry date', archiveNote: 'Cashbook entries in the chosen period are permanently removed. Any linked customer balance, invoice payment or URD payout is reversed safely.' },
   { key: 'inventory', label: 'Inventory records', dateLabel: 'Created date', archiveNote: 'Only zero-stock records can be removed. Sold barcode items are automatically removed when billed.' },
   { key: 'stock-movements', label: 'Stock movements', dateLabel: 'Movement date', archiveNote: 'Movement history can be removed without changing current stock quantity.' },
   { key: 'customers', label: 'Customer directory', dateLabel: 'Customer created date', archiveNote: 'Only customers with no sales, URD, cashbook or ledger history can be removed.' },
@@ -40,12 +41,8 @@ function resourceFor(key) {
   return resource;
 }
 
-// IST-aware UTC DateTime range so date filtering matches Indian calendar dates.
 function dateTimeRange(range) {
-  return {
-    gte: new Date(`${range.from}T00:00:00.000+05:30`),
-    lte: new Date(`${range.to}T23:59:59.999+05:30`)
-  };
+  return localDateTimeRange(range.from, range.to);
 }
 
 function num(value) { return Number(value || 0); }
@@ -74,7 +71,7 @@ function makingLabel(value) {
 function exportEnvelope(resource, range, columns, rows, options = {}) {
   return {
     title: `Kusum ERP - ${resource.label}`,
-    subtitle: `${resource.dateLabel}: ${displayDate(range.from)} to ${displayDate(range.to)} (IST) | ${rows.length} row${rows.length === 1 ? '' : 's'}`,
+    subtitle: `${resource.dateLabel}: ${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | ${rows.length} row${rows.length === 1 ? '' : 's'}`,
     columns,
     rows,
     filename: `${resource.key}-${range.from}-to-${range.to}.xlsx`,
@@ -102,6 +99,7 @@ function pruneEmptyColumns(columns, rows) {
 const CASHBOOK_METHODS = [
   { key: 'CASH', label: 'Cash' },
   { key: 'UPI', label: 'UPI' },
+  { key: 'CARD', label: 'Card' },
   { key: 'BANK_TRANSFER', label: 'Bank transfer' }
 ];
 
@@ -236,7 +234,9 @@ async function getExportPayload(db, key, range) {
         paid: num(s.paid),
         cashPaid: num(s.cashPaid),
         upiPaid: num(s.upiPaid),
-        otherPaid: Math.max(0, num(s.paid) - num(s.cashPaid) - num(s.upiPaid)),
+        cardPaid: num(s.cardPaid),
+        bankPaid: num(s.bankPaid),
+        otherPaid: Math.max(0, num(s.paid) - num(s.cashPaid) - num(s.upiPaid) - num(s.cardPaid) - num(s.bankPaid)),
         balance: num(s.balance),
         paymentMethod: paymentLabel(s.paymentMethod),
         notes: str(s.notes)
@@ -269,6 +269,8 @@ async function getExportPayload(db, key, range) {
         col.currency('paid', 'Total paid'),
         col.currency('cashPaid', 'Cash paid'),
         col.currency('upiPaid', 'UPI paid'),
+        col.currency('cardPaid', 'Card paid'),
+        col.currency('bankPaid', 'Bank transfer paid'),
         col.currency('otherPaid', 'Other paid'),
         col.currency('balance', 'Due balance'),
         col.text('paymentMethod', 'Payment method', 16),
@@ -298,7 +300,9 @@ async function getExportPayload(db, key, range) {
         paid: num(s.paid),
         cashPaid: num(s.cashPaid),
         upiPaid: num(s.upiPaid),
-        otherPaid: Math.max(0, num(s.paid) - num(s.cashPaid) - num(s.upiPaid)),
+        cardPaid: num(s.cardPaid),
+        bankPaid: num(s.bankPaid),
+        otherPaid: Math.max(0, num(s.paid) - num(s.cashPaid) - num(s.upiPaid) - num(s.cardPaid) - num(s.bankPaid)),
         balance: num(s.balance),
         paymentMethod: paymentLabel(s.paymentMethod),
         notes: str(s.notes)
@@ -325,6 +329,8 @@ async function getExportPayload(db, key, range) {
         col.currency('paid', 'Total paid'),
         col.currency('cashPaid', 'Cash paid'),
         col.currency('upiPaid', 'UPI paid'),
+        col.currency('cardPaid', 'Card paid'),
+        col.currency('bankPaid', 'Bank transfer paid'),
         col.currency('otherPaid', 'Other paid'),
         col.currency('balance', 'Due balance'),
         col.text('paymentMethod', 'Payment method', 16),
@@ -344,7 +350,7 @@ async function getExportPayload(db, key, range) {
         {
           name: 'Invoice summary',
           title: `Sales - Invoice summary`,
-          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (IST) | ${invoiceRows.length} invoice${invoiceRows.length === 1 ? '' : 's'}`,
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | ${invoiceRows.length} invoice${invoiceRows.length === 1 ? '' : 's'}`,
           columns: invColumns,
           rows: invoiceRows,
           infoRows: [
@@ -357,7 +363,7 @@ async function getExportPayload(db, key, range) {
         {
           name: 'Item-wise details',
           title: `Sales - Item-wise line details`,
-          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (IST) | ${totalItemsSold} item${totalItemsSold === 1 ? '' : 's'} across ${invoiceRows.length} invoice${invoiceRows.length === 1 ? '' : 's'}`,
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | ${totalItemsSold} item${totalItemsSold === 1 ? '' : 's'} across ${invoiceRows.length} invoice${invoiceRows.length === 1 ? '' : 's'}`,
           columns: lineColumns,
           rows: lineRows,
           infoRows: [
@@ -430,7 +436,7 @@ async function getExportPayload(db, key, range) {
         sheets: [{
           name: 'URD purchases',
           title: `URD Purchases - Detailed register`,
-          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (IST) | ${rows.length} purchase${rows.length === 1 ? '' : 's'}`,
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | ${rows.length} purchase${rows.length === 1 ? '' : 's'}`,
           columns,
           rows,
           infoRows: [
@@ -499,7 +505,7 @@ async function getExportPayload(db, key, range) {
         {
           name: 'All entries',
           title: `Daily Cashbook - All entries`,
-          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (IST) | ${rows.length} detailed entr${rows.length === 1 ? 'y' : 'ies'}`,
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | ${rows.length} detailed entr${rows.length === 1 ? 'y' : 'ies'}`,
           columns,
           rows,
           infoRows: infoAll
@@ -507,7 +513,7 @@ async function getExportPayload(db, key, range) {
         {
           name: 'Summary',
           title: `Daily Cashbook - Payment method summary`,
-          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (IST) | Totals grouped by payment method`,
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | Totals grouped by payment method`,
           columns: summaryColumns,
           rows: summaryRows,
           infoRows: infoAll
@@ -519,7 +525,7 @@ async function getExportPayload(db, key, range) {
         sheets.push({
           name: g.label,
           title: `Daily Cashbook - ${g.label} entries`,
-          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (IST) | ${g.rows.length} ${g.label.toLowerCase()} entr${g.rows.length === 1 ? 'y' : 'ies'}`,
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | ${g.rows.length} ${g.label.toLowerCase()} entr${g.rows.length === 1 ? 'y' : 'ies'}`,
           columns,
           rows: g.rows,
           infoRows: gInfo
@@ -529,7 +535,7 @@ async function getExportPayload(db, key, range) {
         sheets.push({
           name: 'Other methods',
           title: `Daily Cashbook - Other payment methods`,
-          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (IST) | ${otherRows.length} entr${otherRows.length === 1 ? 'y' : 'ies'}`,
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | ${otherRows.length} entr${otherRows.length === 1 ? 'y' : 'ies'}`,
           columns,
           rows: otherRows,
           infoRows: cashbookInfoRows(otherEntries)
@@ -615,7 +621,7 @@ async function getExportPayload(db, key, range) {
         {
           name: 'All records',
           title: `Inventory - All individual records`,
-          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (IST) | ${rows.length} record${rows.length === 1 ? '' : 's'} with barcode details`,
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | ${rows.length} record${rows.length === 1 ? '' : 's'} with barcode details`,
           columns,
           rows,
           infoRows: inventoryInfoRows(rows)
@@ -623,7 +629,7 @@ async function getExportPayload(db, key, range) {
         {
           name: 'Item summary',
           title: `Inventory - Item-wise summary`,
-          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (IST) | Grouped by metal, item, category and purity`,
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | Grouped by metal, item, category and purity`,
           columns: summaryColumns,
           rows: inventorySummaryRows(rows),
           infoRows: inventoryInfoRows(rows)
@@ -636,7 +642,7 @@ async function getExportPayload(db, key, range) {
         sheets.push({
           name: METAL_LABELS[metal],
           title: `Inventory - ${METAL_LABELS[metal]} records`,
-          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (IST) | ${metalRows.length} ${METAL_LABELS[metal].toLowerCase()} item${metalRows.length === 1 ? '' : 's'}`,
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | ${metalRows.length} ${METAL_LABELS[metal].toLowerCase()} item${metalRows.length === 1 ? '' : 's'}`,
           columns,
           rows: metalRows,
           infoRows: inventoryInfoRows(metalRows)
@@ -688,7 +694,7 @@ async function getExportPayload(db, key, range) {
         sheets: [{
           name: 'Stock movements',
           title: 'Stock Movement Register',
-          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (IST) | ${rows.length} movement${rows.length === 1 ? '' : 's'}`,
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | ${rows.length} movement${rows.length === 1 ? '' : 's'}`,
           columns,
           rows,
           infoRows: [
@@ -740,7 +746,7 @@ async function getExportPayload(db, key, range) {
         sheets: [{
           name: 'Customer directory',
           title: `Customer Directory`,
-          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (IST) | ${rows.length} customer${rows.length === 1 ? '' : 's'}`,
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | ${rows.length} customer${rows.length === 1 ? '' : 's'}`,
           columns,
           rows,
           infoRows: [
@@ -816,7 +822,7 @@ async function getExportPayload(db, key, range) {
         sheets: [{
           name: 'Customer ledger',
           title: `Customer Ledger`,
-          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (IST) | ${rows.length} entr${rows.length === 1 ? 'y' : 'ies'}`,
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | ${rows.length} entr${rows.length === 1 ? 'y' : 'ies'}`,
           columns,
           rows,
           infoRows: [
@@ -856,7 +862,7 @@ async function getExportPayload(db, key, range) {
         sheets: [{
           name: 'Daily rates',
           title: 'Daily Metal Rate Register',
-          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (IST) | ${rows.length} saved rate${rows.length === 1 ? '' : 's'}`,
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | ${rows.length} saved rate${rows.length === 1 ? '' : 's'}`,
           columns,
           rows,
           infoRows: [{ label: 'Rate days', value: rows.length, type: 'integer' }]
@@ -887,14 +893,19 @@ async function archiveData(db, key, range) {
       return { deleted: ids.length, skipped: candidates.length - ids.length, note: 'Invoices with an outstanding customer balance were kept.' };
     }
     if (key === 'urd') {
-      const candidates = await tx.urdPurchase.findMany({ where: { purchaseDate: dateTimeRange(range) }, select: { id: true, totalAmount: true, paid: true, saleOffset: true } });
-      const ids = candidates.filter((p) => num(p.totalAmount) - num(p.paid) - num(p.saleOffset) <= 0).map((p) => p.id);
-      const result = ids.length ? await tx.urdPurchase.deleteMany({ where: { id: { in: ids } } }) : { count: 0 };
-      return { deleted: result.count, skipped: candidates.length - ids.length, note: 'URD purchases with an unpaid customer amount were kept.' };
+      const candidates = await tx.urdPurchase.findMany({ where: { purchaseDate: dateTimeRange(range) }, select: { id: true, purchaseNumber: true, totalAmount: true, paid: true, saleOffset: true } });
+      const settled = candidates.filter((p) => num(p.totalAmount) - num(p.paid) - num(p.saleOffset) <= 0);
+      for (const purchase of settled) await deleteSettledUrdPurchase(tx, purchase);
+      return { deleted: settled.length, skipped: candidates.length - settled.length, note: 'URD purchases with an unpaid customer amount were kept. Linked payout entries were removed with each deleted purchase.' };
     }
     if (key === 'cashbook') {
-      const result = await tx.cashbookEntry.deleteMany({ where: { entryDate: { gte: range.from, lte: range.to } } });
-      return { deleted: result.count, skipped: 0, note: '' };
+      const entries = await tx.cashbookEntry.findMany({ where: { entryDate: { gte: range.from, lte: range.to } }, select: { id: true }, orderBy: { id: 'desc' } });
+      let deleted = 0;
+      for (const entry of entries) {
+        const result = await reverseAndDeleteCashbookEntry(tx, entry.id);
+        deleted += result.deleted;
+      }
+      return { deleted, skipped: 0, note: 'Linked customer, invoice and URD accounting was reversed before each cashbook entry was removed.' };
     }
     if (key === 'inventory') {
       const candidates = await tx.product.findMany({ where: { createdAt: dateTimeRange(range) }, select: { id: true, quantity: true } });

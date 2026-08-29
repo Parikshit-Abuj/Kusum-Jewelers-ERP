@@ -73,7 +73,9 @@ function labelValue(doc, label, value, labelX, valueX, y, valueWidth, fontSize =
 
 function formattedDateTime(value) {
   const date = new Date(value);
-  const options = { timeZone: 'Asia/Kolkata' };
+  // Deliberately use the Windows computer's local timezone. The coordinates,
+  // typography and invoice layout remain unchanged.
+  const options = {};
   const dateText = date.toLocaleDateString('en-IN', { ...options, day: '2-digit', month: '2-digit', year: 'numeric' });
   const timeText = date.toLocaleTimeString('en-IN', { ...options, hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
   return `${dateText}  ${timeText}`;
@@ -218,12 +220,32 @@ function footerTotals(doc, sale, y) {
   line(doc, page.left, y + 60, totalX, y + 60, 0.45);
   const cashPaid = Number(sale.cashPaid || 0);
   const upiPaid = Number(sale.upiPaid || 0);
-  if (cashPaid > 0 || upiPaid > 0) {
+  const cardPaid = Number(sale.cardPaid || 0);
+  const bankPaid = Number(sale.bankPaid || 0);
+  const trackedPaid = cashPaid + upiPaid + cardPaid + bankPaid;
+  const otherPaid = Math.max(0, Number(sale.paid || 0) - trackedPaid);
+  const detailedPayments = [
+    ['CASH', cashPaid],
+    ['UPI', upiPaid],
+    ['CARD', cardPaid],
+    ['BANK TRANSFER', bankPaid],
+    ['OTHER', otherPaid]
+  ].filter(([, value]) => value > 0);
+
+  // Preserve the established Cash/UPI invoice appearance exactly. Only a
+  // genuinely mixed Card/Bank payment uses compact lines inside the same
+  // existing payment box; no coordinates, columns, borders or page format move.
+  if (cardPaid <= 0 && bankPaid <= 0 && (cashPaid > 0 || upiPaid > 0)) {
     doc.font('Helvetica-Bold').fontSize(8.2).text('By CASH', 50, y + 68, { width: 155 });
     doc.text(amount(cashPaid), 50, y + 81, { width: 155 });
     doc.text('By UPI', 50, y + 95, { width: 155 });
     doc.text(amount(upiPaid), 50, y + 108, { width: 155 });
     if (Number(sale.balance || 0) > 0) doc.font('Helvetica').fontSize(7.8).text(`Balance Due: ${amount(sale.balance)}`, 50, y + 123, { width: 210 });
+  } else if (detailedPayments.length > 1) {
+    detailedPayments.forEach(([method, value], index) => {
+      doc.font('Helvetica-Bold').fontSize(7.8).text(`By ${method}: ${amount(value)}`, 50, y + 67 + index * 13, { width: 300 });
+    });
+    if (Number(sale.balance || 0) > 0) doc.font('Helvetica').fontSize(7.6).text(`Balance Due: ${amount(sale.balance)}`, 50, y + 126, { width: 210 });
   } else {
     const paymentLabel = String(sale.paymentMethod || 'CASH').replaceAll('_', ' ');
     doc.font('Helvetica-Bold').fontSize(8.7).text(`By ${paymentLabel}`, 50, y + 70, { width: 155 });

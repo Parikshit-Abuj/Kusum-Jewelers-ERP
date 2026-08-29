@@ -43,14 +43,15 @@
 
       <div class="form-grid two compact-fields">
         <label>Shared ERP database username<input name="databaseUser" required value="<%= defaults.databaseUser %>" minlength="3" autocomplete="off"></label>
-        <label>Shared ERP database password<input name="databasePassword" type="password" required minlength="12" autocomplete="new-password" placeholder="At least 12 characters"></label>
+        <label>Shared ERP database password<input name="databasePassword" type="password" required autocomplete="new-password" placeholder="Choose and note this password"></label>
       </div>
-      <p class="form-hint">On the main PC, choose and safely note this database username and password. Enter the same two values on every client PC. It is one MySQL login with access only to this one shared Kusum ERP database; it is not the MySQL root account and it does not create a separate client database.</p>
+      <p class="form-hint">On the main PC, choose and safely note this database username and password. Enter the same two values on every client PC. It is one MySQL login with access only to this one shared Kusum ERP database; it is not the MySQL root account and it does not create a separate client database. A longer password is recommended, but no fixed length is enforced.</p>
 
       <div class="form-grid two compact-fields">
         <label>ERP login username<input name="appUsername" required value="<%= defaults.appUsername %>" minlength="3" autocomplete="username"></label>
-        <label>ERP login password<input name="appPassword" type="password" required minlength="8" value="<%= repair ? '' : 'kusum@123' %>" autocomplete="new-password" placeholder="<%= repair ? 'Enter ERP login password' : '' %>"></label>
+        <label>ERP login password<input name="appPassword" type="password" required autocomplete="new-password" placeholder="Choose your own password"></label>
       </div>
+      <p class="form-hint">Choose a password known only to the shop owner. A longer password is recommended, but the ERP does not enforce a fixed character count.</p>
       <div class="setup-mode-copy">
         <strong>Barcode printer connection</strong>
         <p>Choose Windows queue for USB, a shared Windows printer, or a printer installed with a Standard TCP/IP port. Choose direct TCP only when this specific printer or print server has its own reachable IP address.</p>
