@@ -26,8 +26,7 @@
     <td class="actions"><a class="icon-button" title="Edit item" href="/inventory/<%= product.id %>/edit">✎</a></td>
   </tr><% }) %>
   </tbody></table></div><% } else { %><div class="empty-state"><span>◇</span><h3>No jewellery items found</h3><p>Add stock to start billing and tracking inventory.</p><button type="button" class="button" data-open-batch-modal>⚡ Batch Add Pieces</button></div><% } %>
-  </div>
-  <%- include('../_pagination', { pagination }) %>
+  <%- include('../_pagination', { pagination: typeof pagination !== 'undefined' ? pagination : null }) %>
 </section>
 
 <%- include('_batch_modal') %>

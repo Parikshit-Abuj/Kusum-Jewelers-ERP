@@ -92,7 +92,12 @@ function sendTsplToWindowsPrinter(printerName, tspl) {
     child.on('error', (error) => finish(error));
     child.on('close', (code) => {
       if (code === 0) return finish(null, stdout.trim());
-      finish(new Error(stderr.trim() || stdout.trim() || `Windows printer process stopped with code ${code}.`));
+      const rawMsg = stderr.trim() || stdout.trim() || `Windows printer process stopped with code ${code}.`;
+      let cleanMsg = rawMsg;
+      if (/OpenPrinter for '([^']+)' failed/i.test(rawMsg)) {
+        cleanMsg = `Printer "${RegExp.$1 || printerName}" is not installed or connected to this computer. Please plug in your USB TSC barcode printer or install its driver in Windows.`;
+      }
+      finish(new Error(cleanMsg));
     });
     child.stdin.end(Buffer.from(tspl, 'latin1').toString('base64'));
   });

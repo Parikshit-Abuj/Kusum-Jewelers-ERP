@@ -3,76 +3,532 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title><%= repair ? 'Repair ERP connection' : 'Shop setup' %> · Kusum Jewelers ERP</title>
+  <title><%= repair ? 'Repair ERP Connection' : 'Shop Setup' %> · Kusum ERP</title>
   <link rel="stylesheet" href="/styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body.setup-body {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 40px 20px;
+      background: radial-gradient(circle at top center, #241d16 0%, #14100c 50%, #0a0806 100%);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: #e6dfd5;
+      position: relative;
+      overflow-x: hidden;
+    }
+
+    /* Ambient background glow */
+    body.setup-body::before {
+      content: '';
+      position: fixed;
+      top: -150px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 800px;
+      height: 400px;
+      background: radial-gradient(ellipse, rgba(212, 162, 60, 0.15), transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .setup-container {
+      width: min(100%, 720px);
+      position: relative;
+      z-index: 1;
+    }
+
+    .setup-card {
+      background: linear-gradient(180deg, rgba(38, 30, 22, 0.95) 0%, rgba(26, 20, 15, 0.98) 100%);
+      border: 1px solid rgba(212, 162, 60, 0.22);
+      border-radius: 20px;
+      padding: 42px 48px;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05), 0 0 40px rgba(212, 162, 60, 0.08);
+      backdrop-filter: blur(16px);
+    }
+
+    /* Header & Branding */
+    .setup-header {
+      text-align: center;
+      margin-bottom: 34px;
+      position: relative;
+    }
+
+    .setup-logo {
+      width: 54px;
+      height: 54px;
+      display: inline-grid;
+      place-items: center;
+      background: linear-gradient(135deg, #f0c164, #9d6512);
+      color: #2d1c06;
+      border-radius: 16px;
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: 22px;
+      font-weight: 900;
+      box-shadow: inset 0 1px 2px #ffe7ad, 0 6px 24px rgba(212, 162, 60, 0.3);
+      margin-bottom: 18px;
+    }
+
+    .setup-eyebrow {
+      color: #d4a23c;
+      text-transform: uppercase;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .18em;
+      margin-bottom: 8px;
+    }
+
+    .setup-title {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: 32px;
+      font-weight: 800;
+      color: #fff;
+      letter-spacing: -.02em;
+      margin-bottom: 10px;
+      line-height: 1.2;
+    }
+
+    .setup-subtitle {
+      color: #a89f91;
+      font-size: 13.5px;
+      line-height: 1.6;
+      max-width: 580px;
+      margin: 0 auto;
+    }
+
+    /* Flash messages */
+    .setup-card .flash.error {
+      background: rgba(220, 53, 69, 0.15);
+      border: 1px solid rgba(220, 53, 69, 0.35);
+      color: #ff99a4;
+      padding: 12px 16px;
+      border-radius: 12px;
+      margin-bottom: 24px;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .setup-card .flash.error span {
+      background: #dc3545;
+      color: #fff;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      display: inline-grid;
+      place-items: center;
+      font-size: 12px;
+      font-weight: bold;
+    }
+
+    /* Section group styling */
+    .setup-section {
+      background: rgba(20, 16, 12, 0.6);
+      border: 1px solid rgba(212, 162, 60, 0.12);
+      border-radius: 14px;
+      padding: 22px 24px;
+      margin-bottom: 22px;
+      transition: border-color 0.2s;
+    }
+
+    .setup-section:focus-within {
+      border-color: rgba(212, 162, 60, 0.3);
+    }
+
+    .section-title-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .section-num {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: rgba(212, 162, 60, 0.15);
+      color: #d4a23c;
+      font-size: 11px;
+      font-weight: 800;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(212, 162, 60, 0.3);
+    }
+
+    .section-heading {
+      font-size: 14px;
+      font-weight: 700;
+      color: #f0e6d6;
+      letter-spacing: .02em;
+    }
+
+    /* Segmented Controls */
+    .setup-segmented-control {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      padding: 5px;
+      background: rgba(12, 9, 6, 0.8);
+      border: 1px solid rgba(212, 162, 60, 0.18);
+      border-radius: 12px;
+      margin-bottom: 16px;
+    }
+
+    .setup-segmented-control label {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 42px;
+      margin: 0;
+      padding: 8px 12px;
+      border-radius: 9px;
+      color: #9e9384;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .setup-segmented-control label:hover {
+      color: #d4a23c;
+    }
+
+    .setup-segmented-control label:has(input:checked) {
+      background: linear-gradient(135deg, #d4a23c, #a37518);
+      color: #fff;
+      box-shadow: 0 4px 14px rgba(163, 117, 24, 0.35);
+    }
+
+    .setup-segmented-control input {
+      display: none;
+    }
+
+    .setup-mode-badge {
+      padding: 12px 16px;
+      border-radius: 10px;
+      background: rgba(212, 162, 60, 0.07);
+      border-left: 3px solid #d4a23c;
+      color: #c4b9a9;
+      font-size: 12.5px;
+      line-height: 1.55;
+      margin-bottom: 18px;
+    }
+
+    .setup-mode-badge strong {
+      color: #f0e6d6;
+      display: block;
+      margin-bottom: 3px;
+      font-size: 13px;
+    }
+
+    /* Form Fields */
+    .form-row {
+      display: grid;
+      gap: 16px;
+      margin-bottom: 14px;
+    }
+
+    .form-row.two { grid-template-columns: 1fr 1fr; }
+    .form-row.three { grid-template-columns: 2fr 1fr 1.5fr; }
+
+    .setup-field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .setup-field label {
+      font-size: 11.5px;
+      font-weight: 700;
+      color: #bfb4a4;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+    .setup-field input {
+      padding: 12px 14px;
+      border: 1.5px solid rgba(212, 162, 60, 0.18);
+      border-radius: 10px;
+      background: rgba(14, 11, 8, 0.9);
+      font-size: 13.5px;
+      color: #fff;
+      transition: all 0.2s ease;
+      font-family: inherit;
+    }
+
+    .setup-field input:focus {
+      outline: none;
+      border-color: #d4a23c;
+      background: rgba(18, 14, 10, 0.95);
+      box-shadow: 0 0 0 3px rgba(212, 162, 60, 0.15);
+    }
+
+    .setup-field input::placeholder {
+      color: #61574a;
+    }
+
+    .field-helper {
+      color: #8c8172;
+      font-size: 11.5px;
+      line-height: 1.5;
+      margin-top: 4px;
+    }
+
+    .field-helper code {
+      background: rgba(255, 255, 255, 0.08);
+      padding: 2px 5px;
+      border-radius: 4px;
+      color: #d4a23c;
+      font-size: 11px;
+    }
+
+    /* Submit Button */
+    .setup-submit-btn {
+      width: 100%;
+      margin-top: 10px;
+      padding: 16px;
+      border: none;
+      border-radius: 13px;
+      background: linear-gradient(135deg, #d4a23c, #a37518);
+      color: #fff;
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: .02em;
+      cursor: pointer;
+      transition: transform .15s, box-shadow .2s, filter .2s;
+      box-shadow: 0 6px 24px rgba(163, 117, 24, 0.35);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+
+    .setup-submit-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 30px rgba(163, 117, 24, 0.45);
+      filter: brightness(1.06);
+    }
+
+    .setup-submit-btn:active {
+      transform: translateY(0);
+      box-shadow: 0 2px 10px rgba(163, 117, 24, 0.25);
+    }
+
+    .setup-footer-note {
+      text-align: center;
+      margin-top: 24px;
+      color: #6e6457;
+      font-size: 12px;
+      letter-spacing: .02em;
+    }
+
+    @media (max-width: 680px) {
+      .setup-card { padding: 30px 20px; }
+      .form-row.two, .form-row.three { grid-template-columns: 1fr; }
+      .setup-title { font-size: 26px; }
+    }
+  </style>
 </head>
-<body class="login-page">
-  <main class="login-card" style="max-width:660px">
-    <span class="brand-mark">KJ</span>
-    <p class="eyebrow">Kusum Jewelers</p>
-    <h1><%= repair ? 'Repair ERP connection' : 'Set up the shop ERP' %></h1>
-    <p class="muted"><% if (repair) { %>The application folder can be copied or deleted without losing Windows connection settings. Use this screen to safely replace stale database details; it does not delete any database records.<% } else { %>Choose one main database PC, then connect every billing or office PC to it over your private LAN or Wi-Fi router. The MySQL administrator password is used only on the main PC and is never saved.<% } %></p>
-    <% if (error) { %><div class="flash error"><span>!</span><%= error %></div><% } %>
-    <form method="post" action="<%= repair ? '/connection-repair' : '/setup' %>" id="setup-form">
-      <div class="segmented-control" role="radiogroup" aria-label="Installation type">
-        <label><input type="radio" name="setupMode" value="SERVER" <%= defaults.setupMode === 'CLIENT' ? '' : 'checked' %>> Main database PC</label>
-        <label><input type="radio" name="setupMode" value="CLIENT" <%= defaults.setupMode === 'CLIENT' ? 'checked' : '' %>> Client PC</label>
+<body class="setup-body">
+  <div class="setup-container">
+    <main class="setup-card">
+      <div class="setup-header">
+        <div class="setup-logo">K</div>
+        <p class="setup-eyebrow">Kusum ERP</p>
+        <h1 class="setup-title"><%= repair ? 'Repair ERP Connection' : 'Set Up Shop ERP' %></h1>
+        <p class="setup-subtitle">
+          <% if (repair) { %>
+            Safely update this computer’s database connection without touching or losing existing shop records.
+          <% } else { %>
+            Choose one Main Database PC to host your shop data, then easily connect all counter and office PCs over your LAN.
+          <% } %>
+        </p>
       </div>
 
-      <div class="setup-mode-copy" data-server-copy>
-        <strong>Main database PC</strong>
-        <p>Use this once on the PC that keeps the shared MySQL database. It creates or upgrades the ERP database and creates the limited account used by client PCs.</p>
-      </div>
-      <div class="setup-mode-copy" data-client-copy hidden>
-        <strong>Client PC</strong>
-        <p>Use this on every additional billing or office PC. It connects to the already-created main database and never needs the MySQL administrator password.</p>
-      </div>
-
-      <div class="form-grid three compact-fields">
-        <label>MySQL server name / IP<input name="mysqlHost" required value="<%= defaults.mysqlHost %>" autocomplete="off" data-mysql-host></label>
-        <label>MySQL port<input name="mysqlPort" type="number" min="1" max="65535" required value="<%= defaults.mysqlPort %>" autocomplete="off"></label>
-        <label>Database name<input name="databaseName" required value="<%= defaults.databaseName %>" pattern="[A-Za-z0-9_]+" autocomplete="off"></label>
-      </div>
-
-      <div data-server-fields>
-        <div class="form-grid two compact-fields">
-          <label>MySQL administrator user<input name="mysqlUser" required value="root" autocomplete="username"></label>
-          <label>MySQL administrator password<input name="mysqlPassword" type="password" autocomplete="current-password" placeholder="Leave blank only if MySQL has no password"></label>
+      <% if (error) { %>
+        <div class="flash error">
+          <span>!</span>
+          <div><%= error %></div>
         </div>
-      </div>
+      <% } %>
 
-      <div class="form-grid two compact-fields">
-        <label>Shared ERP database username<input name="databaseUser" required value="<%= defaults.databaseUser %>" minlength="3" autocomplete="off"></label>
-        <label>Shared ERP database password<input name="databasePassword" type="password" required autocomplete="new-password" placeholder="Choose and note this password"></label>
-      </div>
-      <p class="form-hint">On the main PC, choose and safely note this database username and password. Enter the same two values on every client PC. It is one MySQL login with access only to this one shared Kusum ERP database; it is not the MySQL root account and it does not create a separate client database. A longer password is recommended, but no fixed length is enforced.</p>
+      <form method="post" action="<%= repair ? '/connection-repair' : '/setup' %>" id="setup-form">
+        <!-- 1. PC Role Selection -->
+        <div class="setup-section">
+          <div class="section-title-wrap">
+            <span class="section-num">1</span>
+            <span class="section-heading">Installation Role</span>
+          </div>
 
-      <div class="form-grid two compact-fields">
-        <label>ERP login username<input name="appUsername" required value="<%= defaults.appUsername %>" minlength="3" autocomplete="username"></label>
-        <label>ERP login password<input name="appPassword" type="password" required autocomplete="new-password" placeholder="Choose your own password"></label>
-      </div>
-      <p class="form-hint">Choose a password known only to the shop owner. A longer password is recommended, but the ERP does not enforce a fixed character count.</p>
-      <div class="setup-mode-copy">
-        <strong>Barcode printer connection</strong>
-        <p>Choose Windows queue for USB, a shared Windows printer, or a printer installed with a Standard TCP/IP port. Choose direct TCP only when this specific printer or print server has its own reachable IP address.</p>
-      </div>
-      <div class="segmented-control" role="radiogroup" aria-label="Barcode printer connection">
-        <label><input type="radio" name="printerMode" value="WINDOWS" <%= defaults.printerMode === 'TCP' ? '' : 'checked' %>> Windows printer / USB</label>
-        <label><input type="radio" name="printerMode" value="TCP" <%= defaults.printerMode === 'TCP' ? 'checked' : '' %>> Direct TCP / Ethernet</label>
-      </div>
-      <div data-windows-printer-fields>
-        <label>Installed Windows TSC printer name<input name="printerName" value="<%= defaults.printerName %>" autocomplete="off"></label>
-      </div>
-      <div class="form-grid two compact-fields" data-tcp-printer-fields hidden>
-        <label>Printer / print-server IP<input name="printerHost" value="<%= defaults.printerHost %>" autocomplete="off" placeholder="Example: 192.168.1.60"></label>
-        <label>Direct TCP port<input name="printerPort" type="number" min="1" max="65535" value="<%= defaults.printerPort %>" autocomplete="off"></label>
-      </div>
-      <p class="form-hint">A common RAW TCP port is 9100, but use the port shown on the printer or print-server configuration page. A USB-only TTP-244 Pro must use the Windows printer / USB option.</p>
-      <p class="form-hint" data-server-hint>Keep MySQL on this PC. After setup, allow its selected MySQL port through Windows Firewall only for Private networks / Local subnet, then use this PC’s LAN IP on clients.</p>
-      <p class="form-hint" data-client-hint hidden>Enter the main PC’s LAN IP or computer name and its MySQL port. Do not enter <code>localhost</code> here; that would mean this client PC.</p>
-      <button class="button full large" type="submit" data-submit-label>Create shared database and start ERP</button>
-    </form>
-  </main>
+          <div class="setup-segmented-control" role="radiogroup" aria-label="Installation type">
+            <label>
+              <input type="radio" name="setupMode" value="SERVER" <%= defaults.setupMode === 'CLIENT' ? '' : 'checked' %>>
+              🖥️ Main Database PC
+            </label>
+            <label>
+              <input type="radio" name="setupMode" value="CLIENT" <%= defaults.setupMode === 'CLIENT' ? 'checked' : '' %>>
+              💻 Client Counter PC
+            </label>
+          </div>
+
+          <div class="setup-mode-badge" data-server-copy>
+            <strong>Main Database Server</strong>
+            Use this on the shop's primary computer. It configures the shared MySQL database and manages connections for all counter PCs.
+          </div>
+
+          <div class="setup-mode-badge" data-client-copy hidden>
+            <strong>Client Counter PC</strong>
+            Use this on billing counter laptops and secondary PCs. It connects directly to the Main PC's database without needing root credentials.
+          </div>
+        </div>
+
+        <!-- 2. MySQL Connection -->
+        <div class="setup-section">
+          <div class="section-title-wrap">
+            <span class="section-num">2</span>
+            <span class="section-heading">MySQL Server Details</span>
+          </div>
+
+          <div class="form-row three">
+            <div class="setup-field">
+              <label>Host / IP Address</label>
+              <input name="mysqlHost" required value="<%= defaults.mysqlHost %>" autocomplete="off" data-mysql-host placeholder="localhost">
+            </div>
+            <div class="setup-field">
+              <label>Port</label>
+              <input name="mysqlPort" type="number" min="1" max="65535" required value="<%= defaults.mysqlPort %>" autocomplete="off">
+            </div>
+            <div class="setup-field">
+              <label>Database Name</label>
+              <input name="databaseName" required value="<%= defaults.databaseName %>" pattern="[A-Za-z0-9_]+" autocomplete="off">
+            </div>
+          </div>
+
+          <div data-server-fields>
+            <div class="form-row two">
+              <div class="setup-field">
+                <label>MySQL Administrator User</label>
+                <input name="mysqlUser" required value="root" autocomplete="username">
+              </div>
+              <div class="setup-field">
+                <label>MySQL Root Password</label>
+                <input name="mysqlPassword" type="password" autocomplete="current-password" placeholder="Leave blank only if no password">
+              </div>
+            </div>
+          </div>
+
+          <div class="field-helper" data-server-hint>
+            Keep MySQL on this PC. Ensure port <code>3306</code> is allowed through Windows Firewall for local subnet PCs.
+          </div>
+          <div class="field-helper" data-client-hint hidden>
+            Enter the Main PC’s LAN IP address (e.g. <code>192.168.1.15</code>). Do not enter <code>localhost</code> on client machines.
+          </div>
+        </div>
+
+        <!-- 3. ERP Shared Database Credentials -->
+        <div class="setup-section">
+          <div class="section-title-wrap">
+            <span class="section-num">3</span>
+            <span class="section-heading">Shared ERP Database Credentials</span>
+          </div>
+
+          <div class="form-row two">
+            <div class="setup-field">
+              <label>Database Username</label>
+              <input name="databaseUser" required value="<%= defaults.databaseUser %>" minlength="3" autocomplete="off">
+            </div>
+            <div class="setup-field">
+              <label>Database Password</label>
+              <input name="databasePassword" type="password" required autocomplete="new-password" placeholder="Choose a secure password">
+            </div>
+          </div>
+          <div class="field-helper">
+            On the Main PC, set this password. Enter the exact same password on all Client PCs to link them together.
+          </div>
+        </div>
+
+        <!-- 4. Owner / Admin Login -->
+        <div class="setup-section">
+          <div class="section-title-wrap">
+            <span class="section-num">4</span>
+            <span class="section-heading">ERP Admin Login Credentials</span>
+          </div>
+
+          <div class="form-row two">
+            <div class="setup-field">
+              <label>ERP Login Username</label>
+              <input name="appUsername" required value="<%= defaults.appUsername %>" minlength="3" autocomplete="username">
+            </div>
+            <div class="setup-field">
+              <label>ERP Login Password</label>
+              <input name="appPassword" type="password" required autocomplete="new-password" placeholder="Set your shop login password">
+            </div>
+          </div>
+          <div class="field-helper">
+            This password will be used by staff and shop owner to log into Kusum ERP.
+          </div>
+        </div>
+
+        <!-- 5. Barcode Printer Connectivity -->
+        <div class="setup-section">
+          <div class="section-title-wrap">
+            <span class="section-num">5</span>
+            <span class="section-heading">Barcode Label Printer</span>
+          </div>
+
+          <div class="setup-segmented-control" role="radiogroup" aria-label="Barcode printer connection">
+            <label>
+              <input type="radio" name="printerMode" value="WINDOWS" <%= defaults.printerMode === 'TCP' ? '' : 'checked' %>>
+              🖨️ Windows / USB Printer
+            </label>
+            <label>
+              <input type="radio" name="printerMode" value="TCP" <%= defaults.printerMode === 'TCP' ? 'checked' : '' %>>
+              🌐 Direct Network TCP/IP
+            </label>
+          </div>
+
+          <div data-windows-printer-fields>
+            <div class="setup-field">
+              <label>Installed Windows TSC Printer Name</label>
+              <input name="printerName" value="<%= defaults.printerName %>" autocomplete="off" placeholder="e.g. TSC TTP-244 Pro">
+            </div>
+          </div>
+
+          <div class="form-row two" data-tcp-printer-fields hidden>
+            <div class="setup-field">
+              <label>Printer / Print-Server IP</label>
+              <input name="printerHost" value="<%= defaults.printerHost %>" autocomplete="off" placeholder="e.g. 192.168.1.60">
+            </div>
+            <div class="setup-field">
+              <label>Direct RAW TCP Port</label>
+              <input name="printerPort" type="number" min="1" max="65535" value="<%= defaults.printerPort %>" autocomplete="off" placeholder="9100">
+            </div>
+          </div>
+
+          <div class="field-helper">
+            USB printers like TSC TTP-244 Pro should use Windows Printer queue. Network print servers use RAW port 9100.
+          </div>
+        </div>
+
+        <button class="setup-submit-btn" type="submit" data-submit-label>
+          <span>✨</span>
+          <span data-btn-text>Create Shared Database and Start ERP</span>
+        </button>
+
+        <div class="setup-footer-note">
+          Kusum ERP · Enterprise Jewellery Management System
+        </div>
+      </form>
+    </main>
+  </div>
+
   <script>
     (() => {
       const form = document.getElementById('setup-form');
@@ -82,9 +538,10 @@
       const clientCopy = form.querySelector('[data-client-copy]');
       const serverHint = form.querySelector('[data-server-hint]');
       const clientHint = form.querySelector('[data-client-hint]');
-      const submit = form.querySelector('[data-submit-label]');
+      const btnText = form.querySelector('[data-btn-text]');
       const windowsPrinterFields = form.querySelector('[data-windows-printer-fields]');
       const tcpPrinterFields = form.querySelector('[data-tcp-printer-fields]');
+
       const update = () => {
         const client = form.querySelector('input[name="setupMode"]:checked').value === 'CLIENT';
         serverFields.hidden = client;
@@ -92,15 +549,19 @@
         clientCopy.hidden = !client;
         serverHint.hidden = client;
         clientHint.hidden = !client;
-        submit.textContent = client ? 'Connect to main ERP database' : 'Create shared database and start ERP';
+        btnText.textContent = client ? 'Connect to Main ERP Database' : 'Create Shared Database and Start ERP';
         host.placeholder = client ? 'Example: 192.168.1.20' : 'localhost';
         if (client && host.value === 'localhost') host.value = '';
         if (!client && !host.value) host.value = 'localhost';
+
         const directTcp = form.querySelector('input[name="printerMode"]:checked').value === 'TCP';
         windowsPrinterFields.hidden = directTcp;
         tcpPrinterFields.hidden = !directTcp;
       };
-      form.querySelectorAll('input[name="setupMode"], input[name="printerMode"]').forEach((input) => input.addEventListener('change', update));
+
+      form.querySelectorAll('input[name="setupMode"], input[name="printerMode"]').forEach((input) => {
+        input.addEventListener('change', update);
+      });
       update();
     })();
   </script>

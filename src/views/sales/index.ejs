@@ -59,7 +59,7 @@
         </tr>
       <% }) %>
     </tbody></table></div>
-    <%- include('../_pagination', { pagination }) %>
+    <%- include('../_pagination', { pagination: typeof pagination !== 'undefined' ? pagination : null }) %>
   <% } else { %>
     <% if (f.q || f.from || f.to) { %>
       <div class="empty-state"><span>🔍</span><h3>No invoices match your search</h3><p>Try a different name, invoice number, or date range.</p><a class="button" href="/sales">Clear filters</a></div>
