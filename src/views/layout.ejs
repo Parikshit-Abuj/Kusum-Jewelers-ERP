@@ -17,9 +17,6 @@
           <span class="brand-mark-sm">K</span>
           <strong>Kusum ERP</strong>
         </a>
-        <div class="mobile-live-indicator" title="Real-time sync active">
-          <span class="live-sync-dot online"></span>
-        </div>
       </div>
       <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
 
@@ -43,10 +40,6 @@
           <a class="<%= currentPath.startsWith('/printer-setup') ? 'active' : '' %>" href="/printer-setup"><span>▥</span> Barcode printer</a>
         </nav>
         <div class="sidebar-foot">
-          <div class="live-sync-badge is-connected" id="liveSyncStatus" title="Real-time multi-PC synchronization active">
-            <span class="live-sync-dot online"></span>
-            <span class="live-sync-label">Realtime Sync Active</span>
-          </div>
           Signed in as <strong><%= loggedInUser %></strong><br><span>Track every gram.</span>
           <a class="sidebar-logout" href="/change-password">Change password</a>
           <form method="post" action="/logout"><button class="sidebar-logout" type="submit">Sign out</button></form>

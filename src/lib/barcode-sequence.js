@@ -9,6 +9,8 @@ const { barcodePrefix } = require('./helpers');
 async function nextBarcode(tx, metal, purity) {
   const prefix = barcodePrefix(metal, purity);
 
+  // A migration seeds old installations from live and historical records;
+  // this statement then reserves each new barcode atomically.
   await tx.$executeRaw`
     INSERT INTO \`BarcodeSequence\` (\`prefix\`, \`lastNumber\`, \`updatedAt\`)
     VALUES (${prefix}, LAST_INSERT_ID(1), CURRENT_TIMESTAMP(3))

@@ -484,6 +484,8 @@ input:focus, select:focus, textarea:focus { border-color: #c08a32; box-shadow: 0
 .printer-status.is-ready span { color: #fff; background: #1f7651; }
 .printer-status.is-missing { color: #976415; }
 .printer-status.is-missing span { color: #fff; background: #c27b19; }
+.printer-status.is-pending { color: #626b73; }
+.printer-status.is-pending span { color: #fff; background: #7b8794; }
 
 /* ── Flash notifications ──────────────────────────────────── */
 .flash {
@@ -1197,109 +1199,6 @@ input:focus, select:focus, textarea:focus { border-color: #c08a32; box-shadow: 0
     max-height: 300px;
     overflow-x: auto;
   }
-}
-
-/* ── Real-Time Multi-PC Live Sync Badge & Toasts ─────────── */
-.live-sync-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  margin-bottom: 8px;
-  background: rgba(39, 110, 80, 0.08);
-  border: 1px solid rgba(39, 110, 80, 0.25);
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  color: #1e5e43;
-  transition: all 0.3s ease;
-}
-
-.live-sync-badge.is-disconnected {
-  background: rgba(180, 50, 50, 0.08);
-  border-color: rgba(180, 50, 50, 0.25);
-  color: #a32a2a;
-}
-
-.live-sync-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #276e50;
-  display: inline-block;
-  box-shadow: 0 0 6px rgba(39, 110, 80, 0.6);
-  animation: pulse-live 2s infinite ease-in-out;
-}
-
-.live-sync-dot.offline {
-  background: #c53030;
-  box-shadow: none;
-  animation: none;
-}
-
-@keyframes pulse-live {
-  0% { transform: scale(0.95); opacity: 0.8; }
-  50% { transform: scale(1.25); opacity: 1; box-shadow: 0 0 10px rgba(39, 110, 80, 0.8); }
-  100% { transform: scale(0.95); opacity: 0.8; }
-}
-
-.sync-toast-container {
-  position: fixed;
-  bottom: 24px;
-  right: 24px;
-  z-index: 10000;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  pointer-events: none;
-}
-
-.sync-toast {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 16px;
-  background: #1e2229;
-  color: #f8fafc;
-  border-left: 4px solid #b47a21;
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
-  font-size: 13px;
-  font-weight: 500;
-  pointer-events: auto;
-  animation: slide-in-toast 0.25s ease-out forwards;
-  transition: opacity 0.3s ease, transform 0.3s ease;
-}
-
-.sync-toast.fade-out {
-  opacity: 0;
-  transform: translateY(10px);
-}
-
-.sync-toast-icon {
-  font-size: 14px;
-  color: #f59e0b;
-}
-
-@keyframes slide-in-toast {
-  from {
-    opacity: 0;
-    transform: translateY(16px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.live-sync-dot.pulse-once {
-  animation: pulse-quick 0.6s ease-out;
-}
-
-@keyframes pulse-quick {
-  0% { transform: scale(1); }
-  50% { transform: scale(1.8); box-shadow: 0 0 14px #22c55e; }
-  100% { transform: scale(1); }
 }
 
 /* ── Mobile Responsive Header & Sidebar Drawer ────────────── */

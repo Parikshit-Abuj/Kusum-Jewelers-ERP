@@ -231,6 +231,31 @@ async function seedBoundaryFixtures(db) {
     });
   }
 
+  // A zero-stock barcode may exist after a manual stock adjustment. It is
+  // history, not live inventory, and must never appear in Inventory Excel.
+  await db.product.create({
+    data: {
+      barcode: 'S SOLDOUT QA 1',
+      sku: 'S-SOLDOUT-QA-1',
+      name: 'Sold-out export guard',
+      category: 'Test item',
+      metal: 'SILVER',
+      purity: '925',
+      grossWeight: 1,
+      stoneWeight: 0,
+      netWeight: 1,
+      quantity: 0,
+      reorderLevel: 1,
+      purchasePrice: 100,
+      sellingPrice: 120,
+      makingChargeType: 'FIXED',
+      makingChargeValue: 0,
+      status: 'SOLD_OUT',
+      createdAt: dateAt('2026-08-27T18:30:00.000Z'),
+      updatedAt: dateAt('2026-08-27T18:30:00.000Z')
+    }
+  });
+
   await db.customerLedger.create({
     data: {
       customerId: customers.get('START').id,
@@ -347,6 +372,7 @@ async function buildAndCheckExports(db, suffix = '') {
     }
     if (resource.key === 'inventory') {
       assert(payload.rows.length === 2, 'Inventory did not select both IST boundary records');
+      assert(!payload.rows.some((row) => row.barcode === 'S SOLDOUT QA 1'), 'Sold-out barcode appeared in the Inventory export.');
       const names = payload.sheets.map((sheet) => sheet.name);
       assert(names.includes('Gold') && names.includes('Silver'), 'Inventory is missing Gold or Silver item sheet');
     }

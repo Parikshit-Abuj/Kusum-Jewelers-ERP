@@ -546,10 +546,21 @@ async function getExportPayload(db, key, range) {
     }
 
     // ────────────────────────────────────────────────────────────
-    //  INVENTORY — All records + summary + per-metal
+    //  INVENTORY — Live available records + summary + per-metal
     // ────────────────────────────────────────────────────────────
     case 'inventory': {
-      const products = await db.product.findMany({ where: { createdAt: dateTimeRange(range) } });
+      // An Inventory export is a live stock register, never a historical
+      // movement report. Sold barcode rows are deleted on billing, and a
+      // manually zeroed item is marked SOLD_OUT; neither may reappear here.
+      // Historical sold details remain available through Sales and Stock
+      // movements exports instead.
+      const products = await db.product.findMany({
+        where: {
+          createdAt: dateTimeRange(range),
+          status: 'AVAILABLE',
+          quantity: { gt: 0 }
+        }
+      });
 
       const sortedProducts = [...products].sort((a, b) => {
         const md = METAL_ORDER.indexOf(a.metal) - METAL_ORDER.indexOf(b.metal);

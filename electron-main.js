@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, shell } = require('electron');
+const { app, BrowserWindow, dialog, shell, session } = require('electron');
 const fs = require('fs');
 const http = require('http');
 const net = require('net');
@@ -42,6 +42,9 @@ app.setAppUserModelId('KusumJewelersERP');
 
 let erpWindow;
 let localPort;
+// Do not prefix this partition with `persist:`. It exists only for this
+// Electron process and is discarded when the cashier closes the ERP.
+const cashierSessionPartition = 'kusum-erp-cashier-session';
 
 function isTrustedLocalUrl(value) {
   try {
@@ -106,13 +109,29 @@ async function openErpWindow() {
   try {
     await startErpServer();
     await waitForServer();
+    // An ERP desktop launch is a new cashier session. This partition is
+    // in-memory (not `persist:`), so it cannot retain a prior login after the
+    // desktop ERP has been closed. Clear it as a defensive no-op as well.
+    try {
+      await session.fromPartition(cashierSessionPartition).clearStorageData({ storages: ['cookies'] });
+    } catch (error) {
+      // A login prompt is important, but a damaged Chromium cache must never
+      // stop the ERP from opening. The server still enforces authentication.
+      writeStartupLog(`Could not clear previous desktop cookies: ${error.message || error}`);
+    }
     erpWindow = new BrowserWindow({
       width: 1440,
       height: 920,
       minWidth: 1040,
       minHeight: 720,
       title: 'Kusum ERP',
-      webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false }
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        spellcheck: false,
+        partition: cashierSessionPartition
+      }
     });
 
     erpWindow.webContents.setWindowOpenHandler(({ url }) => {

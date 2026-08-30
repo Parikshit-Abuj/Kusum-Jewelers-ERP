@@ -5,6 +5,7 @@ const mysql = require('mysql2/promise');
 const { PrismaClient } = require('@prisma/client');
 const { runBundledMigrations } = require('../src/lib/shop-provisioning');
 const { parseDatabaseConnection } = require('../src/lib/sql-backup-restore');
+const { getExportPayload } = require('../src/lib/data-lifecycle');
 
 const appRoot = path.join(__dirname, '..');
 const testDatabase = 'kusum_erp_sync_weight_qa_20260828';
@@ -157,6 +158,9 @@ async function main() {
         DATABASE_URL: testDatabaseUrl,
         PORT: String(testPort),
         AUTH_USERNAME: auditUser,
+        // Never inherit a developer/shop password hash into this isolated
+        // audit process. Its known test password must be the only credential.
+        AUTH_PASSWORD_HASH: '',
         AUTH_PASSWORD: auditPassword,
         SESSION_SECRET: 'automatic-sync-weight-audit-session-secret',
         NODE_ENV: 'test'
@@ -238,6 +242,8 @@ async function main() {
     assert(Number(sale.items[0].metalAmount) === 7125, `Metal value did not use edited weight: ${sale.items[0].metalAmount}.`);
     assert(Number(sale.items[0].makingCharge) === 712.5, `Per-gram making charge did not use edited weight: ${sale.items[0].makingCharge}.`);
     assert(await database.product.findUnique({ where: { id: product.id } }) === null, 'Sold barcode was not removed from inventory.');
+    const inventoryExport = await getExportPayload(database, 'inventory', { from: '2000-01-01', to: '2099-12-31' });
+    assert(!inventoryExport.rows.some((row) => row.barcode === product.barcode), 'Sold/deleted barcode appeared in the Inventory Excel data.');
     const saleCredit = await database.customerLedger.findFirst({ where: { saleId: sale.id, type: 'SALE_CREDIT' } });
     assert(saleCredit && Math.abs(Number(saleCredit.amount) - Number(sale.balance)) < 0.011,
       'Sale balance due was not synchronized exactly to the customer ledger.');
@@ -298,32 +304,14 @@ async function main() {
     assert(!uiHtml.includes('name="syncCashbook"') && !uiHtml.includes('name="syncLedger"'),
       'An optional synchronization checkbox is still rendered in the ERP.');
 
-    const sqlDownload = await request('/data/backup-sql');
-    const downloadedSql = await sqlDownload.text();
-    assert(sqlDownload.status === 200, `SQL download route failed with HTTP ${sqlDownload.status}.`);
-    assert((sqlDownload.headers.get('content-type') || '').includes('application/sql'), 'SQL download returned the wrong content type.');
-    assert(/attachment; filename="kusum-erp-backup-[^"]+\.sql"/i.test(sqlDownload.headers.get('content-disposition') || ''),
-      'SQL download returned an invalid backup filename.');
-    assert(downloadedSql.includes('-- End of Kusum ERP Backup'), 'SQL download route returned an incomplete backup.');
-
-    const wrongExtension = await uploadSql('/data/restore-sql', downloadedSql, 'backup.txt');
-    assert(wrongExtension.status === 302 && /error=/i.test(wrongExtension.headers.get('location') || ''),
-      'SQL restore route accepted a file without the .sql extension.');
-    const invalidSql = await uploadSql('/data/restore-sql', 'DROP DATABASE kusum_erp;', 'invalid.sql');
-    assert(invalidSql.status === 302 && /error=/i.test(invalidSql.headers.get('location') || ''),
-      'SQL restore route accepted a non-ERP SQL file.');
-
-    await database.customer.create({ data: { name: 'Must disappear after SQL restore', phone: '9000099929' } });
-    await database.$disconnect();
-    database = null;
-    const sqlRestore = await uploadSql('/data/restore-sql', downloadedSql, 'kusum-erp-audit-backup.sql');
-    assert(sqlRestore.status === 302 && /message=/i.test(sqlRestore.headers.get('location') || ''),
-      `SQL restore route failed: ${sqlRestore.headers.get('location') || sqlRestore.status}.`);
-    database = new PrismaClient({ datasourceUrl: testDatabaseUrl });
-    await database.$connect();
-    assert(await database.customer.findUnique({ where: { phone: '9000099929' } }) === null,
-      'SQL restore did not replace data created after the download.');
-    assert(await database.sale.findUnique({ where: { invoiceNumber } }), 'SQL restore lost the downloaded sale record.');
+    // SQL backup and restore deliberately live outside the ERP UI now. Large
+    // shop backups are handled through MySQL Workbench or command-line tools.
+    const [sqlDownload, sqlRestore] = await Promise.all([
+      request('/data/backup-sql'),
+      request('/data/restore-sql', { method: 'POST' })
+    ]);
+    assert(sqlDownload.status === 404, `Removed SQL download route returned HTTP ${sqlDownload.status}.`);
+    assert(sqlRestore.status === 404, `Removed SQL restore route returned HTTP ${sqlRestore.status}.`);
 
     console.log(JSON.stringify({
       result: 'PASS',
@@ -337,9 +325,7 @@ async function main() {
       soldBarcodeRemoved: true,
       legacyMultiQuantityBarcodeRemoved: true,
       invoicePdf: true,
-      sqlDownloadRoute: true,
-      sqlImportRoute: true,
-      invalidSqlRejected: true
+      sqlUiDisabled: true
     }, null, 2));
   } finally {
     await stopServer().catch(() => {});

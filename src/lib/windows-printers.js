@@ -19,7 +19,9 @@ function listWindowsPrinters(force = false) {
   return new Promise((resolve) => {
     execFile(powershellPath(), ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', printerScript()], {
       windowsHide: true,
-      timeout: 8000,
+      // Checking a Windows queue is only a manual diagnostic. Keep a broken
+      // driver or an unplugged network queue from making the ERP feel frozen.
+      timeout: 3500,
       maxBuffer: 1024 * 1024
     }, (error, stdout, stderr) => {
       try {
@@ -94,17 +96,14 @@ function statusFromPrinterList(preferredName, listed, checked = true) {
 }
 
 function cachedTscPrinterStatus(preferredName) {
-  if (!cachedPrinters) {
-    const configuredName = String(preferredName || 'TSC TTP-244 Pro').trim();
-    return {
-      available: false,
-      name: configuredName,
-      message: 'Printer status has not been checked yet. Inventory opens immediately; click Recheck printer before troubleshooting.',
-      printers: [],
-      checked: false
-    };
-  }
-  return statusFromPrinterList(preferredName, cachedPrinters, false);
+  const configuredName = String(preferredName || 'TSC TTP-244 Pro').trim();
+  return {
+    available: null,
+    name: configuredName,
+    message: 'Printer is configured. No automatic queue check is run; printing sends native TSPL directly to the Windows queue.',
+    printers: cachedPrinters?.printers || [],
+    checked: false
+  };
 }
 
 async function resolveTscPrinter(preferredName, force = false) {

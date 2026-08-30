@@ -1,14 +1,10 @@
 const os = require('os');
-const fs = require('fs');
-const fsPromises = require('fs/promises');
 const dotenv = require('dotenv');
 const express = require('express');
 const expressLayouts = require('express-ejs-layouts');
 const session = require('express-session');
-const morgan = require('morgan');
 const path = require('path');
 const crypto = require('crypto');
-const mysql = require('mysql2/promise');
 const appRoot = path.join(__dirname, '..');
 const shopDataDirectory = process.env.KUSUM_APP_DATA
   || path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Kusum Jewelers ERP');
@@ -27,37 +23,12 @@ const { resolveTscPrinter, cachedTscPrinterStatus } = require('./lib/windows-pri
 const { provisionShopDatabase, enableNetworkSharing, updatePrinterConfiguration, updateLoginConfiguration, parseDatabaseConnection, isLocalHost, runBundledMigrations, verifyClientConnection } = require('./lib/shop-provisioning');
 const { buildExcelExport } = require('./lib/excel-export');
 const { RESOURCE_LIST, resourceFor, parseDateRange, getExportPayload, archiveData } = require('./lib/data-lifecycle');
-const { generateSqlBackupFile, cleanupSqlBackupFile, importSqlBackupFile } = require('./lib/sql-backup-restore');
 const { paymentMethodFromComponents, reverseAndDeleteCashbookEntry, deleteSettledUrdPurchase } = require('./lib/accounting-reversal');
 const { number, asArray, dateInput, startOfToday, dateTimeFromInput, localDateTimeRange, money, grams, nextDocumentNumber, nextBatchDocumentNumber, metalRateFromDailyRate, makingAmount } = require('./lib/helpers');
 const { nextBarcode } = require('./lib/barcode-sequence');
 const { upsertItemName } = require('./lib/item-names');
 const { hasConfiguredPassword, passwordMatchesEnvironment, secureTextMatch, usesKnownDefaultPassword } = require('./lib/auth-security');
 const { PrismaSessionStore } = require('./lib/mysql-session-store');
-const multer = require('multer');
-
-const sqlUploadDirectory = process.env.KUSUM_APP_DATA
-  ? path.join(shopDataDirectory, 'sql-uploads')
-  : path.join(os.tmpdir(), 'kusum-erp-sql-uploads');
-fs.mkdirSync(sqlUploadDirectory, { recursive: true });
-const sqlUpload = multer({
-  limits: { fileSize: 512 * 1024 * 1024 },
-  storage: multer.diskStorage({
-    destination: sqlUploadDirectory,
-    filename: (req, file, callback) => callback(null, `${crypto.randomUUID()}.sql`)
-  })
-});
-
-function receiveSqlUpload(req, res, next) {
-  sqlUpload.single('sqlFile')(req, res, (error) => {
-    if (!error) return next();
-    const message = error.code === 'LIMIT_FILE_SIZE'
-      ? 'The SQL backup is larger than 512 MB. Restore it with MySQL tools on the Main database PC.'
-      : (error.message || 'Could not read the uploaded SQL backup.');
-    return redirectWith(res, '/data-management', 'error', message);
-  });
-}
-
 let prisma = createPrisma();
 let databaseHealth = { checkedAt: 0, error: null };
 const app = express();
@@ -69,7 +40,7 @@ app.set('layout', 'layout');
 app.use(expressLayouts);
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
-app.use(morgan('dev'));
+if (process.env.NODE_ENV === 'development') app.use(require('morgan')('dev'));
 app.use(session({
   name: 'kusum.erp.sid',
   secret: process.env.SESSION_SECRET,
@@ -94,89 +65,29 @@ app.use((req, res, next) => {
   next();
 });
 
-// ── Real-Time Multi-PC Synchronization Hub (SSE) ─────────────
-const sseClients = new Set();
-let syncRevisionQueue = Promise.resolve();
-
-async function bumpSharedSyncRevision(attempt = 1) {
-  try {
-    await prisma.$executeRaw`
-      INSERT INTO \`SyncRevision\` (\`id\`, \`revision\`, \`updatedAt\`)
-      VALUES (1, 1, CURRENT_TIMESTAMP(3))
-      ON DUPLICATE KEY UPDATE
-        \`revision\` = \`revision\` + 1,
-        \`updatedAt\` = CURRENT_TIMESTAMP(3)
-    `;
-  } catch (error) {
-    if (attempt < 3) {
-      await new Promise((resolve) => setTimeout(resolve, attempt * 75));
-      return bumpSharedSyncRevision(attempt + 1);
-    }
-    console.error('Could not update the shared ERP sync revision:', error.message || error);
-  }
-}
-
-function broadcastSyncEvent(type, payload = {}) {
-  const data = JSON.stringify({ type, payload, timestamp: Date.now() });
-  const msg = `event: message\ndata: ${data}\n\n`;
-  for (const client of sseClients) {
-    try {
-      client.write(msg);
-    } catch (_) {
-      sseClients.delete(client);
-    }
-  }
-  // Separate Electron installations have separate in-memory SSE hubs. Bump a
-  // shared MySQL revision so every PC can notice this committed change too.
-  if (!shopSetupRequired()) {
-    syncRevisionQueue = syncRevisionQueue.then(() => bumpSharedSyncRevision(), () => bumpSharedSyncRevision());
-  }
-}
-
-// 25-second keep-alive heartbeat
-setInterval(() => {
-  for (const client of sseClients) {
-    try {
-      client.write(': keep-alive\n\n');
-    } catch (_) {
-      sseClients.delete(client);
-    }
-  }
-}, 25000);
-
 app.get('/favicon.ico', (req, res) => res.status(204).end());
-
-app.get('/api/realtime-events', (req, res) => {
-  if (!req.session?.authenticated) return res.status(401).end();
-  if (req.socket) {
-    req.socket.setKeepAlive(true);
-    req.socket.setNoDelay(true);
-  }
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache, no-transform, no-store',
-    'Connection': 'keep-alive',
-    'X-Accel-Buffering': 'no'
-  });
-  if (res.flushHeaders) res.flushHeaders();
-  res.write(`event: connected\ndata: ${JSON.stringify({ status: 'connected', activeClients: sseClients.size + 1 })}\n\n`);
-  sseClients.add(res);
-
-  const cleanup = () => {
-    sseClients.delete(res);
-    try { res.end(); } catch (_) {}
-  };
-
-  req.on('close', cleanup);
-  req.on('end', cleanup);
-  res.on('close', cleanup);
-  res.on('finish', cleanup);
-  res.on('error', cleanup);
-});
 
 function redirectWith(res, route, type, message) {
   const separator = route.includes('?') ? '&' : '?';
   res.redirect(`${route}${separator}${type}=${encodeURIComponent(message)}`);
+}
+
+// The session store is MySQL-backed. Explicitly save a regenerated session
+// before redirecting, otherwise a very fast next request can arrive before
+// the new cashier login has reached MySQL.
+function regenerateAndSaveSession(req, res, values, destination, failureTitle) {
+  req.session.regenerate((regenerateError) => {
+    if (regenerateError) {
+      return res.status(500).render('error', { title: failureTitle, detail: regenerateError.message });
+    }
+    Object.assign(req.session, values);
+    return req.session.save((saveError) => {
+      if (saveError) {
+        return res.status(500).render('error', { title: failureTitle, detail: saveError.message || String(saveError) });
+      }
+      return res.redirect(destination);
+    });
+  });
 }
 
 function paginationFor(req, totalItems, requestedPage, pageSize) {
@@ -211,52 +122,6 @@ function isLoopbackRequest(req) {
 function requireLoopback(req, res, next) {
   if (isLoopbackRequest(req)) return next();
   return res.status(403).send('ERP setup and connection repair are available only on this PC.');
-}
-
-function databaseMutationLockName() {
-  const connection = parseDatabaseConnection(process.env.DATABASE_URL);
-  const identity = `${connection.host}:${connection.port}/${connection.database}`;
-  return `kusum_erp_write_${crypto.createHash('sha256').update(identity).digest('hex').slice(0, 24)}`;
-}
-
-async function databaseMutationLock(req, res, next) {
-  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)
-      || req.path === '/data/export'
-      || req.path.startsWith('/labels/')
-      || req.path === '/printer-setup') return next();
-
-  let connection;
-  try {
-    const config = parseDatabaseConnection(process.env.DATABASE_URL);
-    connection = await mysql.createConnection({
-      host: config.host,
-      port: config.port,
-      user: config.username,
-      password: config.password,
-      database: config.database,
-      connectTimeout: 12000
-    });
-    const [[lock]] = await connection.query('SELECT GET_LOCK(?, 15) AS acquired', [databaseMutationLockName()]);
-    if (Number(lock?.acquired) !== 1) {
-      throw new Error('Another ERP PC is saving or restoring data. Wait a moment and try again.');
-    }
-    let released = false;
-    const release = async () => {
-      if (released) return;
-      released = true;
-      try { await connection.query('DO RELEASE_LOCK(?)', [databaseMutationLockName()]); } catch (_) {}
-      await connection.end().catch(() => {});
-    };
-    res.once('finish', release);
-    res.once('close', release);
-    return next();
-  } catch (error) {
-    if (connection) await connection.end().catch(() => {});
-    if (req.is('json') || req.headers['content-type']?.includes('application/json')) {
-      return res.status(409).json({ error: error.message || 'ERP is busy on another PC.' });
-    }
-    return redirectWith(res, req.get('referer') || '/', 'error', error.message || 'ERP is busy on another PC.');
-  }
 }
 
 function labelRequests(body) {
@@ -560,9 +425,9 @@ async function resolveLabelPrinter(force = false) {
   if (printer.mode === 'TCP') {
     if (!force) {
       return {
-        available: false,
+        available: null,
         name: `TCP ${printer.host || 'printer IP'}:${printer.port || 9100}`,
-        message: 'Direct TCP printer status has not been checked yet. Inventory opens immediately; click Recheck printer before troubleshooting.',
+        message: 'Direct TCP printer is configured. No automatic connection check is run; printing sends native TSPL directly to the printer.',
         checked: false
       };
     }
@@ -638,12 +503,10 @@ app.post('/login', async (req, res) => {
   if (!usernameOk || !passwordOk) return redirectWith(res, '/login', 'error', 'Incorrect username or password.');
 
   if (usesKnownDefaultPassword(process.env)) {
-    return req.session.regenerate((error) => {
-      if (error) return res.status(500).render('error', { title: 'Sign-in failed', detail: error.message });
-      req.session.pendingPasswordChange = true;
-      req.session.username = process.env.AUTH_USERNAME;
-      res.redirect('/change-password?message=Choose your own ERP password before continuing.');
-    });
+    return regenerateAndSaveSession(req, res, {
+      pendingPasswordChange: true,
+      username: process.env.AUTH_USERNAME
+    }, '/change-password?message=Choose your own ERP password before continuing.', 'Sign-in failed');
   }
 
   // Transparently replace plaintext credentials from older releases after the
@@ -662,12 +525,10 @@ app.post('/login', async (req, res) => {
       return redirectWith(res, '/login', 'error', `Could not secure the saved ERP login: ${error.message}`);
     }
   }
-  req.session.regenerate((error) => {
-    if (error) return res.status(500).render('error', { title: 'Sign-in failed', detail: error.message });
-    req.session.authenticated = true;
-    req.session.username = process.env.AUTH_USERNAME;
-    res.redirect('/');
-  });
+  return regenerateAndSaveSession(req, res, {
+    authenticated: true,
+    username: process.env.AUTH_USERNAME
+  }, '/', 'Sign-in failed');
 });
 
 app.get('/change-password', (req, res) => {
@@ -705,12 +566,10 @@ app.post('/change-password', async (req, res) => {
     });
     Object.assign(process.env, updated);
     delete process.env.AUTH_PASSWORD;
-    req.session.regenerate((error) => {
-      if (error) return res.status(500).render('error', { title: 'Password change failed', detail: error.message });
-      req.session.authenticated = true;
-      req.session.username = process.env.AUTH_USERNAME;
-      res.redirect('/?message=ERP login password changed securely.');
-    });
+    return regenerateAndSaveSession(req, res, {
+      authenticated: true,
+      username: process.env.AUTH_USERNAME
+    }, '/?message=ERP login password changed securely.', 'Password change failed');
   } catch (error) {
     redirectWith(res, '/change-password', 'error', error.message || 'Could not change the ERP password.');
   }
@@ -727,17 +586,6 @@ app.use(async (req, res, next) => {
     return redirectWith(res, '/connection-repair', 'error', 'The saved database connection is unavailable. Enter the current database details below.');
   }
   return next();
-});
-
-app.use(databaseMutationLock);
-
-app.get('/api/sync-version', async (req, res, next) => {
-  try {
-    const rows = await prisma.$queryRaw`SELECT \`revision\`, \`updatedAt\` FROM \`SyncRevision\` WHERE \`id\` = 1`;
-    const row = rows[0] || { revision: 0, updatedAt: null };
-    res.setHeader('Cache-Control', 'no-store');
-    res.json({ revision: String(row.revision || 0), updatedAt: row.updatedAt || null });
-  } catch (error) { next(error); }
 });
 
 app.get('/network-setup', (req, res, next) => {
@@ -786,9 +634,7 @@ app.get('/data-management', (req, res, next) => {
     const selectedResource = req.query.resource || 'sales';
     const resource = resourceFor(selectedResource);
     const range = parseDateRange(req.query);
-    const restoreAllowed = isLocalHost(parseDatabaseConnection(process.env.DATABASE_URL).host)
-      && String(process.env.KUSUM_DEPLOYMENT_MODE || 'SERVER').toUpperCase() !== 'CLIENT';
-    res.render('data-management/index', { title: 'Data export & archive', resources: RESOURCE_LIST, selectedResource, resource, range, restoreAllowed });
+    res.render('data-management/index', { title: 'Data export & archive', resources: RESOURCE_LIST, selectedResource, resource, range });
   } catch (error) { next(error); }
 });
 
@@ -819,62 +665,12 @@ app.post('/data/archive', async (req, res) => {
       throw new Error('Tick the confirmation box and type DELETE before permanently removing data.');
     }
     const result = await archiveData(prisma, resource.key, range);
-    broadcastSyncEvent('DATA_ARCHIVED', { resource: resource.key, from: range.from, to: range.to, deleted: result.deleted });
     const skipped = result.skipped ? ` ${result.skipped} protected record${result.skipped === 1 ? '' : 's'} kept.` : '';
     const note = result.note ? ` ${result.note}` : '';
     redirectWith(res, `/data-management?resource=${resource.key}&from=${range.from}&to=${range.to}`, 'message', `${result.deleted} ${resource.label.toLowerCase()} record${result.deleted === 1 ? '' : 's'} permanently deleted.${skipped}${note}`);
   } catch (error) {
     const query = new URLSearchParams({ resource: resource?.key || req.body.resource || 'sales', from: range?.from || req.body.from || '', to: range?.to || req.body.to || '', error: error.message || 'Could not remove data.' });
     res.redirect(`/data-management?${query.toString()}`);
-  }
-});
-
-app.get('/data/backup-sql', async (req, res) => {
-  let backup;
-  try {
-    backup = await generateSqlBackupFile(process.env.DATABASE_URL);
-    res.setHeader('Content-Type', 'application/sql; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${backup.filename}"`);
-    res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.sendFile(backup.filePath, async (error) => {
-      await cleanupSqlBackupFile(backup);
-      if (error && !res.headersSent) redirectWith(res, '/data-management', 'error', `Could not send SQL backup: ${error.message}`);
-    });
-  } catch (error) {
-    await cleanupSqlBackupFile(backup);
-    redirectWith(res, '/data-management', 'error', `Could not generate SQL backup: ${error.message}`);
-  }
-});
-
-app.post('/data/restore-sql', receiveSqlUpload, async (req, res) => {
-  let restoreAttempted = false;
-  let uploadedPath = null;
-  try {
-    const connection = parseDatabaseConnection(process.env.DATABASE_URL);
-    if (!isLocalHost(connection.host) || String(process.env.KUSUM_DEPLOYMENT_MODE || 'SERVER').toUpperCase() === 'CLIENT') {
-      throw new Error('For safety, database restore is available only on the Main database PC.');
-    }
-    if (!req.file || !req.file.path) {
-      throw new Error('Please choose a .sql backup file to upload.');
-    }
-    uploadedPath = req.file.path;
-    if (path.extname(req.file.originalname || '').toLowerCase() !== '.sql') {
-      throw new Error('Choose a Kusum ERP backup file with the .sql extension.');
-    }
-    if (req.body.restoreAcknowledged !== 'on') {
-      throw new Error('Please tick the confirmation box to restore the database.');
-    }
-    restoreAttempted = true;
-    const result = await importSqlBackupFile(process.env.DATABASE_URL, uploadedPath, appRoot);
-    await reloadPrismaClient();
-    broadcastSyncEvent('DATABASE_RESTORED', { tables: result.tableCount });
-    redirectWith(res, '/data-management', 'message', `Database backup imported successfully! Restored ${result.tableCount} tables (${result.executedStatements} SQL statements executed). All records are ready.`);
-  } catch (error) {
-    if (restoreAttempted) await reloadPrismaClient().catch(() => {});
-    redirectWith(res, '/data-management', 'error', `Could not restore database from SQL backup: ${error.message}`);
-  } finally {
-    if (uploadedPath) await fsPromises.rm(uploadedPath, { force: true }).catch(() => {});
   }
 });
 
@@ -970,7 +766,6 @@ app.post('/rates', async (req, res, next) => {
       create: { rateDate, gold22k, gold24k, silver, note: req.body.note || null },
       update: { gold22k, gold24k, silver, note: req.body.note || null }
     });
-    broadcastSyncEvent('RATES_UPDATED', { date: rateDate, gold22k, gold24k, silver });
     redirectWith(res, `/rates?date=${rateDate}`, 'message', `Rates saved for ${rateDate}.`);
   } catch (error) { next(error); }
 });
@@ -1064,14 +859,18 @@ app.get('/inventory', async (req, res, next) => {
 app.post('/labels/test-print', async (req, res) => {
   try {
     const printerTransport = configuredLabelPrinter();
-    const printerStatus = await resolveLabelPrinter(true);
-    if (!printerStatus.available) throw new Error(printerStatus.message);
+    if (printerTransport.mode === 'WINDOWS' && !printerTransport.name) {
+      throw new Error('Set the installed Windows printer name before sending labels.');
+    }
+    const printerName = printerTransport.mode === 'TCP'
+      ? `TCP ${printerTransport.host}:${printerTransport.port}`
+      : printerTransport.name;
     const tspl = buildTsplJob([{ product: {
       metal: 'GOLD', barcode: 'TSC TEST', name: 'PRINTER TEST',
       grossWeight: 0, stoneWeight: 0, netWeight: 0
     } }]);
-    const result = await sendTsplToPrinter(printerTransport.mode === 'TCP' ? printerTransport : { mode: 'WINDOWS', name: printerStatus.name }, tspl);
-    redirectWith(res, '/inventory', 'message', `TSC test label ${printerTransport.mode === 'TCP' ? 'sent to' : 'queued to'} ${printerStatus.name}. ${result}`);
+    const result = await sendTsplToPrinter(printerTransport, tspl);
+    redirectWith(res, '/inventory', 'message', `TSC test label ${printerTransport.mode === 'TCP' ? 'sent to' : 'queued to'} ${printerName}. ${result}`);
   } catch (error) {
     redirectWith(res, '/inventory', 'error', error.message || 'Could not send the TSC test label.');
   }
@@ -1110,9 +909,9 @@ app.post('/labels/print', express.json(), async (req, res, next) => {
       if (isJson) return res.status(400).json({ error: 'Set the installed Windows printer name before sending labels.' });
       return redirectWith(res, '/inventory', 'error', 'Set the installed Windows printer name before sending labels.');
     }
-    const printerStatus = await resolveLabelPrinter(true);
-    if (!printerStatus.available) throw new Error(printerStatus.message);
-    const printerName = printerStatus.name;
+    const printerName = printerTransport.mode === 'TCP'
+      ? `TCP ${printerTransport.host}:${printerTransport.port}`
+      : printerTransport.name;
     const products = await prisma.product.findMany({ where: { id: { in: requests.map((row) => row.id) } } });
     if (products.length !== requests.length) {
       if (isJson) return res.status(400).json({ error: 'One or more selected inventory items could not be found.' });
@@ -1125,7 +924,7 @@ app.post('/labels/print', express.json(), async (req, res, next) => {
       return Array.from({ length: copies }, (_, copyIndex) => ({ product, copyIndex: copyIndex + 1, copies }));
     });
     const tspl = buildTsplJob(labels);
-    const result = await sendTsplToPrinter(printerTransport.mode === 'TCP' ? printerTransport : { mode: 'WINDOWS', name: printerName }, tspl);
+    const result = await sendTsplToPrinter(printerTransport, tspl);
     const successMsg = `${labels.length} native TSPL label${labels.length === 1 ? '' : 's'} ${printerTransport.mode === 'TCP' ? 'sent to' : 'queued to'} ${printerName}. ${result}`;
     if (isJson) {
       return res.json({ success: true, message: successMsg, count: labels.length });
@@ -1266,7 +1065,6 @@ app.post('/api/inventory/batch-piece', express.json(), async (req, res, next) =>
       };
     });
 
-    broadcastSyncEvent('INVENTORY_CHANGED', { action: 'BATCH_PIECE_ADDED', batchDocNo: product.batchDocNo, product });
     res.json({ success: true, product });
   } catch (error) {
     console.error('Batch piece addition error:', error);
@@ -1320,7 +1118,6 @@ app.put('/api/inventory/batch-piece/:id', express.json(), async (req, res, next)
       };
     });
 
-    broadcastSyncEvent('INVENTORY_CHANGED', { action: 'PIECE_UPDATED', id, product: updated, batchDocNo: updated.batchDocNo });
     res.json({ success: true, product: updated });
   } catch (error) {
     console.error('Batch piece update error:', error);
@@ -1339,7 +1136,6 @@ app.delete('/api/inventory/batch-piece/:id', async (req, res, next) => {
       await tx.stockMovement.deleteMany({ where: { productId: id } });
       await tx.product.delete({ where: { id } });
     });
-    broadcastSyncEvent('INVENTORY_CHANGED', { action: 'PIECE_DELETED', id, batchDocNo });
     res.json({ success: true, id });
   } catch (error) {
     console.error('Batch piece delete error:', error);
@@ -1390,7 +1186,6 @@ app.post('/inventory', async (req, res, next) => {
       await upsertItemName(tx, req.body.name.trim(), req.body.category.trim(), { updateCategory: false });
       return product;
     });
-    broadcastSyncEvent('INVENTORY_CHANGED', { action: 'PRODUCT_CREATED', barcode: product.barcode, name: product.name });
     redirectWith(res, '/inventory', 'message', `${product.barcode} saved to inventory.`);
   } catch (error) {
     if (error.code === 'P2002') return redirectWith(res, '/inventory/new', 'error', 'SKU already exists.');
@@ -1434,7 +1229,6 @@ app.post('/inventory/:id', async (req, res, next) => {
       } });
       await upsertItemName(tx, req.body.name.trim(), req.body.category.trim(), { updateCategory: false });
     });
-    broadcastSyncEvent('INVENTORY_CHANGED', { action: 'PRODUCT_UPDATED', id });
     redirectWith(res, '/inventory', 'message', 'Item details updated.');
   } catch (error) { next(error); }
 });
@@ -1451,7 +1245,6 @@ app.post('/inventory/:id/adjust', async (req, res, next) => {
       await tx.product.update({ where: { id }, data: { quantity: nextQuantity, status: nextQuantity ? 'AVAILABLE' : 'SOLD_OUT' } });
       await tx.stockMovement.create({ data: stockMovementSnapshot(product, delta > 0 ? 'ADJUSTMENT_IN' : 'ADJUSTMENT_OUT', delta, req.body.note || 'Manual stock adjustment') });
     });
-    broadcastSyncEvent('INVENTORY_CHANGED', { action: 'STOCK_ADJUSTED', id, delta });
     redirectWith(res, '/inventory', 'message', 'Stock adjustment recorded.');
   } catch (error) { redirectWith(res, '/inventory', 'error', error.message || 'Could not adjust stock.'); }
 });
@@ -1492,7 +1285,6 @@ app.post('/customers', async (req, res, next) => {
     const phone = normalizePhone(req.body.phone);
     if (!validCustomerPhone(phone)) return redirectWith(res, '/customers', 'error', 'Enter a valid customer mobile number (10 to 15 digits).');
     const customer = await prisma.customer.create({ data: { name: req.body.name.trim(), phone, email: req.body.email || null, address: req.body.address || null } });
-    broadcastSyncEvent('CUSTOMER_UPDATED', { customerId: customer.id, action: 'CREATED' });
     redirectWith(res, '/customers', 'message', 'Customer added.');
   } catch (error) {
     if (error.code === 'P2002') return redirectWith(res, '/customers', 'error', 'That phone number already belongs to a customer.');
@@ -1563,8 +1355,6 @@ app.post('/customers/:id/payments', async (req, res, next) => {
         cashbookEntryId: cashbookEntry.id
       });
     });
-    broadcastSyncEvent('CUSTOMER_UPDATED', { customerId, action: 'PAYMENT_RECEIVED', amount });
-    broadcastSyncEvent('CASHBOOK_UPDATED', { type: 'IN', amount });
     redirectWith(res, `/customers/${customerId}`, 'message', 'Payment received and customer credit updated.');
   } catch (error) { redirectWith(res, `/customers/${req.params.id}`, 'error', error.message || 'Could not record payment.'); }
 });
@@ -1585,7 +1375,6 @@ app.post('/api/item-names', express.json(), async (req, res, next) => {
     const category = (req.body.category || '').trim();
     if (!name || !category) return res.status(400).json({ error: 'Name and category are required.' });
     const item = await upsertItemName(prisma, name, category, { returnItem: true });
-    broadcastSyncEvent('ITEM_NAMES_UPDATED', { name, category });
     res.json(item);
   } catch (error) { next(error); }
 });
@@ -1612,7 +1401,6 @@ app.post('/item-names/add', async (req, res, next) => {
     const category = (req.body.category || '').trim();
     if (!name || !category) return redirectWith(res, '/item-names', 'error', 'Name and category are required.');
     await upsertItemName(prisma, name, category);
-    broadcastSyncEvent('ITEM_NAMES_UPDATED', { name, category });
     redirectWith(res, '/item-names', 'message', `"${name}" added.`);
   } catch (error) { next(error); }
 });
@@ -1624,7 +1412,6 @@ app.post('/item-names/:id', async (req, res, next) => {
     const category = (req.body.category || '').trim();
     if (!name || !category) return redirectWith(res, '/item-names', 'error', 'Name and category are required.');
     await prisma.itemName.update({ where: { id }, data: { name, category } });
-    broadcastSyncEvent('ITEM_NAMES_UPDATED', { id, name, category, action: 'UPDATED' });
     redirectWith(res, '/item-names', 'message', `"${name}" updated.`);
   } catch (error) {
     if (error.code === 'P2002') return redirectWith(res, '/item-names', 'error', 'That item name already exists.');
@@ -1636,7 +1423,6 @@ app.post('/item-names/:id/delete', async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     const item = await prisma.itemName.delete({ where: { id } });
-    broadcastSyncEvent('ITEM_NAMES_UPDATED', { id, action: 'DELETED' });
     redirectWith(res, '/item-names', 'message', `"${item.name}" deleted.`);
   } catch (error) { next(error); }
 });
@@ -1858,15 +1644,6 @@ app.post('/sales', async (req, res, next) => {
       }
       return sale;
     });
-    broadcastSyncEvent('SALE_COMPLETED', {
-      invoiceNumber: sale.invoiceNumber,
-      customerId: sale.customerId,
-      total: Number(sale.total),
-      paid: Number(sale.paid),
-      balance: Number(sale.balance)
-    });
-    broadcastSyncEvent('INVENTORY_CHANGED', { action: 'ITEMS_SOLD', count: rows.length });
-    if (Number(sale.paid) > 0) broadcastSyncEvent('CASHBOOK_UPDATED', { type: 'IN', amount: Number(sale.paid) });
     redirectWith(res, `/sales/${sale.id}`, 'message', 'Sale saved, stock removed and customer credit updated.');
   } catch (error) { redirectWith(res, '/sales/new', 'error', error.message || 'Could not save sale.'); }
 });
@@ -1968,8 +1745,6 @@ app.post('/cashbook', async (req, res, next) => {
         });
       }
     });
-    broadcastSyncEvent('CASHBOOK_UPDATED', { entryDate: req.body.entryDate, type: req.body.type, amount: Number(req.body.amount) });
-    if (syncLedger) broadcastSyncEvent('CUSTOMER_UPDATED', { customerId, action: entryType === 'IN' ? 'PAYMENT_RECEIVED' : 'ADJUSTMENT', amount });
     const label = req.body.type === 'OUT' ? 'Cash out' : 'Cash in';
     const syncNote = syncLedger ? ' Customer ledger updated.' : '';
     redirectWith(res, '/cashbook', 'message', `${label} entry saved.${syncNote}`);
@@ -1979,8 +1754,6 @@ app.post('/cashbook', async (req, res, next) => {
 app.post('/cashbook/:id/delete', async (req, res, next) => {
   try {
     const result = await prisma.$transaction((tx) => reverseAndDeleteCashbookEntry(tx, Number(req.params.id)));
-    broadcastSyncEvent('CASHBOOK_UPDATED', { action: 'DELETED' });
-    if (result.affectedSales.length) broadcastSyncEvent('CUSTOMER_UPDATED', { action: 'PAYMENT_REVERSED', saleIds: result.affectedSales });
     redirectWith(res, '/cashbook', 'message', 'Entry deleted and all linked accounting records reversed.');
   } catch (error) { redirectWith(res, '/cashbook', 'error', error.message || 'Could not safely delete this cashbook entry.'); }
 });
@@ -2067,12 +1840,6 @@ app.post('/urd-purchases', async (req, res, next) => {
       }
       return record;
     });
-    broadcastSyncEvent('URD_COMPLETED', {
-      purchaseNumber: purchase.purchaseNumber,
-      totalAmount: Number(purchase.totalAmount),
-      paid: Number(purchase.paid)
-    });
-    if (paid > 0) broadcastSyncEvent('CASHBOOK_UPDATED', { type: 'OUT', amount: paid });
     redirectWith(res, '/urd-purchases', 'message', `URD Purchase ${purchase.purchaseNumber} saved.`);
   } catch (error) { next(error); }
 });
@@ -2115,8 +1882,6 @@ app.post('/urd-purchases/:id/payments', async (req, res) => {
       });
       return updated;
     });
-    broadcastSyncEvent('URD_UPDATED', { id, action: 'PAYOUT_RECORDED', amount, paid: Number(result.paid) });
-    broadcastSyncEvent('CASHBOOK_UPDATED', { type: 'OUT', amount });
     redirectWith(res, '/urd-purchases', 'message', `URD payout of ${money(amount)} recorded.`);
   } catch (error) {
     redirectWith(res, '/urd-purchases', 'error', error.message || 'Could not record the URD payout.');
@@ -2142,8 +1907,6 @@ app.post('/urd-purchases/:id/delete', async (req, res, next) => {
       await deleteSettledUrdPurchase(tx, record);
       return record;
     });
-    broadcastSyncEvent('URD_UPDATED', { id: purchase.id, action: 'DELETED' });
-    broadcastSyncEvent('CASHBOOK_UPDATED', { action: 'URD_DELETED', reference: purchase.purchaseNumber });
     redirectWith(res, '/urd-purchases', 'message', 'Purchase and its linked payout entries deleted.');
   } catch (error) {
     redirectWith(res, '/urd-purchases', 'error', error.message || 'Could not delete this URD purchase.');
@@ -2273,6 +2036,10 @@ app.use((req, res) => res.status(404).render('not-found', { title: 'Page not fou
 
 app.use((error, req, res, next) => {
   console.error(error);
+  // A file download or a client that closes a connection may already have
+  // committed response headers. Never turn that into an uncaught exception
+  // that closes the whole desktop ERP.
+  if (res.headersSent) return next(error);
   res.status(500).render('error', { title: 'Something went wrong', detail: process.env.NODE_ENV === 'development' ? error.message : null });
 });
 

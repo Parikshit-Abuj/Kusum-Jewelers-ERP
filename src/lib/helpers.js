@@ -124,18 +124,15 @@ async function nextDocumentNumber(db, prefix, value = new Date()) {
 async function reserveBatchNumber(tx, value = new Date()) {
   const day = dateInput(value).replaceAll('-', '');
   const prefix = `BATCH-${day}`;
-  const [existingRow] = await tx.$queryRaw`
-    SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(\`batchDocNo\`, '-', -1) AS UNSIGNED)), 0) AS lastNumber
-    FROM \`Product\`
-    WHERE \`batchDocNo\` LIKE ${`${prefix}-%`}
-  `;
-  const existingMaximum = Math.max(0, Number(existingRow?.lastNumber || 0));
   const key = `BATCH-${day}`;
+  // Legacy batch counters are initialized once by a migration. Every normal
+  // reservation below is a single atomic database statement, even when two
+  // counters open Batch Add at the exact same time.
   await tx.$executeRaw`
     INSERT INTO \`DocumentSequence\` (\`key\`, \`lastNumber\`, \`updatedAt\`)
-    VALUES (${key}, LAST_INSERT_ID(${existingMaximum + 1}), CURRENT_TIMESTAMP(3))
+    VALUES (${key}, LAST_INSERT_ID(1), CURRENT_TIMESTAMP(3))
     ON DUPLICATE KEY UPDATE
-      \`lastNumber\` = LAST_INSERT_ID(GREATEST(\`lastNumber\`, ${existingMaximum}) + 1),
+      \`lastNumber\` = LAST_INSERT_ID(\`lastNumber\` + 1),
       \`updatedAt\` = CURRENT_TIMESTAMP(3)
   `;
   const rows = await tx.$queryRaw`SELECT LAST_INSERT_ID() AS lastNumber`;
