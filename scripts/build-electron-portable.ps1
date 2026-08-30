@@ -59,11 +59,15 @@ New-Item -ItemType Directory -Path $outputPath -Force | Out-Null
 # Use an allowlist-oriented set of filters. Only runtime application files and
 # production dependencies may enter the shop package; development/audit scripts
 # are deliberately unreachable from a client installation.
+# SQL backup/restore is retained for isolated QA only. The shop ERP uses
+# MySQL Workbench or the MySQL command line for manual backups, and no
+# production route imports this helper.
 & node $packager $projectRoot 'Kusum ERP' --platform=win32 --arch=x64 --out=$outputPath --overwrite --prune=true --asar=false --electron-zip-dir=$electronZipDirectory `
   --ignore='^/(?!electron-main\.js$|package\.json$|package-lock\.json$|public(?:/|$)|src(?:/|$)|prisma(?:/|$)|scripts(?:/|$)|node_modules(?:/|$)).*' `
   --ignore='^/scripts/(?!print-tspl\.ps1$|list-printers\.ps1$).*' `
   --ignore='^/prisma/(?!schema\.prisma$|migrations(?:/|$)).*' `
-  --ignore='^/src/excel-runtime/node_modules(?:/|$)'
+  --ignore='^/src/excel-runtime/node_modules(?:/|$)' `
+  --ignore='^/src/lib/sql-backup-restore\.js$'
 if ($LASTEXITCODE -ne 0) { throw 'Could not package the Electron desktop ERP.' }
 
 $applicationDirectory = Join-Path $outputPath 'Kusum ERP-win32-x64'
