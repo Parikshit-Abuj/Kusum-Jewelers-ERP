@@ -36,7 +36,7 @@
           const rawPhone = (sale.customer?.phone || '').replace(/\D/g, '');
           const waPhone = rawPhone.length === 10 ? '91' + rawPhone : rawPhone;
           const grandTotalFmt = Number(sale.total).toLocaleString('en-IN', { minimumFractionDigits: 2 });
-          const waText = encodeURIComponent(`*Kusum Jewellers - Tax Invoice*\n\nNamaste ${sale.customer?.name || 'Customer'},\nThank you for shopping with Kusum Jewellers!\n\n📄 *Invoice No:* ${sale.invoiceNumber}\n📅 *Date:* ${sale.saleDate.toLocaleDateString('en-IN')}\n💰 *Total Amount:* ₹${grandTotalFmt}\n\nPlease find your official Tax Invoice attached.`);
+          const waText = encodeURIComponent(`*Kusum ERP - Tax Invoice*\n\nNamaste ${sale.customer?.name || 'Customer'},\nThank you for shopping with Kusum ERP!\n\n📄 *Invoice No:* ${sale.invoiceNumber}\n📅 *Date:* ${sale.saleDate.toLocaleDateString('en-IN')}\n💰 *Total Amount:* ₹${grandTotalFmt}\n\nPlease find your official Tax Invoice attached.`);
       %>
         <tr>
           <td><strong><%= sale.invoiceNumber %></strong></td>
@@ -52,7 +52,7 @@
           <td class="actions">
             <a class="button ghost small" href="/sales/<%= sale.id %>/invoice.pdf" target="_blank" rel="noopener" title="Print / save PDF">PDF</a>
             <% if (waPhone) { %>
-              <a class="icon-button whatsapp-icon" href="https://web.whatsapp.com/send?phone=<%= waPhone %>&text=<%= waText %>" target="_blank" rel="noopener" title="Open customer WhatsApp chat">💬</a>
+              <a class="icon-button whatsapp-icon" href="whatsapp://send?phone=<%= waPhone %>&text=<%= waText %>" title="Open WhatsApp Desktop chat">💬</a>
             <% } %>
             <a class="icon-button" href="/sales/<%= sale.id %>" title="Open invoice">→</a>
           </td>

@@ -136,7 +136,7 @@ async function openErpWindow() {
 
     erpWindow.webContents.setWindowOpenHandler(({ url }) => {
       if (!isTrustedLocalUrl(url)) {
-        if (url.startsWith('https://') || url.startsWith('http://')) shell.openExternal(url);
+        if (url.startsWith('https://') || url.startsWith('http://') || url.startsWith('whatsapp://')) shell.openExternal(url);
         return { action: 'deny' };
       }
       return { action: 'allow' };
@@ -144,7 +144,7 @@ async function openErpWindow() {
     erpWindow.webContents.on('will-navigate', (event, url) => {
       if (isTrustedLocalUrl(url)) return;
       event.preventDefault();
-      if (url.startsWith('https://') || url.startsWith('http://')) shell.openExternal(url);
+      if (url.startsWith('https://') || url.startsWith('http://') || url.startsWith('whatsapp://')) shell.openExternal(url);
     });
 
     await erpWindow.loadURL(`http://127.0.0.1:${localPort}`);
