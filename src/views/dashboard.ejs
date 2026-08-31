@@ -1,60 +1,212 @@
 <header class="page-header">
-  <div><p class="eyebrow">Kusum ERP</p><h1>Good day — here's your shop at a glance.</h1><p class="muted">Live inventory, sales and customer credit in one place.</p></div>
+  <div>
+    <p class="eyebrow">Kusum ERP</p>
+    <h1>Good day — here's your shop at a glance.</h1>
+    <p class="muted">Live inventory, sales and customer credit in one place.</p>
+  </div>
   <div class="header-actions"><a class="button" href="/sales/new">+ New sale</a></div>
 </header>
 
 <section class="stats-grid">
-  <article class="stat-card accent-gold"><span class="stat-label">Gold stock</span><strong><%= grams(stats.goldWeight) %></strong><p><%= stats.goldPieces %> piece<%= stats.goldPieces === 1 ? '' : 's' %> · <a href="/inventory">View stock</a></p></article>
-  <article class="stat-card accent-silver"><span class="stat-label">Silver stock</span><strong><%= grams(stats.silverWeight) %></strong><p><%= stats.silverPieces %> piece<%= stats.silverPieces === 1 ? '' : 's' %> · <a href="/inventory">View stock</a></p></article>
-  <article class="stat-card"><span class="stat-label">Sales in period</span><strong><%= money(stats.sales) %></strong><p><%= stats.invoices %> invoice<%= stats.invoices === 1 ? '' : 's' %> today</p></article>
-  <article class="stat-card"><span class="stat-label">Amount collected</span><strong><%= money(stats.amountCollected) %></strong><p>Payments recorded against today's invoices</p></article>
-  <article class="stat-card"><span class="stat-label">Today's synced money flow</span><strong class="<%= stats.cashNet >= 0 ? 'success-text' : 'danger-text' %>"><%= money(stats.cashNet) %></strong><p>In <%= money(stats.cashIn) %> · Out <%= money(stats.cashOut) %></p></article>
-  <article class="stat-card"><span class="stat-label">Outstanding receivables</span><strong><%= money(stats.customerDue) %></strong><p><a href="/reports/balance-register">Open balance register</a></p></article>
-  <% if (stats.otherPieces > 0) { %>
-  <article class="stat-card"><span class="stat-label">Other metals</span><strong><%= grams(stats.otherWeight) %></strong><p><%= stats.otherPieces %> piece<%= stats.otherPieces === 1 ? '' : 's' %></p></article>
-  <% } %>
-</section>
-
-<%
-  const _topItem = typeof topSellingItem !== 'undefined' ? topSellingItem : null;
-  const _invByMetal = typeof inventoryByMetal !== 'undefined' && Array.isArray(inventoryByMetal) ? inventoryByMetal : [];
-  const _itemBreakdown = typeof itemWeightBreakdown !== 'undefined' && Array.isArray(itemWeightBreakdown) ? itemWeightBreakdown : [];
-  const _recentSales = typeof recentSales !== 'undefined' && Array.isArray(recentSales) ? recentSales : [];
-%>
-<section class="content-grid reports-grid dashboard-report-panels">
-  <article class="panel">
-    <div class="panel-heading"><div><h2>Top selling item</h2><p>Highest billed item from today's invoices.</p></div><a class="text-link" href="/reports/sales-register">Sales register →</a></div>
-    <% if (_topItem) { %>
-    <div class="dashboard-highlight">
-      <span class="metal-dot <%= String(_topItem.metal || 'OTHER').toLowerCase() %>"></span>
-      <div><strong><%= _topItem.name %></strong><small><%= _topItem.metal %><%= _topItem.purity ? ` · ${_topItem.purity}` : '' %> · <%= _topItem.quantity %> piece<%= _topItem.quantity === 1 ? '' : 's' %></small></div>
-      <strong><%= money(_topItem.billed) %></strong>
-    </div>
-    <% } else { %><div class="empty-state compact"><span>▤</span><h3>No sales today</h3><p>The top selling item will appear after the first invoice.</p></div><% } %>
+  <article class="stat-card accent-gold"><span class="stat-label">Gold stock</span><strong>
+      <%= grams(stats.goldWeight) %>
+    </strong>
+    <p>
+      <%= stats.goldPieces %> piece<%= stats.goldPieces===1 ? '' : 's' %> · <a href="/inventory">View stock</a>
+    </p>
   </article>
-  <article class="panel">
-    <div class="panel-heading"><div><h2>Inventory by metal</h2><p>Current available pieces and total net weight.</p></div><a class="text-link" href="/reports/stock">Stock report →</a></div>
-    <% if (_invByMetal.length) { %><ul class="metal-report"><% _invByMetal.forEach((row) => { %><li><div><span class="metal-dot <%= row.metal.toLowerCase() %>"></span><strong><%= row.metal %></strong></div><div class="right"><strong><%= row.pieces %> piece<%= row.pieces === 1 ? '' : 's' %></strong><small><%= grams(row.weight) %> net</small></div></li><% }) %></ul><% } else { %><div class="empty-state compact"><span>◇</span><h3>No inventory yet</h3><p>Add stock to see the metal-wise summary.</p></div><% } %>
+  <article class="stat-card accent-silver"><span class="stat-label">Silver stock</span><strong>
+      <%= grams(stats.silverWeight) %>
+    </strong>
+    <p>
+      <%= stats.silverPieces %> piece<%= stats.silverPieces===1 ? '' : 's' %> · <a href="/inventory">View stock</a>
+    </p>
   </article>
+  <article class="stat-card"><span class="stat-label">Sales in period</span><strong>
+      <%= money(stats.sales) %>
+    </strong>
+    <p>
+      <%= stats.invoices %> invoice<%= stats.invoices===1 ? '' : 's' %> today
+    </p>
+  </article>
+  <article class="stat-card"><span class="stat-label">Amount collected</span><strong>
+      <%= money(stats.amountCollected) %>
+    </strong>
+    <p>Payments recorded against today's invoices</p>
+  </article>
+  <article class="stat-card"><span class="stat-label">Today's synced money flow</span><strong
+      class="<%= stats.cashNet >= 0 ? 'success-text' : 'danger-text' %>">
+      <%= money(stats.cashNet) %>
+    </strong>
+    <p>In <%= money(stats.cashIn) %> · Out <%= money(stats.cashOut) %>
+    </p>
+  </article>
+  <article class="stat-card"><span class="stat-label">Outstanding receivables</span><strong>
+      <%= money(stats.customerDue) %>
+    </strong>
+    <p><a href="/reports/balance-register">Open balance register</a></p>
+  </article>
+  <% if (stats.otherPieces> 0) { %>
+    <article class="stat-card"><span class="stat-label">Other metals</span><strong>
+        <%= grams(stats.otherWeight) %>
+      </strong>
+      <p>
+        <%= stats.otherPieces %> piece<%= stats.otherPieces===1 ? '' : 's' %>
+      </p>
+    </article>
+    <% } %>
 </section>
 
-<!-- Item-wise weight breakdown -->
-<% if (_itemBreakdown.length) { %>
-<section class="panel">
-  <div class="panel-heading"><div><h2>Stock weight breakdown</h2><p>Item-wise net weight across available inventory.</p></div></div>
-  <div class="table-wrap"><table><thead><tr><th>Item name</th><th>Category</th><th>Metal</th><th class="right">Pieces</th><th class="right">Total net weight</th></tr></thead><tbody>
-    <% _itemBreakdown.forEach((item) => { %>
-    <tr><td><strong><%= item.name %></strong></td><td><%= item.category %></td><td><span class="metal-dot <%= item.metal.toLowerCase() %>"></span><%= item.metal %></td><td class="right"><%= item.pieces %></td><td class="right"><strong><%= grams(item.weight) %></strong></td></tr>
-    <% }) %>
-  </tbody></table></div>
-</section>
-<% } %>
+<% const _topItem=typeof topSellingItem !=='undefined' ? topSellingItem : null; const _invByMetal=typeof
+  inventoryByMetal !=='undefined' && Array.isArray(inventoryByMetal) ? inventoryByMetal : []; const
+  _itemBreakdown=typeof itemWeightBreakdown !=='undefined' && Array.isArray(itemWeightBreakdown) ? itemWeightBreakdown :
+  []; const _recentSales=typeof recentSales !=='undefined' && Array.isArray(recentSales) ? recentSales : []; %>
+  <section class="content-grid reports-grid dashboard-report-panels">
+    <article class="panel">
+      <div class="panel-heading">
+        <div>
+          <h2>Top selling item</h2>
+          <p>Highest billed item from today's invoices.</p>
+        </div><a class="text-link" href="/reports/sales-register">Sales register →</a>
+      </div>
+      <% if (_topItem) { %>
+        <div class="dashboard-highlight">
+          <span class="metal-dot <%= String(_topItem.metal || 'OTHER').toLowerCase() %>"></span>
+          <div><strong>
+              <%= _topItem.name %>
+            </strong><small>
+              <%= _topItem.metal %>
+                <%= _topItem.purity ? ` · ${_topItem.purity}` : '' %> · <%= _topItem.quantity %> piece<%=
+                      _topItem.quantity===1 ? '' : 's' %>
+            </small></div>
+          <strong>
+            <%= money(_topItem.billed) %>
+          </strong>
+        </div>
+        <% } else { %>
+          <div class="empty-state compact"><span>▤</span>
+            <h3>No sales today</h3>
+            <p>The top selling item will appear after the first invoice.</p>
+          </div>
+          <% } %>
+    </article>
+    <article class="panel">
+      <div class="panel-heading">
+        <div>
+          <h2>Inventory by metal</h2>
+          <p>Current available pieces and total net weight.</p>
+        </div><a class="text-link" href="/reports/stock">Stock report →</a>
+      </div>
+      <% if (_invByMetal.length) { %>
+        <ul class="metal-report">
+          <% _invByMetal.forEach((row)=> { %><li>
+              <div><span class="metal-dot <%= row.metal.toLowerCase() %>"></span><strong>
+                  <%= row.metal %>
+                </strong></div>
+              <div class="right"><strong>
+                  <%= row.pieces %> piece<%= row.pieces===1 ? '' : 's' %>
+                </strong><small>
+                  <%= grams(row.weight) %> net
+                </small></div>
+            </li>
+            <% }) %>
+        </ul>
+        <% } else { %>
+          <div class="empty-state compact"><span>◇</span>
+            <h3>No inventory yet</h3>
+            <p>Add stock to see the metal-wise summary.</p>
+          </div>
+          <% } %>
+    </article>
+  </section>
 
-<section class="panel">
-  <div class="panel-heading"><div><h2>Recent sales</h2><p>Latest invoices from your counter.</p></div><a class="text-link" href="/sales">All sales →</a></div>
-  <% if (_recentSales.length) { %>
-  <div class="table-wrap"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Date</th><th class="right">Total</th></tr></thead><tbody>
-    <% _recentSales.forEach((sale) => { %><tr><td><a href="/sales/<%= sale.id %>"><strong><%= sale.invoiceNumber %></strong></a></td><td><%= sale.customer?.name || 'Walk-in customer' %></td><td><%= sale.saleDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) %></td><td class="right"><strong><%= money(sale.total) %></strong></td></tr><% }) %>
-  </tbody></table></div>
-  <% } else { %><div class="empty-state"><span>₹</span><h3>No sales recorded yet</h3><p>Create your first invoice from the sales desk.</p><a class="button" href="/sales/new">Create sale</a></div><% } %>
-</section>
+  <!-- Item-wise weight breakdown -->
+  <% if (_itemBreakdown.length) { %>
+    <section class="panel">
+      <div class="panel-heading">
+        <div>
+          <h2>Stock weight breakdown</h2>
+          <p>Item-wise net weight across available inventory.</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Item name</th>
+              <th>Category</th>
+              <th>Metal</th>
+              <th class="right">Pieces</th>
+              <th class="right">Total net weight</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% _itemBreakdown.forEach((item)=> { %>
+              <tr>
+                <td><strong>
+                    <%= item.name %>
+                  </strong></td>
+                <td>
+                  <%= item.category %>
+                </td>
+                <td><span class="metal-dot <%= item.metal.toLowerCase() %>"></span>
+                  <%= item.metal %>
+                </td>
+                <td class="right">
+                  <%= item.pieces %>
+                </td>
+                <td class="right"><strong>
+                    <%= grams(item.weight) %>
+                  </strong></td>
+              </tr>
+              <% }) %>
+          </tbody>
+        </table>
+      </div>
+    </section>
+    <% } %>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <div>
+            <h2>Recent sales</h2>
+            <p>Latest invoices from your counter.</p>
+          </div><a class="text-link" href="/sales">All sales →</a>
+        </div>
+        <% if (_recentSales.length) { %>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Invoice</th>
+                  <th>Customer</th>
+                  <th>Date</th>
+                  <th class="right">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                <% _recentSales.forEach((sale)=> { %><tr>
+                    <td><a href="/sales/<%= sale.id %>"><strong>
+                          <%= sale.invoiceNumber %>
+                        </strong></a></td>
+                    <td>
+                      <%= sale.customer?.name || 'Walk-in customer' %>
+                    </td>
+                    <td>
+                      <%= sale.saleDate.toLocaleDateString('en-IN', { day: '2-digit' , month: 'short' }) %>
+                    </td>
+                    <td class="right"><strong>
+                        <%= money(sale.total) %>
+                      </strong></td>
+                  </tr>
+                  <% }) %>
+              </tbody>
+            </table>
+          </div>
+          <% } else { %>
+            <div class="empty-state"><span>₹</span>
+              <h3>No sales recorded yet</h3>
+              <p>Create your first invoice from the sales desk.</p><a class="button" href="/sales/new">Create sale</a>
+            </div>
+            <% } %>
+      </section>
