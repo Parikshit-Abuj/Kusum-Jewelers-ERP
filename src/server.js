@@ -1710,7 +1710,7 @@ app.get('/sales/:id/invoice.pdf', async (req, res, next) => {
   try {
     const sale = await prisma.sale.findUnique({ where: { id: Number(req.params.id) }, include: { customer: true, items: { include: { product: true } } } });
     if (!sale) return res.status(404).render('not-found', { title: 'Invoice not found' });
-    writeSaleInvoice(res, sale);
+    await writeSaleInvoice(res, sale);
   } catch (error) { next(error); }
 });
 

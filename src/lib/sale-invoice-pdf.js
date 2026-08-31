@@ -1,8 +1,12 @@
 const PDFDocument = require('pdfkit');
+const fs = require('fs');
+const path = require('path');
+const QRCode = require('qrcode');
 
 // The shop uses pre-printed A4 sheets. Keep the letterhead area clear and
 // print the ruled invoice body in the same structure as the supplied invoice.
 const page = { left: 19, right: 572, infoY: 124, bodyBottom: 510, bottom: 800 };
+const authorisedSignaturePath = path.join(__dirname, '..', 'assets', 'kusum-authorised-signature.jpg');
 
 function amount(value) {
   return new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2, minimumFractionDigits: 2 }).format(Number(value || 0));
@@ -137,6 +141,39 @@ function amountInWords(value) {
   return `${parts.join(' ')} Rupees Only`;
 }
 
+function qrText(value, fallback = '') {
+  return String(value || fallback).replace(/\s+/g, ' ').trim();
+}
+
+function invoiceQrPayload(sale) {
+  const items = (sale.items || []).map((item, index) => {
+    const product = item.product || {};
+    const itemName = qrText(item.productName || product.name, 'Jewellery item');
+    const netWeight = Number(item.weight || product.netWeight || 0);
+    return `${index + 1}. ${itemName} - Net wt: ${weight(netWeight)} g`;
+  });
+  const balance = Number(sale.balance || 0);
+  return [
+    'KUSUM JEWELLERS - SALES INVOICE',
+    `Invoice: ${qrText(sale.invoiceNumber, '—')}`,
+    `Customer: ${qrText(sale.customer?.name, 'Walk-in customer')}`,
+    'Items:',
+    ...items,
+    `Paid amount: Rs. ${amount(sale.paid)}`,
+    ...(balance > 0 ? [`Balance / credit: Rs. ${amount(balance)}`] : [])
+  ].join('\n');
+}
+
+async function invoiceQrImage(sale) {
+  return QRCode.toBuffer(invoiceQrPayload(sale), {
+    type: 'png',
+    errorCorrectionLevel: 'L',
+    margin: 0,
+    width: 420,
+    color: { dark: '#000000', light: '#FFFFFF' }
+  });
+}
+
 function drawItem(doc, item, y) {
   const product = item.product || {
     name: item.productName, barcode: item.productBarcode, sku: item.productSku,
@@ -263,17 +300,28 @@ function footerTotals(doc, sale, y) {
   return y + footerHeight;
 }
 
-function signatureBox(doc, y) {
+function signatureBox(doc, y, qrImage) {
   const height = 82;
-  const split = (page.left + page.right) / 2;
+  const split = page.left + 108;
   box(doc, page.left, y, page.right - page.left, height);
   line(doc, split, y, split, y + height, 0.45);
-  doc.fillColor('#111').font('Helvetica-Bold').fontSize(9.2).text('Customer Signature', page.left + 10, y + 62, { width: split - page.left - 20, align: 'center' });
-  doc.text('For Kusum Jewellers', split + 10, y + 12, { width: page.right - split - 20, align: 'center' });
-  doc.text('Authorised Signatory', split + 10, y + 62, { width: page.right - split - 20, align: 'center' });
+  // Keep the existing footer box and page size. Its former customer-signature
+  // area now holds the scannable invoice summary; the right half remains the
+  // authorised Kusum Jewellers signature area.
+  doc.image(qrImage, page.left + 25, y + 5, { fit: [58, 58] });
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(6.6).text('SCAN INVOICE DETAILS', page.left + 4, y + 67, { width: split - page.left - 8, align: 'center' });
+
+  const signatureWidth = page.right - split - 20;
+  doc.font('Helvetica-Bold').fontSize(9.2).text('For Kusum Jewellers', split + 10, y + 6, { width: signatureWidth, align: 'center' });
+  if (!fs.existsSync(authorisedSignaturePath)) {
+    throw new Error('The authorised signature image is missing from the ERP installation.');
+  }
+  doc.image(authorisedSignaturePath, split + 10, y + 16, { fit: [signatureWidth, 42], align: 'center', valign: 'center' });
+  doc.font('Helvetica-Bold').fontSize(9.2).text('Authorised Signatory', split + 10, y + 66, { width: signatureWidth, align: 'center' });
 }
 
-function writeSaleInvoice(res, sale) {
+async function writeSaleInvoice(res, sale) {
+  const qrImage = await invoiceQrImage(sale);
   const doc = new PDFDocument({ size: 'A4', margin: 0, info: { Title: `Tax Invoice ${sale.invoiceNumber}` } });
   const filename = `${sale.invoiceNumber.replace(/[^A-Za-z0-9-]/g, '_')}.pdf`;
   res.setHeader('Content-Type', 'application/pdf');
@@ -283,8 +331,8 @@ function writeSaleInvoice(res, sale) {
   const tableY = invoiceHeader(doc, sale);
   const itemsEnd = renderItems(doc, sale, tableY);
   const footerEnd = footerTotals(doc, sale, itemsEnd + 2);
-  signatureBox(doc, footerEnd);
+  signatureBox(doc, footerEnd, qrImage);
   doc.end();
 }
 
-module.exports = { writeSaleInvoice, makingDisplay, amountInWords };
+module.exports = { writeSaleInvoice, makingDisplay, amountInWords, invoiceQrPayload };
