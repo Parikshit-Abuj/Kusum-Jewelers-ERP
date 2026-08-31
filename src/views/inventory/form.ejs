@@ -45,7 +45,7 @@
       <% } else { %>
       <div class="barcode-preview">
         <span>Barcode number</span>
-        <strong data-barcode-preview>G22 1</strong>
+        <strong data-barcode-preview>G 00001</strong>
         <small>Generated automatically when you save</small>
       </div>
       <% } %>
@@ -74,12 +74,11 @@
           <option value="OTHER"    <%= product?.metal === 'OTHER'    ? 'selected' : '' %>>Other</option>
         </select>
       </label>
-      <label>Purity *
+      <label>Purity (optional)
         <select name="purity" data-product-purity>
           <option value="22K"   <%= product?.purity === '22K'   || !product ? 'selected' : '' %>>22K Gold</option>
           <option value="24K"   <%= product?.purity === '24K'   ? 'selected' : '' %>>24K Gold</option>
-          <option value="925"   <%= product?.purity === '925'   ? 'selected' : '' %>>Silver 925</option>
-          <option value="PURE"  <%= product?.purity === 'PURE'  ? 'selected' : '' %>>Pure Silver</option>
+          <option value="">Not specified</option>
           <option value="PT950" <%= product?.purity === 'PT950' ? 'selected' : '' %>>Platinum 950</option>
           <option value="18K"   <%= product?.purity === '18K'   ? 'selected' : '' %>>18K Gold</option>
           <option value="OTHER" <%= product?.purity === 'OTHER' ? 'selected' : '' %>>Other</option>
@@ -152,13 +151,22 @@
     </label>
   </section>
 
-  <footer class="form-footer">
-    <a class="button ghost" href="/inventory">Cancel</a>
-    <button class="button" type="submit">
-      <%= product ? 'Save changes' : 'Save item & generate barcode' %>
-    </button>
+  <footer class="form-footer" style="display:flex;justify-content:space-between;align-items:center;">
+    <div>
+      <% if (product) { %>
+      <button type="submit" form="delete-product-form" class="button danger ghost" style="color:#c82333;border-color:#f5c2c7;background:#fff5f5;">✕ Delete item</button>
+      <% } %>
+    </div>
+    <div style="display:flex;gap:8px;">
+      <a class="button ghost" href="/inventory">Cancel</a>
+      <button class="button" type="submit">
+        <%= product ? 'Save changes' : 'Save item & generate barcode' %>
+      </button>
+    </div>
   </footer>
 </form>
+<% if (product) { %>
+<form id="delete-product-form" method="post" action="/inventory/<%= product.id %>/delete" onsubmit="return confirm('Do you want to delete item?');"></form>
+<% } %>
 
 <%- include('_batch_modal') %>
-

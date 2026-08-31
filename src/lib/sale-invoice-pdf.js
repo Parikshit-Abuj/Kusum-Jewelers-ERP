@@ -107,7 +107,7 @@ function invoiceHeader(doc, sale, continuation = false) {
 
   labelValue(doc, 'Invoice No.', sale.invoiceNumber, 326, 410, y + 8, 148, 9.0);
   labelValue(doc, 'Date & Time', formattedDateTime(sale.saleDate), 326, 410, y + 24, 148, 8.2);
-  labelValue(doc, 'GSTIN No.', '27ABDFKO780F1ZG', 326, 410, y + 43, 148, 8.5);
+  labelValue(doc, 'GSTIN No.', '27ABDFK0780F1ZG', 326, 410, y + 43, 148, 8.5);
   labelValue(doc, 'GST Type', 'SGST + CGST', 326, 410, y + 59, 148, 8.5);
   return y + height + 5;
 }
@@ -153,7 +153,7 @@ function drawItem(doc, item, y) {
   doc.text(item.hsnCode || '', 22, textY, { width: 37, align: 'center', ellipsis: true });
   doc.font('Helvetica-Bold').fontSize(8.1).text(product.name || 'Jewellery item', 66, textY, { width: 107, ellipsis: true });
   doc.font('Helvetica').fontSize(7.8).text(item.huidCode || '', 180, textY, { width: 46, align: 'center', ellipsis: true });
-  doc.text(product.purity || product.metal || '-', 232, textY, { width: 31, align: 'center', ellipsis: true });
+  doc.text(product.purity || '-', 232, textY, { width: 31, align: 'center', ellipsis: true });
   doc.text(String(item.quantity || 1), 269, textY, { width: 21, align: 'center' });
   doc.text(weight(product.grossWeight), 296, textY, { width: 47, align: 'right' });
   doc.text(weight(saleWeight), 349, textY, { width: 46, align: 'right' });

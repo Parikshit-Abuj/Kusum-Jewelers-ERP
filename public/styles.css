@@ -174,6 +174,8 @@ nav a.active { box-shadow: inset 3px 0 0 #dfa437; }
 .icon-button:hover { background: var(--gold-pale); color: var(--gold-dark); }
 .icon-button.whatsapp-icon { color: #1f9d4f; background: #eafaf1; border-color: #c2eed3; font-size: 14px; }
 .icon-button.whatsapp-icon:hover { background: #25D366; color: #fff; border-color: #20ba5a; }
+.icon-button.delete-icon { color: #b83232; background: #fdf3f3; border-color: #f6d1d1; font-size: 13px; font-weight: 700; cursor: pointer; }
+.icon-button.delete-icon:hover { background: #dc3545; color: #ffffff; border-color: #bd2130; }
 
 /* ── Metal dots ───────────────────────────────────────────── */
 .metal-dot { display: inline-block; vertical-align: middle; width: 8px; height: 8px; border-radius: 50%; background: #a07928; margin-right: 5px; }
@@ -189,6 +191,7 @@ nav a.active { box-shadow: inset 3px 0 0 #dfa437; }
 .pill.neutral { color: #635b53; background: #f0ede9; }
 .pill.danger { color: #9c302b; background: var(--red-pale); }
 .danger-text { color: var(--red); }
+.success-text { color: #1f7651; }
 
 /* ── Lists ────────────────────────────────────────────────── */
 .attention-list, .metal-report { padding: 0; margin: 0; list-style: none; }
@@ -344,7 +347,7 @@ input:focus, select:focus, textarea:focus { border-color: #c08a32; box-shadow: 0
 .barcode-line .fields-row {
   grid-row: 3; grid-column: 1 / 4;
   display: grid;
-  grid-template-columns: 55px 85px 85px 85px 105px 105px 95px 1fr;
+  grid-template-columns: 55px 85px 75px 85px 85px 105px 105px 95px minmax(115px, 1fr);
   gap: 8px;
   align-items: end;
 }
@@ -455,6 +458,24 @@ input:focus, select:focus, textarea:focus { border-color: #c08a32; box-shadow: 0
 .report-filter label { min-width: 165px; }
 .report-filter input { padding: 7px 9px; }
 .report-stats { margin-bottom: 18px; }
+.report-menu { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; max-width: 1020px; }
+.report-menu-card { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 14px; min-height: 114px; padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--ink); text-decoration: none; box-shadow: 0 3px 12px rgba(44, 34, 23, .04); transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease; }
+.report-menu-card:hover { transform: translateY(-2px); border-color: var(--gold); box-shadow: 0 8px 20px rgba(96, 65, 19, .12); }
+.report-menu-card > span:nth-child(2) { display: grid; gap: 5px; }
+.report-menu-card strong { font-size: 16px; }
+.report-menu-card small { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.report-menu-card b { color: #9d6414; font-size: 12px; white-space: nowrap; }
+.report-menu-icon { display: inline-grid; place-items: center; width: 42px; height: 42px; border-radius: 10px; background: #fff3d7; color: #9d6414; font-size: 22px; font-weight: 800; }
+.report-filter-panel { margin-bottom: 18px; padding: 16px 18px; }
+.report-filter-form { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; }
+.report-filter-form label { display: grid; gap: 5px; min-width: 145px; flex: 1 1 165px; font-size: 11px; font-weight: 700; color: #554e47; }
+.report-filter-form input, .report-filter-form select { min-height: 35px; padding: 7px 9px; font-size: 12px; }
+.report-filter-actions { display: flex; align-items: end; gap: 6px; min-height: 35px; }
+.report-register-summary { margin-bottom: 18px; }
+.dashboard-report-panels { margin-bottom: 18px; }
+.dashboard-highlight { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 14px 0; }
+.dashboard-highlight > div { display: grid; gap: 4px; }
+.dashboard-highlight small { color: var(--muted); }
 .metal-report li { display: flex; align-items: center; justify-content: space-between; padding: 15px 0; border-bottom: 1px solid #eeeae5; }
 .metal-report li:last-child { border-bottom: 0; }
 .metal-report small { text-align: right; }
@@ -521,6 +542,7 @@ input:focus, select:focus, textarea:focus { border-color: #c08a32; box-shadow: 0
 @media (max-width: 900px) {
   .customer-detail-grid { grid-template-columns: 1fr; }
   .two-thirds, .contact-layout, .reports-grid { grid-template-columns: 1fr; }
+  .report-menu { grid-template-columns: 1fr; }
   .customer-summary { grid-template-columns: 1fr; }
   .barcode-line .fields-row { grid-template-columns: 1fr 1fr; }
 }

@@ -5,6 +5,7 @@ const expressLayouts = require('express-ejs-layouts');
 const session = require('express-session');
 const path = require('path');
 const crypto = require('crypto');
+const { Prisma } = require('@prisma/client');
 const appRoot = path.join(__dirname, '..');
 const shopDataDirectory = process.env.KUSUM_APP_DATA
   || path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Kusum Jewelers ERP');
@@ -141,6 +142,7 @@ function saleRows(body) {
   const makingTypes = asArray(body.makingChargeType);
   const makingValues = asArray(body.makingChargeValue);
   const taxableAmounts = asArray(body.taxableAmount);
+  const purities = asArray(body.purity);
   const hsnCodes = asArray(body.hsnCode);
   const huidCodes = asArray(body.huidCode);
   return productIds.map((productId, index) => ({
@@ -152,6 +154,7 @@ function saleRows(body) {
     makingChargeType: ['FIXED', 'PER_GRAM', 'PERCENTAGE'].includes(makingTypes[index]) ? makingTypes[index] : null,
     makingChargeValue: makingValues[index] === undefined || makingValues[index] === '' ? null : number(makingValues[index]),
     taxableAmount: taxableAmounts[index] === '' || taxableAmounts[index] === undefined ? null : Math.max(0, number(taxableAmounts[index])),
+    purity: purities[index] === undefined ? null : String(purities[index] || '').trim().toUpperCase() || null,
     hsnCode: (hsnCodes[index] || '').trim() || null,
     huidCode: (huidCodes[index] || '').trim() || null
   })).filter((item) => item.productId > 0);
@@ -680,7 +683,7 @@ app.get('/', async (req, res, next) => {
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
     const todayKey = dateInput(today);
-    const [productCount, stockSummaryRows, itemBreakdownRows, todaySales, lowStock, recentSales, todayCashbook, customerDue] = await Promise.all([
+    const [productCount, stockSummaryRows, itemBreakdownRows, todaySales, lowStock, recentSales, todayCashbook, customerDue, topSellingRows] = await Promise.all([
       prisma.product.count({ where: { quantity: { gt: 0 }, status: 'AVAILABLE' } }),
       prisma.$queryRaw`
         SELECT metal, SUM(quantity) AS pieces, SUM(netWeight * quantity) AS weight
@@ -700,7 +703,24 @@ app.get('/', async (req, res, next) => {
       prisma.product.findMany({ where: { quantity: { lte: 1 }, status: 'AVAILABLE' }, orderBy: { quantity: 'asc' }, take: 6 }),
       prisma.sale.findMany({ include: { customer: true }, orderBy: { saleDate: 'desc' }, take: 6 }),
       prisma.cashbookEntry.groupBy({ by: ['type'], where: { entryDate: todayKey }, _sum: { amount: true } }),
-      prisma.customerLedger.aggregate({ _sum: { amount: true } })
+      prisma.customerLedger.aggregate({ _sum: { amount: true } }),
+      prisma.$queryRaw`
+        SELECT
+          COALESCE(NULLIF(si.productName, ''), 'Jewellery item') AS name,
+          COALESCE(si.productMetal, 'OTHER') AS metal,
+          COALESCE(si.productPurity, '') AS purity,
+          SUM(si.quantity) AS quantity,
+          SUM(si.lineTotal) AS billed
+        FROM \`SaleItem\` si
+        INNER JOIN \`Sale\` s ON s.id = si.saleId
+        WHERE s.saleDate >= ${today} AND s.saleDate < ${tomorrow}
+        GROUP BY
+          COALESCE(NULLIF(si.productName, ''), 'Jewellery item'),
+          COALESCE(si.productMetal, 'OTHER'),
+          COALESCE(si.productPurity, '')
+        ORDER BY billed DESC
+        LIMIT 1
+      `
     ]);
     const cashFlow = todayCashbook.reduce((summary, entry) => {
       if (entry.type === 'IN') summary.in += Number(entry._sum.amount || 0);
@@ -720,6 +740,18 @@ app.get('/', async (req, res, next) => {
       pieces: Number(row.pieces || 0),
       weight: Number(row.weight || 0)
     }));
+    const inventoryByMetal = stockSummaryRows.map((row) => ({
+      metal: row.metal,
+      pieces: Number(row.pieces || 0),
+      weight: Number(row.weight || 0)
+    }));
+    const topSellingItem = topSellingRows[0] ? {
+      name: topSellingRows[0].name,
+      metal: topSellingRows[0].metal,
+      purity: topSellingRows[0].purity || null,
+      quantity: Number(topSellingRows[0].quantity || 0),
+      billed: Number(topSellingRows[0].billed || 0)
+    } : null;
     res.render('dashboard', {
       title: 'Dashboard',
       stats: {
@@ -734,11 +766,14 @@ app.get('/', async (req, res, next) => {
         cashIn: cashFlow.in,
         cashOut: cashFlow.out,
         cashNet: cashFlow.in - cashFlow.out,
-        customerDue: Math.max(0, Number(customerDue._sum.amount || 0))
+        customerDue: Math.max(0, Number(customerDue._sum.amount || 0)),
+        amountCollected: Number(todaySales._sum.paid || 0)
       },
       lowStock,
       recentSales,
-      itemWeightBreakdown
+      itemWeightBreakdown,
+      inventoryByMetal,
+      topSellingItem
     });
   } catch (error) { next(error); }
 });
@@ -1233,6 +1268,22 @@ app.post('/inventory/:id', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+app.post('/inventory/:id/delete', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return redirectWith(res, '/inventory', 'error', 'Invalid item ID.');
+    const deleted = await prisma.$transaction(async (tx) => {
+      const product = await tx.product.findUnique({ where: { id } });
+      if (!product) return null;
+      await tx.stockMovement.deleteMany({ where: { productId: id } });
+      await tx.product.delete({ where: { id } });
+      return product;
+    });
+    if (!deleted) return redirectWith(res, '/inventory', 'error', 'Item not found.');
+    redirectWith(res, '/inventory', 'message', `Item "${deleted.barcode || deleted.name}" deleted successfully.`);
+  } catch (error) { next(error); }
+});
+
 app.post('/inventory/:id/adjust', async (req, res, next) => {
   try {
     const id = Number(req.params.id);
@@ -1602,7 +1653,7 @@ app.post('/sales', async (req, res, next) => {
         paymentMethod: payment.paymentMethod, notes: req.body.notes || null,
         items: { create: pricedRows.map((row) => ({
           productId: row.productId, productBarcode: row.product.barcode, productSku: row.product.sku,
-          productName: row.product.name, productMetal: row.product.metal, productPurity: row.product.purity,
+          productName: row.product.name, productMetal: row.product.metal, productPurity: row.purity || row.product.purity || null,
           grossWeight: row.product.grossWeight, quantity: row.quantity, weight: row.weight, unitPrice: row.metalRate,
           metalRate: row.metalRate, metalAmount: row.metalAmount, makingCharge: row.makingCharge,
           makingChargeType: row.makingChargeType, makingChargeValue: row.makingChargeValue,
@@ -1913,121 +1964,175 @@ app.post('/urd-purchases/:id/delete', async (req, res, next) => {
   }
 });
 
-app.get('/reports', async (req, res, next) => {
+const REPORT_METALS = ['GOLD', 'SILVER', 'PLATINUM', 'DIAMOND', 'OTHER'];
+const REPORT_PAYMENT_METHODS = ['CASH', 'UPI', 'CARD', 'BANK_TRANSFER', 'CREDIT', 'MIXED'];
+const REPORT_MOVEMENT_TYPES = ['OPENING', 'SALE', 'ADJUSTMENT_IN', 'ADJUSTMENT_OUT'];
+
+function reportDates(query) {
+  const today = dateInput();
+  const fromKey = String(query.from || `${today.slice(0, 7)}-01`);
+  const toKey = String(query.to || today);
+  const range = localDateTimeRange(fromKey, toKey);
+  return { fromKey, toKey, ...range };
+}
+
+function reportText(value) {
+  return String(value || '').trim();
+}
+
+app.get('/reports', (req, res) => {
+  res.render('reports/index', { title: 'Reports' });
+});
+
+app.get('/reports/stock', async (req, res, next) => {
   try {
-    const todayKey = dateInput();
-    const fromKey = req.query.from || `${todayKey.slice(0, 7)}-01`;
-    const toKey = req.query.to || todayKey;
-    const { gte: from, lte: to } = localDateTimeRange(fromKey, toKey);
-    const itemQ = String(req.query.itemQ || '').trim();
-    const metalSearch = ['GOLD', 'SILVER', 'PLATINUM', 'DIAMOND', 'OTHER'].includes(itemQ.toUpperCase())
-      ? [{ metal: itemQ.toUpperCase() }]
-      : [];
-    const itemWhere = {
+    const q = reportText(req.query.q);
+    const metal = REPORT_METALS.includes(String(req.query.metal || '').toUpperCase()) ? String(req.query.metal).toUpperCase() : '';
+    const category = reportText(req.query.category);
+    const location = reportText(req.query.location);
+    const stockWhere = {
       quantity: { gt: 0 },
       status: 'AVAILABLE',
-      ...(itemQ ? { OR: [
-        { barcode: { contains: itemQ } },
-        { sku: { contains: itemQ } },
-        { name: { contains: itemQ } },
-        { category: { contains: itemQ } },
-        { purity: { contains: itemQ } },
-        { location: { contains: itemQ } },
-        ...metalSearch
+      ...(metal ? { metal } : {}),
+      ...(category ? { category: { contains: category } } : {}),
+      ...(location ? { location: { contains: location } } : {}),
+      ...(q ? { OR: [
+        { barcode: { contains: q } }, { sku: { contains: q } }, { name: { contains: q } },
+        { category: { contains: q } }, { purity: { contains: q } }, { location: { contains: q } }
       ] } : {})
     };
-    const itemTotal = await prisma.product.count({ where: itemWhere });
-    const pagination = paginationFor(req, itemTotal, req.query.page, 100);
+    const totalItems = await prisma.product.count({ where: stockWhere });
+    const pagination = paginationFor(req, totalItems, req.query.page, 100);
+    const products = await prisma.product.findMany({
+      where: stockWhere,
+      select: { id: true, barcode: true, sku: true, name: true, category: true, metal: true, purity: true, grossWeight: true, netWeight: true, quantity: true, location: true, batchDocNo: true },
+      orderBy: [{ metal: 'asc' }, { name: 'asc' }, { id: 'asc' }],
+      skip: (pagination.page - 1) * pagination.pageSize,
+      take: pagination.pageSize
+    });
+    res.render('reports/stock', { title: 'Stock report', products, pagination, filters: { q, metal, category, location } });
+  } catch (error) { next(error); }
+});
 
-    const topSelling = (metal) => prisma.$queryRaw`
-      SELECT
-        ${metal} AS metal,
-        COALESCE(NULLIF(si.productName, ''), p.name, 'Jewellery item') AS name,
-        COALESCE(NULLIF(si.productSku, ''), p.sku, '') AS sku,
-        COALESCE(si.productPurity, p.purity, '') AS purity,
-        SUM(si.quantity) AS quantity,
-        SUM(si.lineTotal) AS billed
-      FROM SaleItem si
-      INNER JOIN Sale s ON s.id = si.saleId
-      LEFT JOIN Product p ON p.id = si.productId
-      WHERE s.saleDate >= ${from} AND s.saleDate <= ${to}
-        AND COALESCE(si.productMetal, p.metal) = ${metal}
-      GROUP BY
-        COALESCE(NULLIF(si.productName, ''), p.name, 'Jewellery item'),
-        COALESCE(NULLIF(si.productSku, ''), p.sku, ''),
-        COALESCE(si.productPurity, p.purity, '')
-      ORDER BY billed DESC
-      LIMIT 1
+app.get('/reports/stock-movements', async (req, res, next) => {
+  try {
+    const { fromKey, toKey, gte: from, lte: to } = reportDates(req.query);
+    const q = reportText(req.query.q);
+    const metal = REPORT_METALS.includes(String(req.query.metal || '').toUpperCase()) ? String(req.query.metal).toUpperCase() : '';
+    const type = REPORT_MOVEMENT_TYPES.includes(String(req.query.type || '').toUpperCase()) ? String(req.query.type).toUpperCase() : '';
+    const movementWhere = {
+      createdAt: { gte: from, lte: to },
+      ...(metal ? { productMetal: metal } : {}),
+      ...(type ? { type } : {}),
+      ...(q ? { OR: [
+        { productBarcode: { contains: q } }, { productSku: { contains: q } }, { productName: { contains: q } },
+        { productPurity: { contains: q } }, { note: { contains: q } }
+      ] } : {})
+    };
+    const totalItems = await prisma.stockMovement.count({ where: movementWhere });
+    const pagination = paginationFor(req, totalItems, req.query.page, 200);
+    const movements = await prisma.stockMovement.findMany({
+      where: movementWhere,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      skip: (pagination.page - 1) * pagination.pageSize,
+      take: pagination.pageSize
+    });
+    res.render('reports/stock-movements', {
+      title: 'Stock movement report', movements, pagination,
+      filters: { from: fromKey, to: toKey, q, metal, type }
+    });
+  } catch (error) { next(error); }
+});
+
+app.get('/reports/balance-register', async (req, res, next) => {
+  try {
+    const q = reportText(req.query.q);
+    const state = ['ALL', 'DUE', 'SETTLED'].includes(String(req.query.state || 'DUE').toUpperCase())
+      ? String(req.query.state || 'DUE').toUpperCase()
+      : 'DUE';
+    const like = `%${q}%`;
+    const searchClause = q
+      ? Prisma.sql`WHERE c.name LIKE ${like} OR c.phone LIKE ${like}`
+      : Prisma.empty;
+    const balanceClause = state === 'DUE'
+      ? Prisma.sql`HAVING balance > 0.005`
+      : state === 'SETTLED'
+        ? Prisma.sql`HAVING balance <= 0.005 AND balance >= -0.005`
+        : Prisma.empty;
+    const countRows = await prisma.$queryRaw`
+      SELECT COUNT(*) AS total FROM (
+        SELECT c.id, COALESCE(SUM(l.amount), 0) AS balance
+        FROM \`Customer\` c
+        LEFT JOIN \`CustomerLedger\` l ON l.customerId = c.id
+        ${searchClause}
+        GROUP BY c.id
+        ${balanceClause}
+      ) AS balance_rows
     `;
+    const totalItems = Number(countRows[0]?.total || 0);
+    const pagination = paginationFor(req, totalItems, req.query.page, 100);
+    const rows = await prisma.$queryRaw`
+      SELECT
+        c.id,
+        c.name,
+        c.phone,
+        COALESCE(SUM(l.amount), 0) AS balance,
+        MAX(l.createdAt) AS lastActivity
+      FROM \`Customer\` c
+      LEFT JOIN \`CustomerLedger\` l ON l.customerId = c.id
+      ${searchClause}
+      GROUP BY c.id, c.name, c.phone
+      ${balanceClause}
+      ORDER BY balance DESC, lastActivity DESC, c.name ASC
+      LIMIT ${pagination.pageSize} OFFSET ${(pagination.page - 1) * pagination.pageSize}
+    `;
+    const customers = rows.map((row) => ({
+      id: Number(row.id), name: row.name, phone: row.phone || '', balance: Number(row.balance || 0), lastActivity: row.lastActivity || null
+    }));
+    res.render('reports/balance-register', { title: 'Balance register', customers, pagination, filters: { q, state } });
+  } catch (error) { next(error); }
+});
 
-    const [sales, topGoldRows, topSilverRows, stockSummaryRows, stockProducts, receivables] = await Promise.all([
-      prisma.sale.aggregate({ where: { saleDate: { gte: from, lte: to } }, _sum: { subtotal: true, discount: true, gstAmount: true, total: true, paid: true, balance: true }, _count: true }),
-      topSelling('GOLD'),
-      topSelling('SILVER'),
-      prisma.$queryRaw`
-        SELECT metal, SUM(quantity) AS quantity,
-          SUM(netWeight * quantity) AS netWeight,
-          SUM(grossWeight * quantity) AS grossWeight
-        FROM Product
-        WHERE quantity > 0 AND status = 'AVAILABLE'
-        GROUP BY metal
-        ORDER BY metal
-      `,
-      prisma.product.findMany({
-        where: itemWhere,
-        select: { id: true, barcode: true, sku: true, name: true, category: true, metal: true, purity: true, grossWeight: true, netWeight: true, quantity: true, location: true },
-        orderBy: [{ metal: 'asc' }, { name: 'asc' }, { id: 'asc' }],
+app.get('/reports/sales-register', async (req, res, next) => {
+  try {
+    const { fromKey, toKey, gte: from, lte: to } = reportDates(req.query);
+    const item = reportText(req.query.item);
+    const customer = reportText(req.query.customer);
+    const invoice = reportText(req.query.invoice);
+    const paymentMethod = REPORT_PAYMENT_METHODS.includes(String(req.query.paymentMethod || '').toUpperCase())
+      ? String(req.query.paymentMethod).toUpperCase() : '';
+    const balanceState = ['ALL', 'DUE', 'SETTLED'].includes(String(req.query.balanceState || 'ALL').toUpperCase())
+      ? String(req.query.balanceState).toUpperCase() : 'ALL';
+    const saleWhere = {
+      saleDate: { gte: from, lte: to },
+      ...(invoice ? { invoiceNumber: { contains: invoice } } : {}),
+      ...(paymentMethod ? { paymentMethod } : {}),
+      ...(balanceState === 'DUE' ? { balance: { gt: 0 } } : {}),
+      ...(balanceState === 'SETTLED' ? { balance: { equals: 0 } } : {}),
+      ...(customer ? { customer: { is: { OR: [{ name: { contains: customer } }, { phone: { contains: customer } }] } } } : {}),
+      ...(item ? { items: { some: { OR: [
+        { productName: { contains: item } }, { productBarcode: { contains: item } }, { productSku: { contains: item } }, { productPurity: { contains: item } }
+      ] } } } : {})
+    };
+    const totalItems = await prisma.sale.count({ where: saleWhere });
+    const pagination = paginationFor(req, totalItems, req.query.page, 100);
+    const [sales, summary] = await Promise.all([
+      prisma.sale.findMany({
+        where: saleWhere,
+        include: {
+          customer: true,
+          _count: { select: { items: true } },
+          items: { select: { productName: true, productBarcode: true, productPurity: true }, take: 3 }
+        },
+        orderBy: [{ saleDate: 'desc' }, { id: 'desc' }],
         skip: (pagination.page - 1) * pagination.pageSize,
         take: pagination.pageSize
       }),
-      prisma.sale.aggregate({ _sum: { balance: true } })
+      prisma.sale.aggregate({ where: saleWhere, _sum: { total: true, paid: true, balance: true }, _count: true })
     ]);
-    const topProducts = [...topGoldRows, ...topSilverRows].map((row) => ({
-      metal: row.metal,
-      name: row.name,
-      sku: row.sku,
-      purity: row.purity,
-      quantity: Number(row.quantity || 0),
-      billed: Number(row.billed || 0)
-    }));
-    const stockByMetal = stockSummaryRows.map((row) => ({
-      metal: row.metal,
-      quantity: Number(row.quantity || 0),
-      netWeight: Number(row.netWeight || 0),
-      grossWeight: Number(row.grossWeight || 0)
-    }));
-
-    const itemWiseStock = stockProducts.map((p) => {
-      const netWt = Number(p.netWeight);
-      const grossWt = Number(p.grossWeight);
-      return {
-        id: p.id,
-        barcode: p.barcode || '—',
-        sku: p.sku,
-        name: p.name,
-        category: p.category,
-        metal: p.metal,
-        purity: p.purity || '—',
-        quantity: p.quantity,
-        netWeight: netWt,
-        grossWeight: grossWt,
-        totalNetWeight: netWt * p.quantity,
-        totalGrossWeight: grossWt * p.quantity,
-        location: p.location || '—'
-      };
-    });
-
-    res.render('reports/index', {
-      title: 'Reports',
-      from,
-      to,
-      sales,
-      stockByMetal,
-      receivables: receivables._sum.balance || 0,
-      topProducts,
-      itemWiseStock,
-      itemQ,
-      pagination
+    res.render('reports/sales-register', {
+      title: 'Sales register', sales, summary, pagination,
+      filters: { from: fromKey, to: toKey, item, customer, invoice, paymentMethod, balanceState }
     });
   } catch (error) { next(error); }
 });

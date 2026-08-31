@@ -1,5 +1,5 @@
 const { PrismaClient } = require('@prisma/client');
-const { barcodePrefix } = require('../src/lib/helpers');
+const { base36BarcodePrefix, formatBarcode } = require('../src/lib/barcode-sequence');
 
 const prisma = new PrismaClient();
 
@@ -8,18 +8,21 @@ async function main() {
   const counters = new Map();
 
   for (const product of products) {
-    const prefix = barcodePrefix(product.metal, product.purity);
-    const match = product.barcode?.match(new RegExp(`^${prefix}\\s+(\\d+)$`, 'i'));
-    if (match) counters.set(prefix, Math.max(counters.get(prefix) || 0, Number(match[1])));
+    const prefix = base36BarcodePrefix(product.metal);
+    const match = product.barcode?.match(new RegExp(`^${prefix}\\s+([0-9A-Z]{5})$`, 'i'));
+    if (match) {
+      const serial = Number.parseInt(match[1], 36);
+      counters.set(prefix, Math.max(counters.get(prefix) || 0, serial));
+    }
   }
 
   for (const product of products) {
-    const prefix = barcodePrefix(product.metal, product.purity);
+    const prefix = base36BarcodePrefix(product.metal);
     let barcode = product.barcode;
     if (!barcode) {
       const next = (counters.get(prefix) || 0) + 1;
       counters.set(prefix, next);
-      barcode = `${prefix} ${next}`;
+      barcode = formatBarcode(prefix, next);
     }
     await prisma.product.update({
       where: { id: product.id },
@@ -32,11 +35,13 @@ async function main() {
   }
 
   for (const [prefix, lastNumber] of counters) {
-    await prisma.barcodeSequence.upsert({
-      where: { prefix },
-      create: { prefix, lastNumber },
-      update: { lastNumber }
-    });
+    const sequenceKey = `${prefix}_B36`;
+    const existing = await prisma.barcodeSequence.findUnique({ where: { prefix: sequenceKey } });
+    if (!existing) {
+      await prisma.barcodeSequence.create({ data: { prefix: sequenceKey, lastNumber } });
+    } else if (existing.lastNumber < lastNumber) {
+      await prisma.barcodeSequence.update({ where: { prefix: sequenceKey }, data: { lastNumber } });
+    }
   }
 
   console.log(`Backfilled ${products.length} product(s) with barcodes and making-charge settings.`);

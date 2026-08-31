@@ -79,7 +79,7 @@
           <strong><%= product.name || 'Jewellery item' %></strong>
           <small><%= product.barcode || product.sku || 'Sold item' %><%= product.category ? ` · ${product.category}` : '' %><% if (item.hsnCode || item.huidCode) { %> · <% if (item.hsnCode) { %>HSN: <%= item.hsnCode %><% } %><% if (item.hsnCode && item.huidCode) { %> | <% } %><% if (item.huidCode) { %>HUID: <%= item.huidCode %><% } %><% } %></small>
         </td>
-        <td><%= product.purity || product.metal || '—' %></td>
+        <td><%= product.purity || '—' %></td>
         <td><%= grams(item.weight || product.netWeight) %></td>
         <td class="right"><%= item.quantity %></td>
         <td class="right"><%- money(item.metalRate || item.unitPrice) %></td>

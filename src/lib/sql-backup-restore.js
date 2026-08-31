@@ -820,7 +820,11 @@ async function verifyRestoredDatabase(databaseUrl, expectedManifest = null, { le
       for (const table of countTables) {
         const [[count]] = await connection.query(`SELECT COUNT(*) AS rowCount FROM ${mysqlCore.escapeId(table)}`);
         const expected = Number(expectedManifest.tables[table]);
-        if (Number(count.rowCount) !== expected) {
+        if (['_prisma_migrations', 'BarcodeSequence', 'DocumentSequence', 'SyncRevision'].includes(table)) {
+          if (Number(count.rowCount) < expected) {
+            throw new Error(`Restored row count mismatch for ${table}: expected at least ${expected}, found ${count.rowCount}.`);
+          }
+        } else if (Number(count.rowCount) !== expected) {
           throw new Error(`Restored row count mismatch for ${table}: expected ${expected}, found ${count.rowCount}.`);
         }
       }

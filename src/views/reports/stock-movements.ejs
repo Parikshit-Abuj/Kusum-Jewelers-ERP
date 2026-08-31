@@ -1,0 +1,30 @@
+<header class="page-header">
+  <div><p class="eyebrow">Inventory history</p><h1>Stock movement report</h1><p class="muted">Every opening entry, sale and adjustment is retained here.</p></div>
+  <a class="button ghost" href="/reports">← All reports</a>
+</header>
+
+<section class="panel report-filter-panel">
+  <form class="report-filter-form" method="get">
+    <label>From<input type="date" name="from" value="<%= filters.from %>"></label><label>To<input type="date" name="to" value="<%= filters.to %>"></label>
+    <label>Search item / barcode<input name="q" value="<%= filters.q %>" placeholder="G 00001, chain…"></label>
+    <label>Metal<select name="metal"><option value="">All metals</option><% ['GOLD','SILVER','PLATINUM','DIAMOND','OTHER'].forEach((value) => { %><option value="<%= value %>" <%= filters.metal === value ? 'selected' : '' %>><%= value %></option><% }) %></select></label>
+    <label>Movement<select name="type"><option value="">All movements</option><% [['OPENING','Opening'],['SALE','Sale'],['ADJUSTMENT_IN','Adjustment in'],['ADJUSTMENT_OUT','Adjustment out']].forEach(([value,label]) => { %><option value="<%= value %>" <%= filters.type === value ? 'selected' : '' %>><%= label %></option><% }) %></select></label>
+    <div class="report-filter-actions"><button class="button small" type="submit">Apply filters</button><a class="button ghost small" href="/reports/stock-movements">Reset</a></div>
+  </form>
+</section>
+
+<section class="panel">
+  <div class="panel-heading"><div><h2>Movement history</h2><p><%= pagination.totalItems %> movement<%= pagination.totalItems === 1 ? '' : 's' %> found.</p></div></div>
+  <% if (movements.length) { %><div class="table-wrap"><table><thead><tr><th>Date &amp; time</th><th>Barcode / item</th><th>Metal / purity</th><th>Movement</th><th class="right">Pieces</th><th class="right">Net wt.</th><th>Note</th></tr></thead><tbody>
+    <% movements.forEach((movement) => { %><tr>
+      <td><%= movement.createdAt.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) %></td>
+      <td><strong class="barcode-label"><%= movement.productBarcode || movement.productSku || '—' %></strong><small><%= movement.productName || 'Jewellery item' %></small></td>
+      <td><%= movement.productMetal || '—' %><small><%= movement.productPurity || '' %></small></td>
+      <td><span class="pill <%= movement.type === 'SALE' || movement.type === 'ADJUSTMENT_OUT' ? 'danger' : 'success' %>"><%= movement.type.replace('_', ' ') %></span></td>
+      <td class="right"><strong><%= movement.quantity > 0 ? '+' : '' %><%= movement.quantity %></strong></td>
+      <td class="right"><%= grams(Math.abs(Number(movement.netWeight || 0) * Number(movement.quantity || 0))) %></td>
+      <td><%= movement.note || '—' %></td>
+    </tr><% }) %>
+  </tbody></table></div><%- include('../_pagination', { pagination }) %>
+  <% } else { %><div class="empty-state compact"><span>⇄</span><h3>No movements for this filter</h3><p>Change the date range or search terms.</p></div><% } %>
+</section>

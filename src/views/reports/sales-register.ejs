@@ -1,0 +1,36 @@
+<header class="page-header">
+  <div><p class="eyebrow">Invoice history</p><h1>Sales register</h1><p class="muted">Find invoices by item, date, customer, invoice number, payment or balance.</p></div>
+  <a class="button ghost" href="/reports">← All reports</a>
+</header>
+
+<section class="panel report-filter-panel">
+  <form class="report-filter-form" method="get">
+    <label>From<input type="date" name="from" value="<%= filters.from %>"></label><label>To<input type="date" name="to" value="<%= filters.to %>"></label>
+    <label>Item / barcode<input name="item" value="<%= filters.item %>" placeholder="Ring, G 00001…"></label>
+    <label>Customer / mobile<input name="customer" value="<%= filters.customer %>" placeholder="Name or mobile"></label>
+    <label>Invoice no.<input name="invoice" value="<%= filters.invoice %>" placeholder="INV…"></label>
+    <label>Payment<select name="paymentMethod"><option value="">All payments</option><% ['CASH','UPI','CARD','BANK_TRANSFER','CREDIT','MIXED'].forEach((value) => { %><option value="<%= value %>" <%= filters.paymentMethod === value ? 'selected' : '' %>><%= value.replace('_', ' ') %></option><% }) %></select></label>
+    <label>Balance<select name="balanceState"><option value="ALL" <%= filters.balanceState === 'ALL' ? 'selected' : '' %>>All invoices</option><option value="DUE" <%= filters.balanceState === 'DUE' ? 'selected' : '' %>>Balance due</option><option value="SETTLED" <%= filters.balanceState === 'SETTLED' ? 'selected' : '' %>>Settled</option></select></label>
+    <div class="report-filter-actions"><button class="button small" type="submit">Apply filters</button><a class="button ghost small" href="/reports/sales-register">Reset</a></div>
+  </form>
+</section>
+
+<section class="stats-grid report-register-summary">
+  <article class="stat-card accent-gold"><span class="stat-label">Invoice total</span><strong><%= money(summary._sum.total) %></strong><p><%= summary._count %> invoice<%= summary._count === 1 ? '' : 's' %></p></article>
+  <article class="stat-card"><span class="stat-label">Amount collected</span><strong><%= money(summary._sum.paid) %></strong><p>Payments recorded against these invoices</p></article>
+  <article class="stat-card"><span class="stat-label">Balance due</span><strong><%= money(summary._sum.balance) %></strong><p>Remaining amount in this filtered register</p></article>
+</section>
+
+<section class="panel">
+  <div class="panel-heading"><div><h2>Invoices</h2><p><%= pagination.totalItems %> invoice<%= pagination.totalItems === 1 ? '' : 's' %> found.</p></div></div>
+  <% if (sales.length) { %><div class="table-wrap"><table><thead><tr><th>Invoice</th><th>Date</th><th>Customer</th><th>Items</th><th>Payment</th><th class="right">Total</th><th class="right">Paid</th><th class="right">Due</th><th></th></tr></thead><tbody>
+    <% sales.forEach((sale) => { %><tr>
+      <td><strong><%= sale.invoiceNumber %></strong></td><td><%= sale.saleDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) %></td>
+      <td><strong><%= sale.customer?.name || 'Walk-in customer' %></strong><small><%= sale.customer?.phone || '' %></small></td>
+      <td><% sale.items.forEach((item) => { %><small><%= item.productName || item.productBarcode || 'Jewellery item' %><%= item.productPurity ? ` · ${item.productPurity}` : '' %></small><% }) %><% if (sale._count.items > sale.items.length) { %><small>+ <%= sale._count.items - sale.items.length %> more</small><% } %></td>
+      <td><span class="pill neutral"><%= sale.paymentMethod.replace('_', ' ') %></span></td><td class="right"><strong><%= money(sale.total) %></strong></td><td class="right"><%= money(sale.paid) %></td><td class="right"><strong class="<%= Number(sale.balance) > 0 ? 'credit-amount' : 'paid-amount' %>"><%= money(sale.balance) %></strong></td>
+      <td class="actions"><a class="button ghost small" href="/sales/<%= sale.id %>">Open</a><a class="button ghost small" href="/sales/<%= sale.id %>/invoice.pdf" target="_blank" rel="noopener">PDF</a></td>
+    </tr><% }) %>
+  </tbody></table></div><%- include('../_pagination', { pagination }) %>
+  <% } else { %><div class="empty-state compact"><span>▤</span><h3>No sales match this filter</h3><p>Change the item, customer, date or payment filter.</p></div><% } %>
+</section>

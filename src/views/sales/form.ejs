@@ -64,7 +64,7 @@
     <div class="line-items-header">
       <div>
         <h2>Scanned jewellery</h2>
-        <p>Type a barcode (e.g. <strong>G22 1</strong>, <strong>G24 1</strong>, <strong>S 1</strong>) — item details load automatically.</p>
+        <p>Type or scan a barcode (e.g. <strong>G 00001</strong> or <strong>S 00001</strong>).</p>
       </div>
       <button class="button secondary small" type="button" data-add-row>+ Add barcode</button>
     </div>
@@ -120,6 +120,9 @@
           </label>
           <label>Billing weight (g)
             <input name="weight" type="number" min="0.001" step="0.001" required data-weight placeholder="0.000">
+          </label>
+          <label>Purity (optional)
+            <input name="purity" maxlength="30" data-purity placeholder="e.g. 22K">
           </label>
           <label>HSN (opt)
             <input name="hsnCode" placeholder="e.g. 7113" data-hsn-code autocomplete="off">

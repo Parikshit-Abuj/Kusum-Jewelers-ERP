@@ -1,0 +1,20 @@
+<header class="page-header">
+  <div><p class="eyebrow">Customer ledger</p><h1>Balance register</h1><p class="muted">Customer-wise credit balances calculated from the ledger.</p></div>
+  <a class="button ghost" href="/reports">← All reports</a>
+</header>
+
+<section class="panel report-filter-panel">
+  <form class="report-filter-form" method="get">
+    <label>Customer / mobile<input name="q" value="<%= filters.q %>" placeholder="Name or mobile number"></label>
+    <label>Show<select name="state"><option value="DUE" <%= filters.state === 'DUE' ? 'selected' : '' %>>Balance due only</option><option value="ALL" <%= filters.state === 'ALL' ? 'selected' : '' %>>All customers</option><option value="SETTLED" <%= filters.state === 'SETTLED' ? 'selected' : '' %>>Settled only</option></select></label>
+    <div class="report-filter-actions"><button class="button small" type="submit">Apply filters</button><a class="button ghost small" href="/reports/balance-register">Reset</a></div>
+  </form>
+</section>
+
+<section class="panel">
+  <div class="panel-heading"><div><h2>Customer balances</h2><p><%= pagination.totalItems %> customer<%= pagination.totalItems === 1 ? '' : 's' %> found.</p></div></div>
+  <% if (customers.length) { %><div class="table-wrap"><table><thead><tr><th>Customer</th><th>Mobile</th><th>Last ledger activity</th><th class="right">Balance</th><th></th></tr></thead><tbody>
+    <% customers.forEach((customer) => { %><tr><td><strong><%= customer.name %></strong></td><td><%= customer.phone || '—' %></td><td><%= customer.lastActivity ? new Date(customer.lastActivity).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—' %></td><td class="right"><strong class="<%= customer.balance > 0 ? 'credit-amount' : 'paid-amount' %>"><%= money(customer.balance) %></strong></td><td class="actions"><a class="button ghost small" href="/customers/<%= customer.id %>">Ledger →</a></td></tr><% }) %>
+  </tbody></table></div><%- include('../_pagination', { pagination }) %>
+  <% } else { %><div class="empty-state compact"><span>₹</span><h3>No customers match this filter</h3><p>Try another customer name, mobile number or balance state.</p></div><% } %>
+</section>

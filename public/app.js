@@ -103,8 +103,7 @@ document.querySelectorAll('.flash').forEach((el) => {
       { value: '24K', label: '24K Gold' },
     ],
     SILVER: [
-      { value: '925', label: 'Silver 925' },
-      { value: 'PURE', label: 'Pure Silver' },
+      { value: '', label: 'Not specified' },
     ],
     PLATINUM: [
       { value: 'PT950', label: 'Platinum 950' },
@@ -119,9 +118,7 @@ document.querySelectorAll('.flash').forEach((el) => {
   };
 
   function getBarcodePrefixPreview(metal, purity) {
-    const p = String(purity || '').toUpperCase().replace(/\s/g, '');
-    if (metal === 'GOLD' && p === '24K') return 'G24';
-    if (metal === 'GOLD') return 'G22';
+    if (metal === 'GOLD') return 'G';
     if (metal === 'SILVER') return 'S';
     return 'J';
   }
@@ -161,7 +158,7 @@ document.querySelectorAll('.flash').forEach((el) => {
 
     if (barcodePreview) {
       const prefix = getBarcodePrefixPreview(metal, purity);
-      barcodePreview.textContent = `${prefix} 1`;
+      barcodePreview.textContent = `${prefix} 00001`;
     }
 
     const metalRate = getMetalRate(metal, purity);
@@ -438,6 +435,7 @@ document.querySelectorAll('.flash').forEach((el) => {
     const itemDetails = row.querySelector('[data-item-details]');
     const qtyInput = row.querySelector('[data-quantity]');
     const weightInput = row.querySelector('[data-weight]');
+    const purityInput = row.querySelector('[data-purity]');
     const metalRateInput = row.querySelector('[data-metal-rate]');
     const makingTypeSelect = row.querySelector('[data-making-type]');
     const makingValueInput = row.querySelector('[data-making-value]');
@@ -517,6 +515,7 @@ document.querySelectorAll('.flash').forEach((el) => {
         ]);
 
         weightInput.value = Number(data.product.netWeight).toFixed(3);
+        if (purityInput) purityInput.value = data.product.purity || '';
         metalRateInput.value = Number(data.metalRate).toFixed(2);
 
         // Set making charge type + value from product defaults
@@ -553,6 +552,7 @@ document.querySelectorAll('.flash').forEach((el) => {
       if (lookupController) lookupController.abort();
       productIdInput.value = '';
       productData = null;
+      if (purityInput) purityInput.value = '';
       replaceWithTextElements(itemDetails, [
         { tag: 'strong', text: 'Waiting for barcode…' },
         { tag: 'small', text: 'Item details will appear here after lookup' }
@@ -993,8 +993,7 @@ function updateInventoryLabelBatchState() {
       { value: '24K', label: '24K Gold' },
     ],
     SILVER: [
-      { value: '925', label: 'Silver 925' },
-      { value: 'PURE', label: 'Pure Silver' },
+      { value: '', label: 'Not specified' },
     ],
     PLATINUM: [
       { value: 'PT950', label: 'Platinum 950' },

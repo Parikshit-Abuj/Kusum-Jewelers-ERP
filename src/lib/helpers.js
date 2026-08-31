@@ -148,10 +148,8 @@ async function nextBatchDocumentNumber(db, value = new Date()) {
   return reserveBatchNumber(db, value);
 }
 
-function barcodePrefix(metal, purity) {
-  const normalizedPurity = String(purity || '').toUpperCase().replaceAll(' ', '');
-  if (metal === 'GOLD' && normalizedPurity === '24K') return 'G24';
-  if (metal === 'GOLD') return 'G22';
+function barcodePrefix(metal) {
+  if (metal === 'GOLD') return 'G';
   if (metal === 'SILVER') return 'S';
   return 'J';
 }

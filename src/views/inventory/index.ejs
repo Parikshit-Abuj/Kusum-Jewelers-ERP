@@ -23,7 +23,12 @@
     <td><span class="pill neutral"><%= product.makingChargeType.replace('_', ' ') %></span><small><%= product.makingChargeType === 'PERCENTAGE' ? `${product.makingChargeValue}%` : money(product.makingChargeValue) %></small></td>
     <td class="right"><strong><%= money(product.sellingPrice) %></strong><small>Cost: <%= money(product.purchasePrice) %></small></td>
     <td><%= product.location || '—' %></td>
-    <td class="actions"><a class="icon-button" title="Edit item" href="/inventory/<%= product.id %>/edit">✎</a></td>
+    <td class="actions">
+      <a class="icon-button" title="Edit item" href="/inventory/<%= product.id %>/edit">✎</a>
+      <form method="post" action="/inventory/<%= product.id %>/delete" style="display:inline;margin:0;" onsubmit="return confirm('Do you want to delete item?');">
+        <button type="submit" class="icon-button delete-icon" title="Delete item">✕</button>
+      </form>
+    </td>
   </tr><% }) %>
   </tbody></table></div><% } else { %><div class="empty-state"><span>◇</span><h3>No jewellery items found</h3><p>Add stock to start billing and tracking inventory.</p><button type="button" class="button" data-open-batch-modal>⚡ Batch Add Pieces</button></div><% } %>
   <%- include('../_pagination', { pagination: typeof pagination !== 'undefined' ? pagination : null }) %>
