@@ -358,11 +358,11 @@
           <div class="setup-segmented-control" role="radiogroup" aria-label="Installation type">
             <label>
               <input type="radio" name="setupMode" value="SERVER" <%= defaults.setupMode === 'CLIENT' ? '' : 'checked' %>>
-              🖥️ Main Database PC
+              Main Database PC
             </label>
             <label>
               <input type="radio" name="setupMode" value="CLIENT" <%= defaults.setupMode === 'CLIENT' ? 'checked' : '' %>>
-              💻 Client Counter PC
+              Client Counter PC
             </label>
           </div>
 
@@ -474,11 +474,11 @@
           <div class="setup-segmented-control" role="radiogroup" aria-label="Barcode printer connection">
             <label>
               <input type="radio" name="printerMode" value="WINDOWS" <%= defaults.printerMode === 'TCP' ? '' : 'checked' %>>
-              🖨️ Windows / USB Printer
+              Windows / USB Printer
             </label>
             <label>
               <input type="radio" name="printerMode" value="TCP" <%= defaults.printerMode === 'TCP' ? 'checked' : '' %>>
-              🌐 Direct Network TCP/IP
+              Direct Network TCP/IP
             </label>
           </div>
 
@@ -506,7 +506,6 @@
         </div>
 
         <button class="setup-submit-btn" type="submit" data-submit-label>
-          <span>✨</span>
           <span data-btn-text>Create Shared Database and Start ERP</span>
         </button>
 

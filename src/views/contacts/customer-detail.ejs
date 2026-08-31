@@ -11,9 +11,9 @@
   <article class="panel">
     <div class="panel-heading"><div><h2>Credit &amp; payment log</h2><p>Each credit sale and received payment is recorded here.</p></div></div>
     <% if (customer.ledger.length) { %>
-      <div class="table-wrap"><table><thead><tr><th>Date</th><th>Entry</th><th>Reference</th><th>Method</th><th class="right">Amount</th><th class="right">Running due</th></tr></thead><tbody>
+      <div class="table-wrap"><table><thead><tr><th>Date</th><th>Entry</th><th>Method</th><th class="right">Amount</th><th class="right">Running due</th></tr></thead><tbody>
         <% customer.ledger.slice().reverse().forEach((entry) => { %>
-          <tr><td><%= entry.createdAt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) %></td><td><span class="pill <%= Number(entry.amount) < 0 ? 'success' : 'warning' %>"><%= entry.type === 'SALE_CREDIT' ? 'Credit sale' : entry.type === 'PAYMENT_RECEIVED' ? 'Payment received' : 'Adjustment' %></span><small><%= entry.note || '' %></small></td><td><%= entry.sale?.invoiceNumber || entry.reference || '—' %></td><td><%= entry.paymentMethod?.replace('_', ' ') || '—' %></td><td class="right"><strong class="<%= Number(entry.amount) < 0 ? 'paid-amount' : 'credit-amount' %>"><%= Number(entry.amount) < 0 ? '− ' : '' %><%= money(Math.abs(Number(entry.amount))) %></strong></td><td class="right"><%= money(entry.runningDue !== undefined ? entry.runningDue : outstanding) %></td></tr>
+          <tr><td><%= formatDateDisplay(entry.createdAt) %></td><td><span class="pill <%= Number(entry.amount) < 0 ? 'success' : 'warning' %>"><%= entry.type === 'SALE_CREDIT' ? 'Credit sale' : entry.type === 'PAYMENT_RECEIVED' ? 'Payment received' : 'Adjustment' %></span><small><%= entry.note || '' %></small></td><td><%= entry.paymentMethod?.replace('_', ' ') || '—' %></td><td class="right"><strong class="<%= Number(entry.amount) < 0 ? 'paid-amount' : 'credit-amount' %>"><%= Number(entry.amount) < 0 ? '− ' : '' %><%= money(Math.abs(Number(entry.amount))) %></strong></td><td class="right"><%= money(entry.runningDue !== undefined ? entry.runningDue : outstanding) %></td></tr>
         <% }) %>
       </tbody></table></div>
       <%- include('../_pagination', { pagination: typeof pagination !== 'undefined' ? pagination : null }) %>
@@ -22,22 +22,13 @@
     <% } %>
   </article>
   <aside class="panel side-form receive-payment">
-    <h2>Receive payment</h2><p class="muted">Record payment against the oldest unpaid invoices first.</p>
+    <h2>Receive payment</h2>
     <form method="post" action="/customers/<%= customer.id %>/payments">
       <label>Amount received (₹) *<input name="amount" type="number" min="0.01" max="<%= outstanding %>" step="0.01" required value="<%= outstanding > 0 ? outstanding : '' %>" <%= outstanding <= 0 ? 'disabled' : '' %>></label>
       <label>Payment method<select name="paymentMethod" data-payment-method <%= outstanding <= 0 ? 'disabled' : '' %>><% ['CASH','UPI','CARD','BANK_TRANSFER'].forEach((method) => { %><option value="<%= method %>"><%= method.replace('_', ' ') %></option><% }) %></select></label>
-      <p class="form-hint">Payment synchronizes automatically to Daily Cashbook.</p>
-      <label>Receipt / reference<input name="reference" placeholder="Optional receipt no." <%= outstanding <= 0 ? 'disabled' : '' %>></label>
       <label>Note<textarea name="note" rows="3" placeholder="Optional payment note" <%= outstanding <= 0 ? 'disabled' : '' %>></textarea></label>
       <button class="button full" type="submit" <%= outstanding <= 0 ? 'disabled' : '' %>><%= outstanding > 0 ? 'Receive payment' : 'No credit pending' %></button>
     </form>
   </aside>
 </section>
-<section class="panel customer-invoices">
-  <div class="panel-heading"><div><h2>Recent sales</h2><p>Invoice balances update when payments are received.</p></div></div>
-  <% if (customer.sales.length) { %>
-    <div class="table-wrap"><table><thead><tr><th>Invoice</th><th>Date</th><th class="right">Total</th><th class="right">URD</th><th class="right">Paid</th><th class="right">Balance</th></tr></thead><tbody>
-      <% customer.sales.forEach((sale) => { %><tr><td><a href="/sales/<%= sale.id %>"><strong><%= sale.invoiceNumber %></strong></a></td><td><%= sale.saleDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) %></td><td class="right"><%= money(sale.total) %></td><td class="right"><%= Number(sale.urdOffset) > 0 ? `− ${money(sale.urdOffset)}` : '—' %></td><td class="right"><%= money(sale.paid) %></td><td class="right"><strong class="<%= Number(sale.balance) > 0 ? 'credit-amount' : 'paid-amount' %>"><%= money(sale.balance) %></strong></td></tr><% }) %>
-    </tbody></table></div>
-  <% } %>
-</section>
+

@@ -21,6 +21,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 
 body {
   margin: 0;
@@ -596,7 +597,7 @@ input:focus, select:focus, textarea:focus { border-color: #c08a32; box-shadow: 0
 
 /* ── Cashbook ──────────────────────────────────────────────── */
 .cashbook-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 20px; }
-.cashbook-layout { grid-template-columns: minmax(0, 1fr) 310px; }
+.cashbook-layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 20px; align-items: start; }
 .cashbook-form h2 { margin-bottom: 16px; }
 .cashbook-form label { margin-bottom: 13px; display: block; }
 .cashbook-form .button { margin-top: 8px; }
@@ -740,17 +741,22 @@ input:focus, select:focus, textarea:focus { border-color: #c08a32; box-shadow: 0
   to { opacity: 1; }
 }
 
-.modal-card.batch-modal-card {
-  background: #ffffff;
+.modal-card {
+  background: #ffffff !important;
+  color: #1a1612;
   width: 100%;
   max-width: 1060px;
   max-height: 92vh;
   border-radius: 14px;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(0, 0, 0, 0.06);
+  border: 1px solid #e0d6c3;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.08);
   display: flex;
   flex-direction: column;
   overflow: hidden;
   animation: modalSlideUp .2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.modal-card.batch-modal-card {
+  max-width: 1060px;
 }
 @keyframes modalSlideUp {
   from { transform: translateY(18px) scale(0.98); opacity: 0; }

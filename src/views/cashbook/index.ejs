@@ -58,46 +58,50 @@
     </form>
 
     <% if (entries.length) { %>
-    <div class="table-wrap" style="margin-top:0">
-      <table>
+    <div class="table-wrap" style="margin-top: 0; overflow-x: auto;">
+      <table style="width: 100%; min-width: 650px;">
         <thead>
           <tr>
-            <th>Date</th>
+            <th style="width: 100px; white-space: nowrap;">Date</th>
             <th>Description</th>
-            <th>Customer</th>
-            <th>Method</th>
-            <th>Type</th>
-            <th class="right">Amount</th>
-            <th></th>
+            <th style="width: 130px;">Customer</th>
+            <th style="width: 90px;">Method</th>
+            <th style="width: 70px;">Type</th>
+            <th class="right" style="width: 135px; white-space: nowrap;">Amount</th>
+            <th style="width: 40px;"></th>
           </tr>
         </thead>
         <tbody>
-          <% entries.forEach(entry => { %>
+          <% entries.forEach(entry => { 
+            let cleanDesc = entry.description || '';
+            if (entry.reference) {
+              cleanDesc = cleanDesc.replace(new RegExp(`\\s*—\\s*${entry.reference.replace(/[-\\/\\\\^$*+?.()|[\\]{}]/g, '\\$&')}$`), '');
+            }
+          %>
           <tr>
-            <td><strong><%= entry.entryDate %></strong></td>
+            <td style="white-space: nowrap;"><strong><%= formatDateDisplay(entry.entryDate) %></strong></td>
             <td>
-              <strong><%= entry.description %></strong>
-              <% if (entry.reference) { %><small>Ref: <%= entry.reference %></small><% } %>
-              <% if (entry.syncLedger) { %><small style="color:#1f7651">↔ Synced to ledger</small><% } %>
-              <% if (entry.notes) { %><small><%= entry.notes %></small><% } %>
+              <strong style="color: #1a1612; display: block;"><%= cleanDesc %></strong>
+              <% if (entry.reference) { %><small style="color: #756f69; display: block; font-size: 11.5px; margin-top: 2px;">Ref: <%= entry.reference %></small><% } %>
+              <% if (entry.notes) { %><small style="color: #857560; display: block; font-size: 11.5px;"><%= entry.notes %></small><% } %>
             </td>
             <td>
               <% if (entry.customer) { %>
-              <a href="/customers/<%= entry.customer.id %>"><%= entry.customer.name %></a>
+              <a href="/customers/<%= entry.customer.id %>" style="font-weight: 600;"><%= entry.customer.name %></a>
               <% } else { %>
               <span class="muted">—</span>
               <% } %>
             </td>
-            <td><span class="pill neutral"><%= entry.paymentMethod.replace('_', ' ') %></span></td>
-            <td><span class="pill <%= entry.type === 'IN' ? 'success' : 'danger' %>"><%= entry.type === 'IN' ? '↑ IN' : '↓ OUT' %></span></td>
-            <td class="right">
-              <strong class="<%= entry.type === 'IN' ? 'paid-amount' : 'credit-amount' %>">
+            <td><span class="pill neutral" style="font-size: 11px; padding: 2px 7px;"><%= entry.paymentMethod.replace('_', ' ') %></span></td>
+            <td><span class="pill <%= entry.type === 'IN' ? 'success' : 'danger' %>" style="font-size: 11px; padding: 2px 7px;"><%= entry.type === 'IN' ? '↑ IN' : '↓ OUT' %></span></td>
+            <td class="right" style="white-space: nowrap;">
+              <strong class="<%= entry.type === 'IN' ? 'paid-amount' : 'credit-amount' %>" style="font-size: 13.5px; font-weight: 750;">
                 <%= entry.type === 'OUT' ? '− ' : '+ ' %><%- money(entry.amount) %>
               </strong>
             </td>
-            <td class="actions">
+            <td class="actions" style="text-align: center;">
               <form method="post" action="/cashbook/<%= entry.id %>/delete" onsubmit="return confirm('Delete this entry?')">
-                <button class="icon-button" type="submit" title="Delete entry" style="color:#b53d36">✕</button>
+                <button class="icon-button" type="submit" title="Delete entry" style="color: #b53d36; font-size: 13px;">✕</button>
               </form>
             </td>
           </tr>
@@ -154,11 +158,6 @@
         </select>
       </label>
 
-      <small class="form-hint">When a customer is selected, this entry synchronizes automatically to their ledger. Money received reduces their oldest credit first.</small>
-
-      <label>Reference / Receipt no.
-        <input name="reference" placeholder="Optional — invoice no., receipt, UTR…">
-      </label>
       <label>Notes
         <textarea name="notes" rows="2" placeholder="Any additional details…"></textarea>
       </label>

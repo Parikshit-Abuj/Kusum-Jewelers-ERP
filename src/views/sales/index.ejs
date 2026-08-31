@@ -44,7 +44,7 @@
             <strong><%= sale.customer?.name || 'Walk-in customer' %></strong>
             <% if (sale.customer?.phone) { %><small><%= sale.customer.phone %></small><% } %>
           </td>
-          <td><%= sale.saleDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) %></td>
+          <td><%= formatDateDisplay(sale.saleDate) %></td>
           <td><%= sale._count.items %></td>
           <td><span class="pill neutral"><%= sale.paymentMethod.replace('_', ' ') %></span><% if (Number(sale.urdOffset) > 0) { %><small>URD adjusted <%= money(sale.urdOffset) %></small><% } %><% if (Number(sale.balance) > 0) { %><small class="danger-text">Due <%= money(sale.balance) %></small><% } %></td>
           <td class="right"><strong><%= money(sale.total) %></strong></td>
@@ -52,7 +52,7 @@
           <td class="actions">
             <a class="button ghost small" href="/sales/<%= sale.id %>/invoice.pdf" target="_blank" rel="noopener" title="Print / save PDF">PDF</a>
             <% if (waPhone) { %>
-              <a class="icon-button whatsapp-icon" href="whatsapp://send?phone=<%= waPhone %>&text=<%= waText %>" title="Open WhatsApp Desktop chat">💬</a>
+              <a class="icon-button whatsapp-icon" href="whatsapp://send?phone=<%= waPhone %>&text=<%= waText %>" title="Open WhatsApp Desktop chat">WA</a>
             <% } %>
             <a class="icon-button" href="/sales/<%= sale.id %>" title="Open invoice">→</a>
           </td>
@@ -62,7 +62,7 @@
     <%- include('../_pagination', { pagination: typeof pagination !== 'undefined' ? pagination : null }) %>
   <% } else { %>
     <% if (f.q || f.from || f.to) { %>
-      <div class="empty-state"><span>🔍</span><h3>No invoices match your search</h3><p>Try a different name, invoice number, or date range.</p><a class="button" href="/sales">Clear filters</a></div>
+      <div class="empty-state"><span>⌕</span><h3>No invoices match your search</h3><p>Try a different name, invoice number, or date range.</p><a class="button" href="/sales">Clear filters</a></div>
     <% } else { %>
       <div class="empty-state"><span>₹</span><h3>No invoices yet</h3><p>Start your first sale - stock will update automatically.</p><a class="button" href="/sales/new">Create invoice</a></div>
     <% } %>

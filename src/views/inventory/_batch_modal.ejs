@@ -3,7 +3,7 @@
   <div class="modal-card batch-modal-card split-layout">
     <header class="modal-header batch-header-with-doc">
       <div class="batch-header-title">
-        <div class="batch-badge">⚡ FAST-TRACK BATCH ENTRY</div>
+        <div class="batch-badge">FAST-TRACK BATCH ENTRY</div>
         <h2>Batch Add Jewellery Pieces</h2>
       </div>
 
@@ -13,7 +13,8 @@
           <input type="text" id="batchDocNoInput" readonly value="BATCH-..." title="Batch document identifier">
         </div>
         <button type="button" class="button ghost small" id="batchNewDocBtn">+ New Batch</button>
-        <button type="button" class="button secondary small" id="batchLoadDocBtn">📂 Load Batch</button>
+        <button type="button" class="button secondary small" id="batchLoadDocBtn">Load Batch</button>
+        <button type="button" class="button ghost small" id="batchRefreshBtn" title="Refresh pieces from database">Refresh</button>
         <button type="button" class="modal-close-btn" data-batch-modal-close aria-label="Close modal">✕</button>
       </div>
     </header>
@@ -64,13 +65,13 @@
               <span>Making Type</span>
               <select id="batchMakingType" data-batch-making-type>
                 <option value="PER_GRAM" selected>Per Gram (₹ / g)</option>
-                <option value="PERCENTAGE">Percentage (%)</option>
                 <option value="FIXED">Fixed per Piece (₹)</option>
+                <option value="PERCENTAGE">Percentage (%)</option>
               </select>
             </label>
             <label>
               <span>Making Charge *</span>
-              <input type="number" id="batchMakingValue" min="0" step="0.01" placeholder="e.g. 15 or 10%" data-batch-making-value required>
+              <input type="number" id="batchMakingValue" min="0" step="0.01" value="0" placeholder="e.g. 15 or 10%" data-batch-making-value required>
             </label>
           </div>
 
@@ -83,7 +84,7 @@
               <span>Live Rate</span>
               <div class="batch-rate-indicator" data-batch-rate-badge>
                 <span class="dot">●</span>
-                <span data-batch-rate-text>₹90.00/g</span>
+                <span data-batch-rate-text>₹0.00/g</span>
               </div>
             </div>
           </div>
@@ -97,7 +98,7 @@
           </div>
 
           <div class="batch-editing-banner" id="batchEditingBanner" style="display:none;">
-            <span>✏️ Editing: <strong id="batchEditingBarcode">S 00001</strong></span>
+            <span>Editing: <strong id="batchEditingBarcode">S 00001</strong></span>
             <button type="button" class="button ghost small" id="batchCancelEditBtn" style="padding:2px 8px;font-size:11px;">Cancel ✕</button>
           </div>
 
@@ -110,7 +111,7 @@
               </label>
               <label class="weight-label">
                 <span>Stone Wt (g)</span>
-                <input type="number" id="batchStoneWeight" step="0.001" min="0" placeholder="0.000" autocomplete="off" data-batch-stone-weight>
+                <input type="number" id="batchStoneWeight" step="0.001" min="0" value="0" placeholder="0.000" autocomplete="off" data-batch-stone-weight>
               </label>
               <label class="weight-label primary-weight">
                 <span>Net Wt (g) *</span>
@@ -172,13 +173,25 @@
             </table>
           </div>
 
-          <div class="batch-right-footer">
-            <div></div>
-            <div class="batch-footer-btns">
-              <button type="button" class="button accent" id="batchPrintBtnFooter" data-batch-print-tspl disabled style="background:#b47a21;color:#fff;border:none;font-weight:700;">
-                ▥ Print Barcode Labels
+          <div class="batch-right-footer" style="background:#fffcf7; border: 1.5px solid #ebd9c4; border-radius: 12px; padding: 12px 18px; margin-top: 10px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+              <strong data-batch-selected-count style="font-size: 12.5px; padding: 3px 8px; border-radius: 6px; background: #f0ebe0; color: #5a4933; font-weight: 750;">0 selected</strong>
+              <span style="font-size: 12px; color: #4a3e31;">
+                Printer Queue: <strong><%= typeof printerName !== 'undefined' && printerName ? printerName : 'TSC TTP-244 Pro' %></strong>
+              </span>
+              <button type="button" class="button ghost small" id="batchCheckPrinterBtn" style="padding: 2px 8px; font-size: 11px; font-weight: 700;">Check Printer</button>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+              <input type="hidden" name="batchPrinterName" value="<%= typeof printerName !== 'undefined' ? printerName : 'TSC TTP-244 Pro' %>">
+
+              <button type="button" class="button accent" id="batchPrintBtnFooter" data-batch-print-tspl disabled style="background: #b47a21; color: #fff; border: none; font-weight: 750; padding: 8px 18px; border-radius: 8px; box-shadow: 0 2px 8px rgba(180,122,33,0.25); cursor: pointer; font-size: 13px;">
+                Send to <%= typeof printerName !== 'undefined' && printerName ? printerName : 'TSC TTP-244 Pro' %>
               </button>
-              <button type="button" class="button secondary" data-batch-close-refresh>Done (Close)</button>
+
+              <button type="button" class="button secondary" data-batch-close-refresh style="padding: 8px 18px; border-radius: 8px; font-weight: 700; font-size: 13px;">
+                Done (Close)
+              </button>
             </div>
           </div>
         </div>
@@ -189,33 +202,34 @@
 
 <!-- Modal: Load Previous Batch Document -->
 <div class="modal-overlay" id="batchLoadDocModal" style="display:none; z-index:10001;" aria-hidden="true">
-  <div class="modal-card" style="max-width: 780px;">
-    <header class="modal-header">
+  <div class="modal-card" style="max-width: 820px; background: #ffffff !important;">
+    <header class="modal-header" style="background: #faf8f5; border-bottom: 1px solid #e8dfcf;">
       <div>
-        <h2>📂 Load Batch Document</h2>
+        <h2 style="font-size: 18px; margin: 0; color: #1a1612;">Load Batch Document</h2>
+        <p style="font-size: 12px; color: #7d7265; margin: 2px 0 0;">Select a previous batch document to continue adding pieces or print labels</p>
       </div>
       <button type="button" class="modal-close-btn" id="batchLoadDocCloseBtn">✕</button>
     </header>
-    <div class="modal-body" style="max-height: 60vh; overflow-y: auto;">
-      <div class="table-wrap">
-        <table class="inventory-table">
+    <div class="modal-body" style="max-height: 60vh; overflow-y: auto; background: #ffffff; padding: 16px 20px;">
+      <div class="table-wrap" style="border: 1px solid #eee6d8; border-radius: 10px; background: #ffffff;">
+        <table class="inventory-table" style="background: #ffffff; width: 100%;">
           <thead>
-            <tr>
-              <th>Batch Doc No</th>
-              <th>Item / Metal</th>
-              <th class="right">Pieces</th>
-              <th class="right">Total Weight</th>
-              <th class="right">Total Value</th>
-              <th class="center">Action</th>
+            <tr style="background: #faf6ef;">
+              <th style="padding: 10px 12px; font-size: 11px; color: #635647; text-transform: uppercase;">Batch Doc No</th>
+              <th style="padding: 10px 12px; font-size: 11px; color: #635647; text-transform: uppercase;">Item / Metal</th>
+              <th class="right" style="padding: 10px 12px; font-size: 11px; color: #635647; text-transform: uppercase;">Pieces</th>
+              <th class="right" style="padding: 10px 12px; font-size: 11px; color: #635647; text-transform: uppercase;">Total Weight</th>
+              <th class="right" style="padding: 10px 12px; font-size: 11px; color: #635647; text-transform: uppercase;">Total Value</th>
+              <th class="center" style="padding: 10px 12px; font-size: 11px; color: #635647; text-transform: uppercase;">Action</th>
             </tr>
           </thead>
-          <tbody id="batchDocListTbody">
-            <tr><td colspan="6" class="center muted" style="padding: 24px;">Loading batch documents...</td></tr>
+          <tbody id="batchDocListTbody" style="background: #ffffff;">
+            <tr><td colspan="6" class="center muted" style="padding: 24px; background: #ffffff;">Loading batch documents...</td></tr>
           </tbody>
         </table>
       </div>
     </div>
-    <footer class="modal-footer" style="justify-content: flex-end;">
+    <footer class="modal-footer" style="background: #faf8f5; border-top: 1px solid #e8dfcf; padding: 12px 20px; justify-content: flex-end;">
       <button type="button" class="button ghost" id="batchLoadDocCancelBtn">Cancel</button>
     </footer>
   </div>

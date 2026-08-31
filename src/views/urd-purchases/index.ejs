@@ -40,7 +40,7 @@
         <% purchaseList.forEach(p => { %>
         <tr>
           <td><strong><%= p.purchaseNumber %></strong></td>
-          <td><%= p.purchaseDate.toLocaleDateString('en-IN', { dateStyle: 'medium' }) %></td>
+          <td><%= formatDateDisplay(p.purchaseDate) %></td>
           <td>
             <a href="/customers/<%= p.customer.id %>"><%= p.customer.name %></a>
             <% if (p.customer.phone) { %><small><%= p.customer.phone %></small><% } %>
@@ -82,7 +82,7 @@
   <% } else { %>
     <% if (qVal) { %>
     <div class="empty-state compact">
-      <span>🔍</span>
+      <span>⌕</span>
       <h3>No URD purchases match your search</h3>
       <p>Try a different customer name, mobile number or URD number.</p>
       <a class="button" href="/urd-purchases">Clear search</a>

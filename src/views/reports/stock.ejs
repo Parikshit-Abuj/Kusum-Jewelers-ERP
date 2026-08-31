@@ -5,10 +5,12 @@
 
 <section class="panel report-filter-panel">
   <form class="report-filter-form" method="get">
-    <label>Search item / barcode / SKU<input name="q" value="<%= filters.q %>" placeholder="Ring, G 00001, Payal…"></label>
+    <label>From<input type="date" name="from" value="<%= filters.from || '' %>"></label>
+    <label>To<input type="date" name="to" value="<%= filters.to || '' %>"></label>
+    <label>Search item / barcode<input name="q" value="<%= filters.q || '' %>" placeholder="Ring, G 00001, Payal…"></label>
     <label>Metal<select name="metal"><option value="">All metals</option><% ['GOLD','SILVER','PLATINUM','DIAMOND','OTHER'].forEach((value) => { %><option value="<%= value %>" <%= filters.metal === value ? 'selected' : '' %>><%= value %></option><% }) %></select></label>
-    <label>Category<input name="category" value="<%= filters.category %>" placeholder="Ring, Chain…"></label>
-    <label>Location / tray<input name="location" value="<%= filters.location %>" placeholder="Tray 1…"></label>
+    <label>Category<input name="category" value="<%= filters.category || '' %>" placeholder="Ring, Chain…"></label>
+    <label>Location / tray<input name="location" value="<%= filters.location || '' %>" placeholder="Tray 1…"></label>
     <div class="report-filter-actions"><button class="button small" type="submit">Apply filters</button><a class="button ghost small" href="/reports/stock">Reset</a></div>
   </form>
 </section>
@@ -16,15 +18,15 @@
 <section class="panel">
   <div class="panel-heading"><div><h2>Available stock</h2><p><%= pagination.totalItems %> barcode item<%= pagination.totalItems === 1 ? '' : 's' %> found.</p></div></div>
   <% if (products.length) { %>
-  <div class="table-wrap"><table><thead><tr><th>Barcode / item</th><th>Category</th><th>Metal</th><th>Purity</th><th class="right">Pieces</th><th class="right">Gross wt.</th><th class="right">Net wt.</th><th>Location</th><th>Batch</th></tr></thead><tbody>
+  <div class="table-wrap"><table><thead><tr><th>Barcode / item</th><th>Category</th><th>Metal</th><th>Purity</th><th class="right">Pieces</th><th class="right">Gross wt.</th><th class="right">Net wt.</th><th>Location</th></tr></thead><tbody>
     <% products.forEach((product) => { %><tr>
-      <td><strong class="barcode-label"><%= product.barcode || product.sku %></strong><small><%= product.name %></small></td>
+      <td><strong class="barcode-label"><%= product.barcode %></strong><small><%= product.name %></small></td>
       <td><%= product.category %></td>
       <td><span class="metal-dot <%= product.metal.toLowerCase() %>"></span><%= product.metal %></td>
       <td><%= product.purity || '—' %></td>
       <td class="right"><strong><%= product.quantity %></strong></td>
       <td class="right"><%= grams(product.grossWeight) %></td><td class="right"><%= grams(product.netWeight) %></td>
-      <td><%= product.location || '—' %></td><td><%= product.batchDocNo || '—' %></td>
+      <td><%= product.location || '—' %></td>
     </tr><% }) %>
   </tbody></table></div>
   <%- include('../_pagination', { pagination }) %>

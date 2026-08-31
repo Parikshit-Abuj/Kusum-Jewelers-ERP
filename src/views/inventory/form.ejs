@@ -6,7 +6,7 @@
   </div>
   <div class="header-actions">
     <% if (!product) { %>
-    <button type="button" class="button accent" data-open-batch-modal style="background:#b47a21;color:#fff;border:none;box-shadow:0 2px 6px rgba(180,122,33,.3);">⚡ Fast Batch Add (100+ pcs)</button>
+    <button type="button" class="button accent" data-open-batch-modal style="background:#b47a21;color:#fff;border:none;box-shadow:0 2px 6px rgba(180,122,33,.3);">Fast Batch Add (100+ pcs)</button>
     <% } %>
     <a class="button ghost" href="/inventory">Cancel</a>
   </div>
@@ -36,7 +36,6 @@
   <!-- Section 1: Identity -->
   <section class="form-section">
     <h2>Item identity</h2>
-    <input type="hidden" name="sku" value="<%= product?.sku || '' %>">
     <div class="form-grid three">
       <% if (product) { %>
       <label>Barcode number

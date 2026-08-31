@@ -25,7 +25,7 @@ const { provisionShopDatabase, enableNetworkSharing, updatePrinterConfiguration,
 const { buildExcelExport } = require('./lib/excel-export');
 const { RESOURCE_LIST, resourceFor, parseDateRange, getExportPayload, archiveData } = require('./lib/data-lifecycle');
 const { paymentMethodFromComponents, reverseAndDeleteCashbookEntry, deleteSettledUrdPurchase } = require('./lib/accounting-reversal');
-const { number, asArray, dateInput, startOfToday, dateTimeFromInput, localDateTimeRange, money, grams, nextDocumentNumber, nextBatchDocumentNumber, metalRateFromDailyRate, makingAmount } = require('./lib/helpers');
+const { number, asArray, dateInput, startOfToday, dateTimeFromInput, localDateTimeRange, money, grams, formatDateDisplay, nextDocumentNumber, nextBatchDocumentNumber, metalRateFromDailyRate, makingAmount } = require('./lib/helpers');
 const { nextBarcode } = require('./lib/barcode-sequence');
 const { upsertItemName } = require('./lib/item-names');
 const { hasConfiguredPassword, passwordMatchesEnvironment, secureTextMatch, usesKnownDefaultPassword } = require('./lib/auth-security');
@@ -54,12 +54,16 @@ app.use(session({
 app.locals.money = money;
 app.locals.grams = grams;
 app.locals.dateInput = dateInput;
+app.locals.formatDate = formatDateDisplay;
+app.locals.formatDateDisplay = formatDateDisplay;
 
 app.use((req, res, next) => {
   res.locals.currentPath = req.path;
   res.locals.money = money;
   res.locals.grams = grams;
   res.locals.dateInput = dateInput;
+  res.locals.formatDate = formatDateDisplay;
+  res.locals.formatDateDisplay = formatDateDisplay;
   res.locals.message = req.query.message || null;
   res.locals.error = req.query.error || null;
   res.locals.loggedInUser = req.session?.username || null;
@@ -811,7 +815,27 @@ app.get('/inventory', async (req, res, next) => {
     const availableStock = { status: 'AVAILABLE', quantity: { gt: 0 } };
     let where = availableStock;
     if (q) {
-      // Clean unit suffixes like "g", "gm", "gms", "gram", "grams"
+      const barcodeVariants = [...new Set([
+        q,
+        q.replace(/-/g, ' '),
+        q.replace(/\s+/g, '-'),
+        q.replace(/[\s-]+/g, ''),
+        q.replace(/^([A-Za-z]+)(\d.*)$/, '$1 $2'),
+        q.replace(/^(G22|G24|G18|G14|G9)(\d+)$/i, '$1 $2'),
+        q.replace(/^([A-Za-z]+\d+)\s*([A-Za-z0-9]+)$/, '$1 $2')
+      ])].filter(Boolean);
+
+      const orClauses = [];
+
+      // 1. Direct barcode, SKU, name and category matching (exact and variant matching)
+      for (const variant of barcodeVariants) {
+        orClauses.push({ barcode: { contains: variant } });
+        orClauses.push({ sku: { contains: variant } });
+      }
+      orClauses.push({ name: { contains: q } });
+      orClauses.push({ category: { contains: q } });
+
+      // 2. Weight search support (e.g. "18.25", "18.25g", "payal 18.25", "gold chain 22.5")
       const cleanQ = q.replace(/(\d+(?:\.\d+)?)\s*(?:g|gm|gms|gram|grams)\b/gi, '$1');
       const tokens = cleanQ.split(/\s+/).filter(Boolean);
       const numTokens = [];
@@ -824,58 +848,42 @@ app.get('/inventory', async (req, res, next) => {
         }
       }
 
-      const conditions = [availableStock];
-      if (numTokens.length > 0 && textTokens.length > 0) {
-        // Both weight and text (e.g. "payal 18.25" or "18.25 silver chain")
-        const textStr = textTokens.join(' ');
+      if (numTokens.length > 0) {
         const weightVal = numTokens[0];
-        conditions.push({
-          AND: [
-            {
-              OR: [
-                { name: { contains: textStr } },
-                { category: { contains: textStr } },
-                { barcode: { contains: textStr } },
-                { sku: { contains: textStr } }
-              ]
-            },
-            {
-              netWeight: {
-                gte: weightVal - 0.005,
-                lte: weightVal + 0.005
+        if (textTokens.length > 0) {
+          const textStr = textTokens.join(' ');
+          orClauses.push({
+            AND: [
+              {
+                OR: [
+                  { name: { contains: textStr } },
+                  { category: { contains: textStr } }
+                ]
+              },
+              {
+                netWeight: {
+                  gte: weightVal - 0.005,
+                  lte: weightVal + 0.005
+                }
               }
+            ]
+          });
+        } else {
+          orClauses.push({
+            netWeight: {
+              gte: weightVal - 0.005,
+              lte: weightVal + 0.005
             }
-          ]
-        });
-      } else if (numTokens.length > 0) {
-        // Search by numeric value: matches netWeight tolerance OR barcode / sku / name text containing the query
-        const weightVal = numTokens[0];
-        conditions.push({
-          OR: [
-            { barcode: { contains: q } },
-            { sku: { contains: q } },
-            { name: { contains: q } },
-            { category: { contains: q } },
-            {
-              netWeight: {
-                gte: weightVal - 0.005,
-                lte: weightVal + 0.005
-              }
-            }
-          ]
-        });
-      } else {
-        // Pure text search (e.g. "payal" or "silver")
-        conditions.push({
-          OR: [
-            { barcode: { contains: q } },
-            { sku: { contains: q } },
-            { name: { contains: q } },
-            { category: { contains: q } }
-          ]
-        });
+          });
+        }
       }
-      where = { AND: conditions };
+
+      where = {
+        AND: [
+          availableStock,
+          { OR: orClauses }
+        ]
+      };
     }
     const totalItems = await prisma.product.count({ where });
     const pagination = paginationFor(req, totalItems, req.query.page, 150);
@@ -1087,7 +1095,7 @@ app.post('/api/inventory/batch-piece', express.json(), async (req, res, next) =>
           newProduct,
           'OPENING',
           1,
-          `Batch opening stock · ${barcode}${batchDocNo ? ` · ${batchDocNo}` : ''}`
+          'Opening stock'
         )
       });
       // Register in master autocomplete list
@@ -1223,7 +1231,7 @@ app.post('/inventory', async (req, res, next) => {
     });
     redirectWith(res, '/inventory', 'message', `${product.barcode} saved to inventory.`);
   } catch (error) {
-    if (error.code === 'P2002') return redirectWith(res, '/inventory/new', 'error', 'SKU already exists.');
+    if (error.code === 'P2002') return redirectWith(res, '/inventory/new', 'error', 'Barcode already exists.');
     next(error);
   }
 });
@@ -1234,7 +1242,7 @@ app.get('/inventory/:id/edit', async (req, res, next) => {
       prisma.product.findUniqueOrThrow({ where: { id: Number(req.params.id) } }),
       getRateForDate(prisma)
     ]);
-    res.render('inventory/form', { title: `Edit ${product.barcode || product.sku}`, product, rateInfo });
+    res.render('inventory/form', { title: `Edit ${product.barcode || 'item'}`, product, rateInfo });
   } catch (error) { next(error); }
 });
 
@@ -1531,13 +1539,13 @@ app.get('/api/products/barcode/:barcode', async (req, res, next) => {
     // SKU fallback
     if (!product) product = await prisma.product.findFirst({ where: { sku: raw, status: 'AVAILABLE' } });
     if (!product) return res.status(404).json({ error: `"${raw}" not found. Check the barcode and try again.` });
-    if (product.quantity <= 0 || product.status !== 'AVAILABLE') return res.status(409).json({ error: `${product.barcode || product.sku} is not available in stock.` });
+    if (product.quantity <= 0 || product.status !== 'AVAILABLE') return res.status(409).json({ error: `${product.barcode} is not available in stock.` });
     const rateInfo = await getRateForDate(prisma, req.query.date || dateInput());
     const metalRate = metalRateFromDailyRate(product, rateInfo.rate);
     // Always return the product — let the user set the rate manually if needed
     res.json({
       product: {
-        id: product.id, barcode: product.barcode, sku: product.sku, name: product.name, category: product.category,
+        id: product.id, barcode: product.barcode, name: product.name, category: product.category,
         metal: product.metal, purity: product.purity, netWeight: Number(product.netWeight), quantity: product.quantity,
         makingChargeType: product.makingChargeType, makingChargeValue: Number(product.makingChargeValue)
       },
@@ -1597,23 +1605,23 @@ app.post('/sales', async (req, res, next) => {
       ]);
       if (products.length !== productIds.length) throw new Error('One or more scanned items no longer exist.');
       for (const product of products) {
-        if (product.status !== 'AVAILABLE') throw new Error(`${product.barcode || product.sku} is not available for sale.`);
+        if (product.status !== 'AVAILABLE') throw new Error(`${product.barcode} is not available for sale.`);
         const submittedRows = rows.filter((row) => row.productId === product.id);
-        if (submittedRows.some((row) => row.barcode && ![product.barcode, product.sku].filter(Boolean).map((value) => String(value).toUpperCase()).includes(row.barcode))) {
+        if (submittedRows.some((row) => row.barcode && ![product.barcode].filter(Boolean).map((value) => String(value).toUpperCase()).includes(row.barcode))) {
           throw new Error('A barcode changed before the bill was saved. Scan the item again to prevent billing the wrong piece.');
         }
         const requested = rows.filter((row) => row.productId === product.id).reduce((total, row) => total + row.quantity, 0);
-        if (product.quantity < requested) throw new Error(`${product.barcode || product.sku} has only ${product.quantity} piece(s) in stock.`);
+        if (product.quantity < requested) throw new Error(`${product.barcode} has only ${product.quantity} piece(s) in stock.`);
       }
       const pricedRows = rows.map((row) => {
         const product = products.find((item) => item.id === row.productId);
         const weight = row.weight === null ? Number(product.netWeight) : row.weight;
         if (!Number.isFinite(weight) || weight <= 0) {
-          throw new Error(`Enter a valid billing weight for ${product.barcode || product.sku}.`);
+          throw new Error(`Enter a valid billing weight for ${product.barcode}.`);
         }
         const defaultRate = metalRateFromDailyRate(product, rateInfo.rate);
         const metalRate = row.metalRate > 0 ? row.metalRate : defaultRate;
-        if (!metalRate) throw new Error(`Set a daily rate before billing ${product.barcode || product.sku}.`);
+        if (!metalRate) throw new Error(`Set a daily rate before billing ${product.barcode}.`);
         const makingChargeType = row.makingChargeType || product.makingChargeType;
         const makingChargeValue = row.makingChargeValue === null ? Number(product.makingChargeValue) : row.makingChargeValue;
         const metalAmount = roundedMoney(metalRate * weight * row.quantity);
@@ -1679,7 +1687,7 @@ app.post('/sales', async (req, res, next) => {
         for (const recordedPayment of payment.cashbookPayments) {
           await tx.cashbookEntry.create({ data: {
              entryDate: dateInput(saleDate), type: 'IN', paymentMethod: recordedPayment.method, amount: recordedPayment.amount,
-             description: `Sale payment — ${sale.invoiceNumber}`, reference: sale.invoiceNumber, customerId, syncLedger: Boolean(customerId),
+             description: 'Sale payment', reference: sale.invoiceNumber, customerId, syncLedger: Boolean(customerId),
              saleId: sale.id,
              notes: req.body.notes || null
           } });
@@ -1990,27 +1998,49 @@ app.get('/reports/stock', async (req, res, next) => {
     const metal = REPORT_METALS.includes(String(req.query.metal || '').toUpperCase()) ? String(req.query.metal).toUpperCase() : '';
     const category = reportText(req.query.category);
     const location = reportText(req.query.location);
+    const fromKey = req.query.from ? String(req.query.from).trim() : '';
+    const toKey = req.query.to ? String(req.query.to).trim() : '';
+    let dateRangeFilter = {};
+    if (fromKey || toKey) {
+      const f = fromKey || '2000-01-01';
+      const t = toKey || dateInput();
+      dateRangeFilter = { createdAt: localDateTimeRange(f, t) };
+    }
+    const barcodeVariants = q ? [...new Set([
+      q,
+      q.replace(/-/g, ' '),
+      q.replace(/\s+/g, '-'),
+      q.replace(/[\s-]+/g, ''),
+      q.replace(/^([A-Za-z]+)(\d.*)$/, '$1 $2'),
+      q.replace(/^(G22|G24|G18|G14|G9)(\d+)$/i, '$1 $2'),
+      q.replace(/^([A-Za-z]+\d+)\s*([A-Za-z0-9]+)$/, '$1 $2')
+    ])].filter(Boolean) : [];
+
     const stockWhere = {
       quantity: { gt: 0 },
       status: 'AVAILABLE',
+      ...dateRangeFilter,
       ...(metal ? { metal } : {}),
       ...(category ? { category: { contains: category } } : {}),
       ...(location ? { location: { contains: location } } : {}),
       ...(q ? { OR: [
-        { barcode: { contains: q } }, { sku: { contains: q } }, { name: { contains: q } },
-        { category: { contains: q } }, { purity: { contains: q } }, { location: { contains: q } }
+        ...barcodeVariants.map((b) => ({ barcode: { contains: b } })),
+        { name: { contains: q } },
+        { category: { contains: q } },
+        { purity: { contains: q } },
+        { location: { contains: q } }
       ] } : {})
     };
     const totalItems = await prisma.product.count({ where: stockWhere });
     const pagination = paginationFor(req, totalItems, req.query.page, 100);
     const products = await prisma.product.findMany({
       where: stockWhere,
-      select: { id: true, barcode: true, sku: true, name: true, category: true, metal: true, purity: true, grossWeight: true, netWeight: true, quantity: true, location: true, batchDocNo: true },
+      select: { id: true, barcode: true, name: true, category: true, metal: true, purity: true, grossWeight: true, netWeight: true, quantity: true, location: true, createdAt: true },
       orderBy: [{ metal: 'asc' }, { name: 'asc' }, { id: 'asc' }],
       skip: (pagination.page - 1) * pagination.pageSize,
       take: pagination.pageSize
     });
-    res.render('reports/stock', { title: 'Stock report', products, pagination, filters: { q, metal, category, location } });
+    res.render('reports/stock', { title: 'Stock report', products, pagination, filters: { q, metal, category, location, from: fromKey, to: toKey } });
   } catch (error) { next(error); }
 });
 
@@ -2025,7 +2055,7 @@ app.get('/reports/stock-movements', async (req, res, next) => {
       ...(metal ? { productMetal: metal } : {}),
       ...(type ? { type } : {}),
       ...(q ? { OR: [
-        { productBarcode: { contains: q } }, { productSku: { contains: q } }, { productName: { contains: q } },
+        { productBarcode: { contains: q } }, { productName: { contains: q } },
         { productPurity: { contains: q } }, { note: { contains: q } }
       ] } : {})
     };
@@ -2050,9 +2080,22 @@ app.get('/reports/balance-register', async (req, res, next) => {
     const state = ['ALL', 'DUE', 'SETTLED'].includes(String(req.query.state || 'DUE').toUpperCase())
       ? String(req.query.state || 'DUE').toUpperCase()
       : 'DUE';
+    const fromKey = req.query.from ? String(req.query.from).trim() : '';
+    const toKey = req.query.to ? String(req.query.to).trim() : '';
+    
+    let dateJoinClause = Prisma.empty;
+    let activityDateClause = Prisma.empty;
+    if (fromKey || toKey) {
+      const f = fromKey || '2000-01-01';
+      const t = toKey || dateInput();
+      const range = localDateTimeRange(f, t);
+      dateJoinClause = Prisma.sql`AND l.createdAt <= ${range.lte}`;
+      activityDateClause = Prisma.sql`AND (MAX(l.createdAt) >= ${range.gte} AND MAX(l.createdAt) <= ${range.lte})`;
+    }
+
     const like = `%${q}%`;
     const searchClause = q
-      ? Prisma.sql`WHERE c.name LIKE ${like} OR c.phone LIKE ${like}`
+      ? Prisma.sql`WHERE (c.name LIKE ${like} OR c.phone LIKE ${like})`
       : Prisma.empty;
     const balanceClause = state === 'DUE'
       ? Prisma.sql`HAVING balance > 0.005`
@@ -2063,10 +2106,11 @@ app.get('/reports/balance-register', async (req, res, next) => {
       SELECT COUNT(*) AS total FROM (
         SELECT c.id, COALESCE(SUM(l.amount), 0) AS balance
         FROM \`Customer\` c
-        LEFT JOIN \`CustomerLedger\` l ON l.customerId = c.id
+        LEFT JOIN \`CustomerLedger\` l ON l.customerId = c.id ${dateJoinClause}
         ${searchClause}
         GROUP BY c.id
         ${balanceClause}
+        ${activityDateClause}
       ) AS balance_rows
     `;
     const totalItems = Number(countRows[0]?.total || 0);
@@ -2079,17 +2123,18 @@ app.get('/reports/balance-register', async (req, res, next) => {
         COALESCE(SUM(l.amount), 0) AS balance,
         MAX(l.createdAt) AS lastActivity
       FROM \`Customer\` c
-      LEFT JOIN \`CustomerLedger\` l ON l.customerId = c.id
+      LEFT JOIN \`CustomerLedger\` l ON l.customerId = c.id ${dateJoinClause}
       ${searchClause}
       GROUP BY c.id, c.name, c.phone
       ${balanceClause}
+      ${activityDateClause}
       ORDER BY balance DESC, lastActivity DESC, c.name ASC
       LIMIT ${pagination.pageSize} OFFSET ${(pagination.page - 1) * pagination.pageSize}
     `;
     const customers = rows.map((row) => ({
       id: Number(row.id), name: row.name, phone: row.phone || '', balance: Number(row.balance || 0), lastActivity: row.lastActivity || null
     }));
-    res.render('reports/balance-register', { title: 'Balance register', customers, pagination, filters: { q, state } });
+    res.render('reports/balance-register', { title: 'Balance register', customers, pagination, filters: { q, state, from: fromKey, to: toKey } });
   } catch (error) { next(error); }
 });
 

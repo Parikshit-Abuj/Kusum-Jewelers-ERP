@@ -653,16 +653,25 @@ document.querySelectorAll('.flash').forEach((el) => {
   if (upiPaidInput) upiPaidInput.addEventListener('input', updateFormTotals);
   if (cardPaidInput) cardPaidInput.addEventListener('input', updateFormTotals);
   if (bankPaidInput) bankPaidInput.addEventListener('input', updateFormTotals);
-  if (paymentMethodInput) paymentMethodInput.addEventListener('change', () => {
+  function updatePaymentMethodState() {
+    if (!paymentMethodInput) return;
     const mixed = paymentMethodInput.value === 'MIXED';
-    if (splitPayment) splitPayment.hidden = !mixed;
+    if (splitPayment) {
+      splitPayment.hidden = !mixed;
+      splitPayment.style.display = mixed ? 'grid' : 'none';
+    }
     if (cashPaidInput) cashPaidInput.disabled = !mixed;
     if (upiPaidInput) upiPaidInput.disabled = !mixed;
     if (cardPaidInput) cardPaidInput.disabled = !mixed;
     if (bankPaidInput) bankPaidInput.disabled = !mixed;
     if (paidInput) paidInput.disabled = mixed;
     updateFormTotals();
-  });
+  }
+
+  if (paymentMethodInput) {
+    paymentMethodInput.addEventListener('change', updatePaymentMethodState);
+    updatePaymentMethodState();
+  }
 
   function updateUrdRate() {
     if (!urdRate || !urdPurity) return;
@@ -1301,14 +1310,14 @@ function updateInventoryLabelBatchState() {
         return;
       }
       docListTbody.innerHTML = data.docs.map((d) => `
-        <tr>
-          <td><strong style="font-family:monospace;font-size:13px;color:#825512;">${escapeHtml(d.batchDocNo)}</strong></td>
-          <td><strong>${escapeHtml(d.name || 'Jewellery Pieces')}</strong><small>${escapeHtml(`${d.metal || ''} ${d.purity || ''}`)}</small></td>
-          <td class="right"><strong>${d.pieceCount}</strong></td>
-          <td class="right">${Number(d.totalWeight).toFixed(3)}g</td>
-          <td class="right">${fmt(d.totalValue)}</td>
-          <td class="center">
-            <button type="button" class="button small accent" data-load-batch-btn="${escapeHtml(d.batchDocNo)}" style="padding:3px 10px;font-size:11px;background:#b47a21;color:#fff;border:none;">
+        <tr style="background:#ffffff;">
+          <td style="padding:10px 12px;"><strong style="font-family:monospace;font-size:13px;color:#9d6512;">${escapeHtml(d.batchDocNo)}</strong></td>
+          <td style="padding:10px 12px;"><strong style="color:#1a1612;display:block;">${escapeHtml(d.name || 'Jewellery Pieces')}</strong><small style="color:#7d7265;font-size:11.5px;">${escapeHtml(`${d.metal || ''} ${d.purity || ''}`)}</small></td>
+          <td class="right" style="padding:10px 12px;"><strong style="color:#1a1612;">${d.pieceCount}</strong></td>
+          <td class="right" style="padding:10px 12px;color:#1a1612;font-weight:600;">${Number(d.totalWeight).toFixed(3)}g</td>
+          <td class="right" style="padding:10px 12px;color:#1a1612;font-weight:700;">${fmt(d.totalValue)}</td>
+          <td class="center" style="padding:10px 12px;">
+            <button type="button" class="button small accent" data-load-batch-btn="${escapeHtml(d.batchDocNo)}" style="padding:4px 11px;font-size:11.5px;font-weight:700;background:#b47a21;color:#fff;border:none;border-radius:6px;">
               Load &amp; Print →
             </button>
           </td>
@@ -1483,8 +1492,22 @@ function updateInventoryLabelBatchState() {
     }
   }
 
-  addPieceBtn?.addEventListener('click', savePiece);
+  const weightForm = document.getElementById('batchWeightForm');
+  weightForm?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    savePiece();
+  });
+  addPieceBtn?.addEventListener('click', (e) => {
+    e.preventDefault();
+    savePiece();
+  });
   grossWeightInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      savePiece();
+    }
+  });
+  stoneWeightInput?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
       savePiece();
@@ -1571,11 +1594,28 @@ function updateInventoryLabelBatchState() {
         </tr>`;
     }).join('');
 
+    function updateSelectedCount() {
+      const selectedCountEl = modal.querySelector('[data-batch-selected-count]');
+      const printerInput = modal.querySelector('input[name="batchPrinterName"]');
+      const pName = printerInput ? printerInput.value : 'TSC TTP-244 Pro';
+      const checkedCount = tbody.querySelectorAll('[data-batch-item-cb]:checked').length;
+      if (selectedCountEl) {
+        selectedCountEl.textContent = `${checkedCount} selected`;
+      }
+      modal.querySelectorAll('[data-batch-print-tspl]').forEach((btn) => {
+        btn.disabled = checkedCount === 0;
+        btn.textContent = `Send to ${pName}`;
+      });
+    }
+
     if (statsCountEl) statsCountEl.textContent = sessionPieces.length;
     if (statsWeightEl) statsWeightEl.textContent = totalWeight.toFixed(3);
     if (statsValueEl) statsValueEl.textContent = fmt(totalValue);
-    modal.querySelectorAll('[data-batch-print-tspl]').forEach((btn) => {
-      btn.disabled = sessionPieces.length === 0;
+    updateSelectedCount();
+
+    // Wire individual checkboxes
+    tbody.querySelectorAll('[data-batch-item-cb]').forEach((cb) => {
+      cb.addEventListener('change', updateSelectedCount);
     });
 
     // Wire action buttons
@@ -1599,6 +1639,15 @@ function updateInventoryLabelBatchState() {
   selectAllCb?.addEventListener('change', () => {
     const cbs = tbody.querySelectorAll('[data-batch-item-cb]');
     cbs.forEach((cb) => { cb.checked = selectAllCb.checked; });
+    const selectedCountEl = modal.querySelector('[data-batch-selected-count]');
+    const printerInput = modal.querySelector('input[name="batchPrinterName"]');
+    const pName = printerInput ? printerInput.value : 'TSC TTP-244 Pro';
+    const checkedCount = selectAllCb.checked ? cbs.length : 0;
+    if (selectedCountEl) selectedCountEl.textContent = `${checkedCount} selected`;
+    modal.querySelectorAll('[data-batch-print-tspl]').forEach((btn) => {
+      btn.disabled = checkedCount === 0;
+      btn.textContent = `Send to ${pName}`;
+    });
   });
 
   // Clear list
@@ -1620,6 +1669,8 @@ function updateInventoryLabelBatchState() {
     }
 
     const printBtns = modal.querySelectorAll('[data-batch-print-tspl]');
+    const printerInput = modal.querySelector('input[name="batchPrinterName"]');
+    const pName = printerInput ? printerInput.value : 'TSC TTP-244 Pro';
     printBtns.forEach((btn) => {
       btn.disabled = true;
       btn.textContent = 'Sending to printer...';
@@ -1635,19 +1686,73 @@ function updateInventoryLabelBatchState() {
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Failed to print labels.');
       }
-      alert(`✓ ${data.message || `${checked.length} barcode labels sent to TSC TTP-244 Pro!`}`);
+      alert(`${data.message || `${checked.length} barcode labels sent to ${pName}!`}`);
     } catch (err) {
-      alert(`Printer error: ${err.message}`);
+      alert(`Printer response: ${err.message}`);
     } finally {
       printBtns.forEach((btn) => {
-        btn.disabled = sessionPieces.length === 0;
-        btn.textContent = '▥ Print Barcode Labels';
+        btn.disabled = checked.length === 0;
+        btn.textContent = `Send to ${pName}`;
       });
     }
   }
 
   modal.querySelectorAll('[data-batch-print-tspl]').forEach((btn) => {
     btn.addEventListener('click', printSessionLabels);
+  });
+
+  // Refresh batch items from database
+  async function handleBatchRefresh() {
+    const docNo = docNoInput?.value?.trim();
+    const refBtns = [document.getElementById('batchRefreshBtn'), document.getElementById('batchRefreshBtnFooter')].filter(Boolean);
+    refBtns.forEach((b) => { b.disabled = true; b.textContent = 'Refreshing...'; });
+    try {
+      if (docNo && docNo.startsWith('BATCH-')) {
+        await loadBatchDocument(docNo, false);
+      } else {
+        await fetchLiveRates();
+      }
+    } catch (_) {
+    } finally {
+      refBtns.forEach((b) => { b.disabled = false; b.textContent = 'Refresh'; });
+    }
+  }
+
+  document.getElementById('batchRefreshBtn')?.addEventListener('click', handleBatchRefresh);
+  document.getElementById('batchRefreshBtnFooter')?.addEventListener('click', handleBatchRefresh);
+
+  // Check printer connectivity live
+  const checkPrinterBtn = document.getElementById('batchCheckPrinterBtn');
+  const printerStatusText = document.getElementById('batchPrinterStatusText');
+  const printerDot = document.getElementById('batchPrinterDot');
+
+  checkPrinterBtn?.addEventListener('click', async () => {
+    checkPrinterBtn.disabled = true;
+    checkPrinterBtn.textContent = 'Checking...';
+    try {
+      const res = await fetch('/api/printer/check');
+      const data = await res.json();
+      if (data.success && data.status) {
+        if (data.status.available === true) {
+          if (printerDot) printerDot.style.color = '#2e7d32';
+          if (printerStatusText) printerStatusText.innerHTML = `Printer ready: <strong>${escapeHtml(data.name)}</strong>`;
+        } else if (data.status.available === false) {
+          if (printerDot) printerDot.style.color = '#c62828';
+          if (printerStatusText) printerStatusText.innerHTML = `<span style="color:#c62828;">Not connected: ${escapeHtml(data.name)}</span>`;
+        } else {
+          if (printerDot) printerDot.style.color = '#f57f17';
+          if (printerStatusText) printerStatusText.innerHTML = `Queue: <strong>${escapeHtml(data.name)}</strong>`;
+        }
+        alert(data.message || `Printer status: ${data.name} is configured.`);
+      } else {
+        throw new Error(data.error || 'Check failed');
+      }
+    } catch (err) {
+      alert(`Printer notice: ${err.message}`);
+    } finally {
+      checkPrinterBtn.disabled = false;
+      checkPrinterBtn.textContent = 'Check printer';
+    }
   });
 })();
 

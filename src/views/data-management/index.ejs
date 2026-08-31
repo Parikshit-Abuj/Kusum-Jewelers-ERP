@@ -1,85 +1,170 @@
-<header class="page-header">
+<header class="page-header" style="margin-bottom: 24px;">
   <div>
-    <p class="eyebrow">Data management</p>
-    <h1>Database &amp; Data lifecycle</h1>
-    <p class="muted">Date-wise Excel exports and controlled data archiving.</p>
+    <p class="eyebrow" style="color: #b47a21; font-weight: 700; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Data Lifecycle Management</p>
+    <h1 style="font-size: 24px; font-weight: 800; color: #1a1612; margin: 4px 0 6px;">Data Exports &amp; Archiving</h1>
+    <p class="muted" style="color: #756f69; font-size: 13.5px; margin: 0;">Generate multi-sheet Excel (.xlsx) workbooks or manage historical data lifecycle with automated safety rules.</p>
   </div>
 </header>
 
-<section class="content-grid archive-layout">
-  <article class="panel archive-export">
-    <div class="panel-heading">
-      <div>
-        <h2>Excel (.xlsx) exports</h2>
-        <p>Select a register and date range to download report.</p>
-      </div>
+<div class="content-grid archive-layout" style="display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr); gap: 24px; align-items: start;">
+  
+  <!-- Section 1: Excel Export -->
+  <article class="panel" style="background: #ffffff; border: 1px solid #e5ded5; border-radius: 14px; padding: 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.03);">
+    <div style="margin-bottom: 20px; padding-bottom: 14px; border-bottom: 1px solid #f0ebe0;">
+      <h2 style="font-size: 18px; font-weight: 750; color: #1a1612; margin: 0 0 4px;">Export to Excel (.xlsx)</h2>
+      <p style="font-size: 12.5px; color: #756f69; margin: 0;">Download comprehensive audit-ready spreadsheets for any register.</p>
     </div>
-    <form method="post" action="/data/export">
-      <div class="form-grid three">
-        <label>Data register
-          <select name="resource" data-resource-select>
-            <% resources.forEach((item) => { %>
-            <option value="<%= item.key %>" data-archive-disabled="<%= item.archiveDisabled ? 'true' : 'false' %>" <%= selectedResource === item.key ? 'selected' : '' %>>
-              <%= item.label %>
-            </option>
-            <% }) %>
-          </select>
+
+    <form method="post" action="/data/export" id="exportForm">
+      <div style="margin-bottom: 18px;">
+        <label style="display: block; font-size: 12px; font-weight: 700; color: #4a3e31; text-transform: uppercase; margin-bottom: 6px;">
+          Select Data Register
         </label>
-        <label>From date<input name="from" type="date" required value="<%= range.from %>"></label>
-        <label>To date<input name="to" type="date" required value="<%= range.to %>"></label>
+        <select name="resource" style="width: 100%; padding: 10px 14px; border: 1.5px solid #ded5c5; border-radius: 9px; font-size: 14px; font-weight: 600; background: #fffcf8; color: #1a1612;">
+          <% resources.forEach((item) => { %>
+          <option value="<%= item.key %>" <%= selectedResource === item.key ? 'selected' : '' %>>
+            <%= item.label %>
+          </option>
+          <% }) %>
+        </select>
       </div>
-      <button class="button" type="submit">Download Excel (.xlsx)</button>
+
+      <!-- Quick Preset Chips -->
+      <div style="margin-bottom: 16px;">
+        <label style="display: block; font-size: 11px; font-weight: 700; color: #825512; text-transform: uppercase; margin-bottom: 8px;">
+          Quick Date Ranges
+        </label>
+        <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+          <button type="button" class="button ghost small" data-preset="today" style="font-size: 11.5px; padding: 5px 12px; border-radius: 7px; background: #faf8f5;">Today</button>
+          <button type="button" class="button ghost small" data-preset="thisMonth" style="font-size: 11.5px; padding: 5px 12px; border-radius: 7px; background: #faf8f5;">This Month</button>
+          <button type="button" class="button ghost small" data-preset="lastMonth" style="font-size: 11.5px; padding: 5px 12px; border-radius: 7px; background: #faf8f5;">Last Month</button>
+          <button type="button" class="button ghost small" data-preset="fy" style="font-size: 11.5px; padding: 5px 12px; border-radius: 7px; background: #faf8f5;">FY 2026-27</button>
+          <button type="button" class="button ghost small" data-preset="all" style="font-size: 11.5px; padding: 5px 12px; border-radius: 7px; background: #faf8f5;">All Time</button>
+        </div>
+      </div>
+
+      <div class="form-grid two" style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 22px;">
+        <label style="display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 700; color: #4a3e31;">
+          <span>From Date</span>
+          <input name="from" id="exportFromDate" type="date" required value="<%= range.from %>" style="padding: 9px 12px; border: 1.5px solid #ded5c5; border-radius: 8px; font-size: 13.5px;">
+        </label>
+        <label style="display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 700; color: #4a3e31;">
+          <span>To Date</span>
+          <input name="to" id="exportToDate" type="date" required value="<%= range.to %>" style="padding: 9px 12px; border: 1.5px solid #ded5c5; border-radius: 8px; font-size: 13.5px;">
+        </label>
+      </div>
+
+      <button class="button accent" type="submit" style="width: 100%; padding: 12px; font-size: 14px; font-weight: 750; background: #b47a21; color: #ffffff; border: none; border-radius: 9px; box-shadow: 0 4px 14px rgba(180, 122, 33, 0.25); cursor: pointer;">
+        Download Excel (.xlsx) Report →
+      </button>
     </form>
   </article>
 
-  <aside class="panel archive-delete">
-    <h2>Archive old data</h2>
-    <p class="muted">Permanently delete records in selected range.</p>
+  <!-- Section 2: Data Archival -->
+  <aside class="panel" style="background: #ffffff; border: 1.5px solid #ebd4d2; border-top: 4px solid #bc5148; border-radius: 14px; padding: 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.03);">
+    <div style="margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #f8eceb;">
+      <h2 style="font-size: 17px; font-weight: 750; color: #7b302b; margin: 0 0 2px;">Controlled Archival</h2>
+      <p style="font-size: 12px; color: #885e5b; margin: 0;">Safely purge historical records.</p>
+    </div>
+
     <form method="post" action="/data/archive" data-archive-form>
-      <label>Data register
-        <select name="resource" data-resource-select>
+      <div style="margin-bottom: 14px;">
+        <label style="display: block; font-size: 11.5px; font-weight: 700; color: #4a3e31; text-transform: uppercase; margin-bottom: 5px;">
+          Register to Purge
+        </label>
+        <select name="resource" data-resource-select style="width: 100%; padding: 8px 12px; border: 1.5px solid #ded5c5; border-radius: 8px; font-size: 13.5px; font-weight: 600; background: #fffcf8; color: #1a1612;">
           <% resources.forEach((item) => { %>
           <option value="<%= item.key %>" data-archive-disabled="<%= item.archiveDisabled ? 'true' : 'false' %>" data-archive-note="<%= item.archiveNote %>" <%= selectedResource === item.key ? 'selected' : '' %>>
             <%= item.label %>
           </option>
           <% }) %>
         </select>
+      </div>
+
+      <div class="form-grid two" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">
+        <label style="display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; font-weight: 700; color: #4a3e31;">
+          <span>From Date</span>
+          <input name="from" type="date" required value="<%= range.from %>" style="padding: 7px 10px; border: 1.5px solid #ded5c5; border-radius: 7px; font-size: 12.5px;">
+        </label>
+        <label style="display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; font-weight: 700; color: #4a3e31;">
+          <span>To Date</span>
+          <input name="to" type="date" required value="<%= range.to %>" style="padding: 7px 10px; border: 1.5px solid #ded5c5; border-radius: 7px; font-size: 12.5px;">
+        </label>
+      </div>
+
+      <!-- Dynamic Rule Banner -->
+      <div style="background: #fbf7ed; border-left: 3px solid #d8b25f; padding: 9px 12px; border-radius: 4px 8px 8px 4px; margin-bottom: 14px;">
+        <span style="display: block; font-size: 10.5px; font-weight: 750; color: #825512; text-transform: uppercase; margin-bottom: 2px;">Archival Rule:</span>
+        <p class="archive-rule" id="archiveRuleNoteText" style="margin: 0; font-size: 11.5px; color: #5a4b36; line-height: 1.4;"><%= resource.archiveNote %></p>
+      </div>
+
+      <!-- Safety Confirmation Step 1 -->
+      <label class="archive-check" style="display: flex; align-items: flex-start; gap: 8px; font-size: 11.5px; line-height: 1.35; color: #3d352e; margin-bottom: 12px; cursor: pointer;">
+        <input name="archiveAcknowledged" type="checkbox" style="margin-top: 2px; accent-color: #b53d36;">
+        <span>I have downloaded an Excel backup and confirm deleting these records.</span>
       </label>
-      <label>From date<input name="from" type="date" required value="<%= range.from %>"></label>
-      <label>To date<input name="to" type="date" required value="<%= range.to %>"></label>
-      <p class="archive-rule" data-archive-note><%= resource.archiveNote %></p>
-      <label class="archive-check"><input name="archiveAcknowledged" type="checkbox"> I downloaded a backup and want to proceed.</label>
-      <label>Type <strong>DELETE</strong> to confirm<input name="archiveConfirm" autocomplete="off" placeholder="DELETE"></label>
-      <button class="button danger full" type="submit" data-archive-submit <%= resource.archiveDisabled ? 'disabled' : '' %>>Permanently delete selected data</button>
+
+      <!-- Safety Confirmation Step 2 -->
+      <label style="display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; font-weight: 700; color: #7b302b; margin-bottom: 16px;">
+        <span>Type <strong>DELETE</strong> to confirm</span>
+        <input name="archiveConfirm" autocomplete="off" placeholder="DELETE" style="padding: 7px 10px; border: 1.5px solid #e0c0bc; border-radius: 7px; font-size: 12.5px; font-weight: 700; letter-spacing: 1px; color: #b53d36;">
+      </label>
+
+      <button class="button danger full" type="submit" data-archive-submit <%= resource.archiveDisabled ? 'disabled' : '' %> style="width: 100%; padding: 10px; font-size: 13px; font-weight: 750; border-radius: 8px;">
+        Permanently Delete Selected Data
+      </button>
     </form>
   </aside>
-</section>
-
-<section class="panel archive-register-guide">
-  <div class="panel-heading">
-    <div>
-      <h2>Register details</h2>
-      <p>Status and archive rules for each data register.</p>
-    </div>
-  </div>
-  <div class="archive-resource-grid">
-    <% resources.forEach((item) => { %>
-    <article>
-      <strong><%= item.label %></strong>
-      <span class="pill <%= item.archiveDisabled ? 'warning' : 'neutral' %>"><%= item.archiveDisabled ? 'Export only' : 'Can archive' %></span>
-      <p><%= item.archiveNote %></p>
-    </article>
-    <% }) %>
-  </div>
-</section>
+</div>
 
 <script>
 (function() {
+  // Preset date helpers
+  const fromInput = document.getElementById('exportFromDate');
+  const toInput = document.getElementById('exportToDate');
+  
+  function formatDate(d) {
+    return d.toISOString().split('T')[0];
+  }
+
+  document.querySelectorAll('[data-preset]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const preset = btn.dataset.preset;
+      const now = new Date();
+      let fromDate, toDate;
+
+      if (preset === 'today') {
+        fromDate = new Date(now);
+        toDate = new Date(now);
+      } else if (preset === 'thisMonth') {
+        fromDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        toDate = new Date(now);
+      } else if (preset === 'lastMonth') {
+        fromDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        toDate = new Date(now.getFullYear(), now.getMonth(), 0);
+      } else if (preset === 'fy') {
+        const fyYear = (now.getMonth() >= 3) ? now.getFullYear() : now.getFullYear() - 1;
+        fromDate = new Date(fyYear, 3, 1);
+        toDate = new Date(fyYear + 1, 2, 31);
+      } else if (preset === 'all') {
+        fromDate = new Date(2020, 0, 1);
+        toDate = new Date(now);
+      }
+
+      if (fromDate && toDate && fromInput && toInput) {
+        fromInput.value = formatDate(fromDate);
+        toInput.value = formatDate(toDate);
+      }
+    });
+  });
+
+  // Archival register selector dynamic rule update
   const archiveForm = document.querySelector('[data-archive-form]');
   if (!archiveForm) return;
   const select = archiveForm.querySelector('[data-resource-select]');
   const submit = archiveForm.querySelector('[data-archive-submit]');
-  const note = archiveForm.querySelector('[data-archive-note]');
+  const note = document.getElementById('archiveRuleNoteText');
+
   function update() {
     const option = select.options[select.selectedIndex];
     if (!option) return;
@@ -87,6 +172,7 @@
     if (submit) submit.disabled = disabled;
     if (note) note.textContent = option.dataset.archiveNote || '';
   }
+
   select.addEventListener('change', update);
   update();
 })();

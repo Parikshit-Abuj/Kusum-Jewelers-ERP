@@ -170,9 +170,29 @@ function makingAmount(type, value, metalAmount, weight, quantity = 1) {
   return charge * number(weight) * quantity;
 }
 
+const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function formatDateDisplay(value) {
+  if (!value) return '—';
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
+    const [year, month, day] = value.trim().split('-');
+    const mIndex = parseInt(month, 10) - 1;
+    return `${day}-${MONTH_SHORT[mIndex] || month}-${year}`;
+  }
+  try {
+    const date = value instanceof Date ? value : new Date(value);
+    if (!Number.isFinite(date.getTime())) return String(value);
+    const parts = localDateParts(date);
+    const mIndex = parseInt(parts.month, 10) - 1;
+    return `${parts.day}-${MONTH_SHORT[mIndex] || parts.month}-${parts.year}`;
+  } catch {
+    return String(value);
+  }
+}
+
 module.exports = {
   number, nullableNumber, asArray, dateInput, startOfToday, dateTimeFromInput,
   localDateParts, localDateBoundary, localDateTimeRange, localTimeZoneName,
-  money, grams, nextDocumentNumber, nextBatchDocumentNumber, barcodePrefix,
+  money, grams, formatDateDisplay, nextDocumentNumber, nextBatchDocumentNumber, barcodePrefix,
   metalRateFromDailyRate, makingAmount
 };

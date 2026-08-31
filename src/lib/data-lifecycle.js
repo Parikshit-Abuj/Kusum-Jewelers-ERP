@@ -593,25 +593,18 @@ async function getExportPayload(db, key, range) {
       }));
 
       const allColumns = [
+        col.date('createdAt', 'Date'),
         col.text('metal', 'Metal', 12),
         col.text('itemName', 'Item name', 24),
         col.text('category', 'Category', 18),
         col.text('purity', 'Purity', 10),
         col.identifier('barcode', 'Barcode', 16),
-        col.identifier('sku', 'SKU', 16),
         col.weight('grossWeight', 'Gross wt. (g)'),
         col.weight('stoneWeight', 'Stone wt. (g)'),
         col.weight('netWeight', 'Net wt. (g)'),
         col.integer('quantity', 'Stock qty'),
-        col.integer('reorderLevel', 'Reorder level'),
-        col.currency('purchasePrice', 'Purchase price'),
-        col.currency('sellingPrice', 'Selling price'),
-        col.text('makingType', 'Making basis', 15),
-        col.number('makingValue', 'Making value'),
         col.text('status', 'Status', 14),
         col.text('location', 'Location', 16),
-        col.identifier('batchDocNo', 'Batch doc no.', 18),
-        col.date('createdAt', 'Created date'),
         col.text('notes', 'Notes', 30)
       ];
       const columns = pruneEmptyColumns(allColumns, rows);
@@ -689,7 +682,6 @@ async function getExportPayload(db, key, range) {
         col.date('createdAt', 'Movement date'),
         col.text('type', 'Movement type', 16),
         col.identifier('barcode', 'Barcode', 16),
-        col.identifier('sku', 'SKU', 16),
         col.text('itemName', 'Item name', 24),
         col.text('metal', 'Metal', 12),
         col.text('purity', 'Purity', 10),

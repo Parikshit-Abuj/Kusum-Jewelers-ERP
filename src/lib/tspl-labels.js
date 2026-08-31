@@ -20,7 +20,7 @@ function cleanTsplValue(value) {
 function labelKind(product) {
   if (product.metal === 'GOLD') return 'GOLD';
   if (product.metal === 'SILVER') return 'SILVER';
-  throw new Error(`${product.barcode || product.sku} is ${product.metal}; native labels are configured only for gold and silver.`);
+  throw new Error(`${product.barcode || 'Item'} is ${product.metal}; native labels are configured only for gold and silver.`);
 }
 
 function weight(value) {
