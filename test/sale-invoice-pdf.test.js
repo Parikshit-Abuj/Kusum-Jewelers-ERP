@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { invoiceQrPayload } = require('../src/lib/sale-invoice-pdf');
+const { invoiceQrPayload, positiveInvoicePayments } = require('../src/lib/sale-invoice-pdf');
 
 test('invoice QR payload includes customer, every sold item, paid amount and credit', () => {
   const payload = invoiceQrPayload({
@@ -33,4 +33,15 @@ test('invoice QR payload omits credit line when a sale is fully paid', () => {
 
   assert.match(payload, /Paid amount: Rs\. 500\.00/);
   assert.doesNotMatch(payload, /Balance \/ credit:/);
+});
+
+test('invoice payment lines omit zero-value Cash and UPI methods', () => {
+  assert.deepEqual(
+    positiveInvoicePayments({ paid: 100, cashPaid: 100, upiPaid: 0, cardPaid: 0, bankPaid: 0 }),
+    [['CASH', 100]]
+  );
+  assert.deepEqual(
+    positiveInvoicePayments({ paid: 100, cashPaid: 0, upiPaid: 100, cardPaid: 0, bankPaid: 0 }),
+    [['UPI', 100]]
+  );
 });

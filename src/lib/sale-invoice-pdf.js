@@ -32,6 +32,22 @@ function makingDisplay(item) {
   return `${value} fixed`;
 }
 
+function positiveInvoicePayments(sale) {
+  const cashPaid = Number(sale.cashPaid || 0);
+  const upiPaid = Number(sale.upiPaid || 0);
+  const cardPaid = Number(sale.cardPaid || 0);
+  const bankPaid = Number(sale.bankPaid || 0);
+  const trackedPaid = cashPaid + upiPaid + cardPaid + bankPaid;
+  const otherPaid = Math.max(0, Number(sale.paid || 0) - trackedPaid);
+  return [
+    ['CASH', cashPaid],
+    ['UPI', upiPaid],
+    ['CARD', cardPaid],
+    ['BANK TRANSFER', bankPaid],
+    ['OTHER', otherPaid]
+  ].filter(([, value]) => value > 0);
+}
+
 function line(doc, x1, y1, x2, y2, width = 0.5) {
   doc.save().moveTo(x1, y1).lineTo(x2, y2).lineWidth(width).strokeColor('#111').stroke().restore();
 }
@@ -299,24 +315,16 @@ function footerTotals(doc, sale, y) {
   const upiPaid = Number(sale.upiPaid || 0);
   const cardPaid = Number(sale.cardPaid || 0);
   const bankPaid = Number(sale.bankPaid || 0);
-  const trackedPaid = cashPaid + upiPaid + cardPaid + bankPaid;
-  const otherPaid = Math.max(0, Number(sale.paid || 0) - trackedPaid);
-  const detailedPayments = [
-    ['CASH', cashPaid],
-    ['UPI', upiPaid],
-    ['CARD', cardPaid],
-    ['BANK TRANSFER', bankPaid],
-    ['OTHER', otherPaid]
-  ].filter(([, value]) => value > 0);
+  const detailedPayments = positiveInvoicePayments(sale);
 
-  // Preserve the established Cash/UPI invoice appearance exactly. Only a
-  // genuinely mixed Card/Bank payment uses compact lines inside the same
-  // existing payment box; no coordinates, columns, borders or page format move.
+  // Preserve the established Cash/UPI payment box. Blank zero-amount methods
+  // are omitted; borders, columns, fonts and the PDF page format do not move.
   if (cardPaid <= 0 && bankPaid <= 0 && (cashPaid > 0 || upiPaid > 0)) {
-    doc.font('Helvetica-Bold').fontSize(8.2).text('By CASH', 50, y + 68, { width: 155 });
-    doc.text(amount(cashPaid), 50, y + 81, { width: 155 });
-    doc.text('By UPI', 50, y + 95, { width: 155 });
-    doc.text(amount(upiPaid), 50, y + 108, { width: 155 });
+    const cashAndUpi = detailedPayments.filter(([method]) => method === 'CASH' || method === 'UPI');
+    cashAndUpi.forEach(([method, value], index) => {
+      doc.font('Helvetica-Bold').fontSize(8.2).text(`By ${method}`, 50, y + 68 + index * 27, { width: 155 });
+      doc.text(amount(value), 50, y + 81 + index * 27, { width: 155 });
+    });
     if (Number(sale.balance || 0) > 0) doc.font('Helvetica').fontSize(7.8).text(`Balance Due: ${amount(sale.balance)}`, 50, y + 123, { width: 210 });
   } else if (detailedPayments.length > 1) {
     detailedPayments.forEach(([method, value], index) => {
@@ -375,4 +383,4 @@ async function writeSaleInvoice(res, sale) {
   doc.end();
 }
 
-module.exports = { writeSaleInvoice, makingDisplay, amountInWords, invoiceQrPayload };
+module.exports = { writeSaleInvoice, makingDisplay, amountInWords, invoiceQrPayload, positiveInvoicePayments };

@@ -23,7 +23,7 @@
       <!-- Left Column: Item Template & Rapid Weight Entry -->
       <div class="batch-left-col">
         <!-- Section 1: Item Template (Configured Once) -->
-        <div class="batch-config-panel">
+        <div class="batch-config-panel" data-enter-scope data-enter-next="#batchGrossWeight">
           <div class="batch-section-title">
             <span>1</span>
             <strong>Item Template</strong>
@@ -71,7 +71,7 @@
             </label>
             <label>
               <span>Making Charge *</span>
-              <input type="number" id="batchMakingValue" min="0" step="0.01" value="0" placeholder="e.g. 15 or 10%" data-batch-making-value required>
+              <input type="number" id="batchMakingValue" min="0" step="0.01" value="" placeholder="e.g. 15 or 10%" data-batch-making-value>
             </label>
           </div>
 
@@ -166,7 +166,7 @@
               <tbody data-batch-items-tbody>
                 <tr class="batch-empty-row">
                   <td colspan="9" class="center muted" style="padding: 36px 16px;">
-                    No pieces in this Batch Document yet.<br>Enter Gross Weight on the left and press <strong>Enter ↵</strong> to add!
+                    No pieces in this Batch Document yet.<br>Complete the weight fields on the left, then press <strong>Enter ↵</strong> on Net Wt to add.
                   </td>
                 </tr>
               </tbody>

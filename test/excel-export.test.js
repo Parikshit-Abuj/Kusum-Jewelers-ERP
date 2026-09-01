@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const ExcelJS = require('exceljs');
+const JSZip = require('jszip');
 
 const { buildExcelExport } = require('../src/lib/excel-export');
 
@@ -43,4 +44,42 @@ test('writes a professional multi-sheet cashbook workbook with typed dates and b
   assert.equal(cash.getCell('B7').value, 150);
   assert.equal(cash.getCell('A7').numFmt, 'dd-mmm-yyyy');
   assert.equal(workbook.getWorksheet('UPI').getCell('B3').value, 25);
+});
+
+test('uses one standard AutoFilter per populated worksheet without broken Excel Tables', async () => {
+  const workbookBytes = await buildExcelExport({
+    title: 'Kusum ERP - Excel compatibility validation',
+    columns: [{ key: 'identifier', label: 'Barcode', type: 'identifier', width: 16 }],
+    rows: [],
+    sheets: [
+      {
+        name: 'Populated register',
+        title: 'Populated register',
+        subtitle: 'Excel compatibility validation',
+        columns: [
+          { key: 'identifier', label: 'Barcode', type: 'identifier', width: 16 },
+          { key: 'amount', label: 'Amount', type: 'currency', width: 18 }
+        ],
+        rows: [{ identifier: 'G 00001', amount: 100 }],
+        infoRows: [{ label: 'Records', value: 1, type: 'integer' }]
+      },
+      {
+        name: 'Empty register',
+        title: 'Empty register',
+        subtitle: 'Excel compatibility validation',
+        columns: [{ key: 'identifier', label: 'Barcode', type: 'identifier', width: 16 }],
+        rows: [],
+        infoRows: []
+      }
+    ]
+  });
+
+  const archive = await JSZip.loadAsync(workbookBytes);
+  const zipEntries = Object.keys(archive.files);
+  assert.equal(zipEntries.some((name) => name.startsWith('xl/tables/')), false, 'exports must not contain overlapping Excel Table definitions');
+
+  const populatedXml = await archive.file('xl/worksheets/sheet1.xml').async('string');
+  const emptyXml = await archive.file('xl/worksheets/sheet2.xml').async('string');
+  assert.equal((populatedXml.match(/<autoFilter\b/g) || []).length, 1, 'a populated register needs one standard AutoFilter');
+  assert.equal((emptyXml.match(/<autoFilter\b/g) || []).length, 0, 'an empty register must not have a dangling AutoFilter');
 });

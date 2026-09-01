@@ -42,6 +42,53 @@ document.addEventListener('input', (event) => {
   if (input.value !== formatted) input.value = formatted;
 });
 
+/* ── Form Enter navigation ───────────────────────────────────
+   Cashiers enter a large amount of data from the keyboard. Enter moves to
+   the next visible, editable field in the current form (or explicitly marked
+   field group), and submits only after its final field. Controls with a
+   specialised Enter action—such as barcode scanners and autocomplete
+   selection—call preventDefault themselves, so their existing workflow wins.
+*/
+function isEnterNavigableControl(control) {
+  if (!control?.matches?.('input, select, textarea')) return false;
+  if (control.disabled || control.readOnly || control.type === 'hidden') return false;
+  if (control.matches('input[type="button"], input[type="submit"], input[type="reset"], input[type="file"], input[type="checkbox"], input[type="radio"]')) return false;
+  if (control.closest('[hidden], [aria-hidden="true"]')) return false;
+  return Boolean(control.getClientRects().length);
+}
+
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter' || event.defaultPrevented || event.isComposing) return;
+  if (event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return;
+
+  const control = event.target;
+  if (!isEnterNavigableControl(control)) return;
+
+  const scope = control.closest('[data-enter-scope]') || control.form;
+  if (!scope || scope.matches('[data-disable-enter-navigation]')) return;
+
+  const controls = Array.from(scope.querySelectorAll('input, select, textarea')).filter(isEnterNavigableControl);
+  const position = controls.indexOf(control);
+  if (position < 0) return;
+
+  event.preventDefault();
+  const next = controls[position + 1];
+  if (next) {
+    next.focus();
+    return;
+  }
+
+  const nextSelector = scope.dataset.enterNext;
+  if (nextSelector) {
+    document.querySelector(nextSelector)?.focus();
+    return;
+  }
+
+  if (!control.form) return;
+  if (!control.form.reportValidity()) return;
+  control.form.requestSubmit();
+});
+
 function replaceWithTextElements(container, elements) {
   container.replaceChildren(...elements.map(({ tag, text, className }) => {
     const element = document.createElement(tag);
@@ -403,6 +450,19 @@ document.querySelectorAll('.flash').forEach((el) => {
     else clearLookup('Enter the customer’s mobile number to load their ledger details.');
   });
   phoneInput.addEventListener('blur', lookupCustomer);
+  phoneInput.addEventListener('keydown', async (event) => {
+    if (event.key !== 'Enter' || event.isComposing) return;
+    event.preventDefault();
+    clearTimeout(lookupTimer);
+    const requestedPhone = normalizedPhone();
+    await lookupCustomer();
+    if (normalizedPhone() !== requestedPhone) return;
+    if (!newFields.hidden && !nameInput.disabled) {
+      nameInput.focus();
+    } else if (!existing.hidden && existingPanInput && !existingPanInput.disabled) {
+      existingPanInput.focus();
+    }
+  });
   clearLookup('Enter the customer’s mobile number to load their ledger details.');
 })();
 
@@ -844,6 +904,14 @@ function updateInventoryLabelBatchState() {
   let highlighted = -1;
   let items = [];
   let isSelecting = false;
+  let categoryManuallyEdited = Boolean(categoryInput && categoryInput.value && categoryInput.value !== nameInput.value);
+
+  if (categoryInput) {
+    categoryInput.addEventListener('input', () => {
+      // If user clears category or types matching name, keep sync active; otherwise mark as manual edit
+      categoryManuallyEdited = categoryInput.value.trim().length > 0 && categoryInput.value !== nameInput.value;
+    });
+  }
 
   function render() {
     if (isSelecting || !items.length) {
@@ -863,8 +931,9 @@ function updateInventoryLabelBatchState() {
     if (!item) return;
     isSelecting = true;
     nameInput.value = item.name;
-    if (categoryInput && item.category) {
-      categoryInput.value = item.category;
+    if (categoryInput) {
+      categoryInput.value = item.category || item.name;
+      categoryManuallyEdited = false;
     }
     close();
     // Dispatch input event to trigger autoDetectMetal and form calculators
@@ -893,6 +962,9 @@ function updateInventoryLabelBatchState() {
   }
 
   nameInput.addEventListener('input', () => {
+    if (categoryInput && !categoryManuallyEdited) {
+      categoryInput.value = nameInput.value;
+    }
     if (isSelecting) return;
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
@@ -1176,7 +1248,10 @@ function updateInventoryLabelBatchState() {
             e.preventDefault();
             isSelectingAutocomplete = true;
             nameInput.value = item.name;
-            if (categoryInput && item.category) categoryInput.value = item.category;
+            if (categoryInput) {
+              categoryInput.value = item.category || item.name;
+              batchCategoryManuallyEdited = false;
+            }
             autoDetectMetal(item.name);
             nameList.innerHTML = '';
             nameList.classList.remove('open');
@@ -1190,8 +1265,18 @@ function updateInventoryLabelBatchState() {
     }, 180);
   }
 
+  let batchCategoryManuallyEdited = Boolean(categoryInput && categoryInput.value && categoryInput.value !== nameInput?.value);
+  if (categoryInput) {
+    categoryInput.addEventListener('input', () => {
+      batchCategoryManuallyEdited = categoryInput.value.trim().length > 0 && categoryInput.value !== (nameInput ? nameInput.value : '');
+    });
+  }
+
   if (nameInput) {
     nameInput.addEventListener('input', () => {
+      if (categoryInput && !batchCategoryManuallyEdited) {
+        categoryInput.value = nameInput.value;
+      }
       if (!isSelectingAutocomplete) {
         searchItemNames(nameInput.value.trim());
       }
@@ -1538,24 +1623,6 @@ function updateInventoryLabelBatchState() {
     e.preventDefault();
     savePiece();
   });
-  grossWeightInput?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      savePiece();
-    }
-  });
-  stoneWeightInput?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      savePiece();
-    }
-  });
-  netWeightInput?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      savePiece();
-    }
-  });
 
   // Delete piece
   async function deletePiece(id) {
@@ -1824,5 +1891,23 @@ function updateInventoryLabelBatchState() {
         toggleSidebar(false);
       }
     });
+  });
+})();
+
+// ── Master Item Names Add Form Auto-Sync ──────────────────────
+(function initAddItemNameAutoSync() {
+  const form = document.getElementById('addItemNameForm');
+  if (!form) return;
+  const nameInput = form.querySelector('input[name="name"]');
+  const catInput = form.querySelector('input[name="category"]');
+  if (!nameInput || !catInput) return;
+  let manuallyEdited = Boolean(catInput.value && catInput.value !== nameInput.value);
+  catInput.addEventListener('input', () => {
+    manuallyEdited = catInput.value.trim().length > 0 && catInput.value !== nameInput.value;
+  });
+  nameInput.addEventListener('input', () => {
+    if (!manuallyEdited) {
+      catInput.value = nameInput.value;
+    }
   });
 })();

@@ -328,7 +328,7 @@ async function runEndToEndVerification() {
     // 5. Excel Exports Generation & Metal Ordering
     console.log('\n5. Testing Excel Exports (All resources + Inventory metal grouping)...');
     for (const res of RESOURCE_LIST) {
-      const payload = await getExportPayload(db, res.key, { from: '2020-01-01', to: '2030-01-01' });
+      const payload = await getExportPayload(db, res.key, { from: '2025-01-01', to: '2026-12-31' });
       const buffer = await buildExcelExport(payload);
       console.log(`   ✔ Exported ${res.label} (.xlsx) — Size: ${buffer.length} bytes, Rows: ${payload.rows.length}, Title: "${payload.title}"`);
 

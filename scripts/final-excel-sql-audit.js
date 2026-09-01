@@ -3,6 +3,7 @@ const fs = require('fs/promises');
 const path = require('path');
 const mysql = require('mysql2/promise');
 const ExcelJS = require('exceljs');
+const JSZip = require('jszip');
 const dotenv = require('dotenv');
 const { PrismaClient } = require('@prisma/client');
 const { RESOURCE_LIST, getExportPayload } = require('../src/lib/data-lifecycle');
@@ -301,6 +302,9 @@ function assertDateRows(resource, payload) {
 
 async function assertWorkbook(resource, payload, buffer) {
   assert(buffer.length > 6000, `${resource} workbook is unexpectedly small`);
+  const archive = await JSZip.loadAsync(buffer);
+  const entries = Object.keys(archive.files);
+  assert(!entries.some((name) => name.startsWith('xl/tables/')), `${resource} contains an Excel Table that can conflict with filtering`);
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buffer);
   assert(workbook.worksheets.length === (payload.sheets?.length || 1), `${resource} worksheet count mismatch`);
@@ -319,6 +323,10 @@ async function assertWorkbook(resource, payload, buffer) {
       });
     });
     assert(headerRow > 0, `${resource}/${sheet.name} column header row was not found`);
+
+    const xml = await archive.file(`xl/worksheets/sheet${sheetIndex + 1}.xml`).async('string');
+    const filterCount = (xml.match(/<autoFilter\b/g) || []).length;
+    assert(filterCount === (spec.rows.length ? 1 : 0), `${resource}/${sheet.name} has an invalid AutoFilter definition`);
 
     const dateColumnIndex = spec.columns.findIndex((column) => column.type === 'date');
     if (dateColumnIndex >= 0 && spec.rows.length) {
@@ -365,7 +373,9 @@ async function buildAndCheckExports(db, suffix = '') {
       const upiRows = payload.sheets.find((sheet) => sheet.name === 'UPI').rows;
       const cardRows = payload.sheets.find((sheet) => sheet.name === 'Card').rows;
       const bankRows = payload.sheets.find((sheet) => sheet.name === 'Bank transfer').rows;
-      assert(cashRows.at(-1).runningBalance === 1000, 'Cash running balance is incorrect');
+      // The selected day begins with the prior-day Cash opening balance of
+      // ₹10, then includes the ₹1,000 receipt on 28/08.
+      assert(cashRows.at(-1).runningBalance === 1010, 'Cash running balance is incorrect');
       assert(upiRows.at(-1).runningBalance === -250, 'UPI running balance is incorrect');
       assert(cardRows.at(-1).runningBalance === 300, 'Card running balance is incorrect');
       assert(bankRows.at(-1).runningBalance === 500, 'Bank running balance is incorrect');

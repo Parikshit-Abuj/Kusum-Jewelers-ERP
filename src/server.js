@@ -1089,6 +1089,16 @@ app.post('/api/inventory/batch-piece', express.json(), async (req, res, next) =>
     if (netWeight <= 0) return res.status(400).json({ error: 'Net weight must be greater than 0.' });
 
     const product = await prisma.$transaction(async (tx) => {
+      // A batch number is assigned only while saving the first piece.  This
+      // keeps it atomic across counter PCs: two empty batch dialogs cannot
+      // accidentally receive the same document number.
+      const existingBatch = requestedBatchDocNo
+        ? await tx.product.findFirst({
+          where: { batchDocNo: requestedBatchDocNo, status: 'AVAILABLE', quantity: 1 },
+          select: { id: true }
+        })
+        : null;
+      const batchDocNo = existingBatch ? requestedBatchDocNo : await nextBatchDocumentNumber(tx);
       const rateInfo = await getRateForDate(tx);
       const metalAmount = metalRateFromDailyRate({ metal, purity }, rateInfo.rate) * netWeight;
       const suggestedPrice = metalAmount + makingAmount(makingChargeType, makingChargeValue, metalAmount, netWeight);
@@ -1232,10 +1242,6 @@ app.post('/inventory', async (req, res, next) => {
       ? Math.max(0, Math.floor(number(req.body.reorderLevel, 0)))
       : 0;
     const product = await prisma.$transaction(async (tx) => {
-      const existingBatch = requestedBatchDocNo
-        ? await tx.product.findFirst({ where: { batchDocNo: requestedBatchDocNo }, select: { id: true } })
-        : null;
-      const batchDocNo = existingBatch ? requestedBatchDocNo : await nextBatchDocumentNumber(tx);
       const rateInfo = await getRateForDate(tx);
       const metal = ['GOLD', 'SILVER', 'PLATINUM', 'DIAMOND', 'OTHER'].includes(req.body.metal) ? req.body.metal : 'GOLD';
       const purity = metal === 'SILVER' ? null : (req.body.purity || null);

@@ -155,17 +155,12 @@ function addWorksheet(workbook, spec, index, usedNames) {
   header.height = 26;
 
   if (rows.length) {
-    sheet.addTable({
-      name: `KusumExport${index + 1}`,
-      ref: `A${headerRow}`,
-      headerRow: true,
-      totalsRow: false,
-      style: { theme: 'TableStyleLight1', showRowStripes: false },
-      columns: columns.map((column) => ({ name: column.label })),
-      rows: rows.map((row) => columns.map((column) => cellValue(row[column.key], column.type)))
-    });
-    // Tables may infer barcode, invoice and mobile-number text as numbers.
-    // Reapply typed values and formatting so identifiers are never altered.
+    // Use one ordinary worksheet AutoFilter rather than an Excel Table.
+    // Excel Tables already contain their own AutoFilter definition; adding a
+    // second worksheet-level filter over the same range produces a workbook
+    // that Google Sheets accepts but Microsoft Excel repairs by deleting the
+    // table/filter.  A standard AutoFilter keeps the same filter drop-downs,
+    // works in Excel/Google Sheets/LibreOffice, and leaves identifiers as text.
     rows.forEach((row, rowIndex) => {
       const excelRow = sheet.getRow(dataStart + rowIndex);
       columns.forEach((column, columnIndex) => {

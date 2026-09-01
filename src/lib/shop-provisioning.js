@@ -202,6 +202,39 @@ async function verifyRuntimeSchema(connection) {
   }
 }
 
+// A first-time setup can be interrupted by a power loss, a Windows restart or
+// a temporary MySQL disconnect while DDL is being applied. MySQL DDL is not
+// transactional, so the previous attempt can leave an empty, partly-created
+// database behind. It is safe to retry only while no shop business record has
+// ever been written. Once stock, sales, ledgers, cashbook or URD data exists,
+// the ERP deliberately stops and asks for a verified recovery instead.
+async function databaseHasBusinessRecords(connection) {
+  const [tables] = await connection.query(
+    `SELECT table_name FROM information_schema.tables
+     WHERE table_schema = DATABASE()
+       AND table_name IN ('Customer', 'Product', 'Sale', 'SaleItem', 'CustomerLedger', 'CashbookEntry', 'UrdPurchase')`
+  );
+  for (const row of tables) {
+    const table = String(row.TABLE_NAME || row.table_name || '');
+    if (!table) continue;
+    const [records] = await connection.query(`SELECT 1 FROM ${mysqlCore.escapeId(table)} LIMIT 1`);
+    if (records.length) return true;
+  }
+  return false;
+}
+
+async function retireEmptyFailedMigration(connection, migrationName) {
+  if (await databaseHasBusinessRecords(connection)) return false;
+  await connection.query(
+    `UPDATE \`_prisma_migrations\`
+     SET \`rolled_back_at\` = NOW(3),
+         \`logs\` = CONCAT(COALESCE(\`logs\`, ''), '\\nAutomatically retried during empty first-time setup.')
+     WHERE \`migration_name\` = ? AND \`finished_at\` IS NULL AND \`rolled_back_at\` IS NULL`,
+    [migrationName]
+  );
+  return true;
+}
+
 function connectionValues({ host, mysqlPort, database, username, password, appUsername, appPassword, printerMode, printerName, printerHost, printerPort, mode }) {
   return {
     DATABASE_URL: mysqlUrl({ host, port: mysqlPort, username, password, database }),
@@ -222,7 +255,18 @@ async function runBundledMigrations(appRoot, databaseUrl) {
   if (!fs.existsSync(migrationsPath)) throw new Error('ERP installation files are incomplete. Re-run the installer.');
 
   const connection = await mysql.createConnection({ uri: databaseUrl, multipleStatements: true, connectTimeout: 12000 });
+  let migrationLockHeld = false;
   try {
+    // Prevent two local ERP starts or two setup clicks from applying the same
+    // schema at once. GET_LOCK is scoped to this MySQL connection and is
+    // released automatically if that connection is lost.
+    const [lockRows] = await connection.query(
+      "SELECT GET_LOCK(CONCAT('kusum-erp-schema:', DATABASE()), 45) AS acquired"
+    );
+    if (Number(lockRows?.[0]?.acquired) !== 1) {
+      throw new Error('Another ERP setup or schema update is still running. Wait one minute, then try again.');
+    }
+    migrationLockHeld = true;
     await connection.query(`CREATE TABLE IF NOT EXISTS \`_prisma_migrations\` (
       \`id\` VARCHAR(36) NOT NULL,
       \`checksum\` VARCHAR(64) NOT NULL,
@@ -256,7 +300,10 @@ async function runBundledMigrations(appRoot, databaseUrl) {
         continue;
       }
       if (applied.some((row) => !row.finished_at && !row.rolled_back_at)) {
-        throw new Error(`Migration ${migrationName} has an unfinished earlier attempt. Do not continue billing until the database migration is repaired from a verified backup.`);
+        const retried = await retireEmptyFailedMigration(connection, migrationName);
+        if (!retried) {
+          throw new Error(`Migration ${migrationName} has an unfinished earlier attempt. Do not continue billing until the database migration is repaired from a verified backup.`);
+        }
       }
 
       const migrationId = crypto.randomUUID();
@@ -288,6 +335,9 @@ async function runBundledMigrations(appRoot, databaseUrl) {
   } catch (error) {
     throw new Error(`Could not apply the ERP database schema: ${error.message || error}`);
   } finally {
+    if (migrationLockHeld) {
+      await connection.query("DO RELEASE_LOCK(CONCAT('kusum-erp-schema:', DATABASE()))").catch(() => {});
+    }
     await connection.end();
   }
 }
