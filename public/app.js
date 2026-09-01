@@ -1194,7 +1194,7 @@ function updateInventoryLabelBatchState() {
         liveRates = data.rate;
         updateRateDisplay();
       }
-    } catch (_) {}
+    } catch (_) { }
   }
 
   // A document number is allocated with the first database save, never by
@@ -1303,7 +1303,7 @@ function updateInventoryLabelBatchState() {
           nameList.appendChild(li);
         });
         nameList.classList.add('open');
-      } catch (_) {}
+      } catch (_) { }
     }, 180);
   }
 
