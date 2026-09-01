@@ -44,8 +44,24 @@ function number(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+// Indian invoice practice is to round the final tax-inclusive amount to the
+// nearest whole rupee. Keep this separate from two-decimal money rounding so
+// the saved total, payment checks, ledger and printed "Round Off" agree.
+function roundToNearestRupee(value) {
+  return Math.round(number(value));
+}
+
 function nullableNumber(value) {
   return value === undefined || value === null || value === '' ? null : number(value);
+}
+
+// Store names, addresses and stock labels in a clean print-ready form while
+// leaving invoice numbers, barcodes and PAN values to their own rules.
+function titleCase(value) {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/(^|[^A-Za-z])([A-Za-z])/g, (_, prefix, letter) => `${prefix}${letter.toUpperCase()}`);
 }
 
 function asArray(value) {
@@ -191,7 +207,7 @@ function formatDateDisplay(value) {
 }
 
 module.exports = {
-  number, nullableNumber, asArray, dateInput, startOfToday, dateTimeFromInput,
+  number, roundToNearestRupee, nullableNumber, titleCase, asArray, dateInput, startOfToday, dateTimeFromInput,
   localDateParts, localDateBoundary, localDateTimeRange, localTimeZoneName,
   money, grams, formatDateDisplay, nextDocumentNumber, nextBatchDocumentNumber, barcodePrefix,
   metalRateFromDailyRate, makingAmount

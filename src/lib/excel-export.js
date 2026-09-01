@@ -4,6 +4,8 @@ const path = require('path');
 const { spawn } = require('child_process');
 
 const builderPath = path.join(__dirname, '..', 'excel-runtime', 'build-export.mjs');
+const MAX_RENDERED_ROWS = 100000;
+const MAX_PAYLOAD_BYTES = 24 * 1024 * 1024;
 
 function run(command, args) {
   return new Promise((resolve, reject) => {
@@ -20,11 +22,20 @@ function run(command, args) {
 }
 
 async function buildExcelExport(payload) {
+  const renderedRows = (payload.sheets || [{ rows: payload.rows || [] }])
+    .reduce((total, sheet) => total + (sheet.rows || []).length, 0);
+  if (renderedRows > MAX_RENDERED_ROWS) {
+    throw new Error('This Excel export contains too many rendered rows. Choose a shorter date range so the shop PC can create it reliably.');
+  }
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kusum-erp-export-'));
   const inputPath = path.join(tempDir, 'data.json');
   const outputPath = path.join(tempDir, 'export.xlsx');
   try {
-    await fs.writeFile(inputPath, JSON.stringify(payload), 'utf8');
+    const json = JSON.stringify(payload);
+    if (Buffer.byteLength(json, 'utf8') > MAX_PAYLOAD_BYTES) {
+      throw new Error('This Excel export is too large to prepare safely. Choose a shorter date range.');
+    }
+    await fs.writeFile(inputPath, json, 'utf8');
     await run(process.execPath, [builderPath, inputPath, outputPath]);
     return await fs.readFile(outputPath);
   } finally {

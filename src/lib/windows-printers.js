@@ -77,7 +77,7 @@ function statusFromPrinterList(preferredName, listed, checked = true) {
       checked
     };
   }
-  if (printer.workOffline || Number(printer.printerStatus) === 7) {
+  if (printer.canConfirmPhysicalStatus && (printer.workOffline || Number(printer.printerStatus) === 7)) {
     return {
       available: false,
       name: printer.name,
@@ -89,7 +89,7 @@ function statusFromPrinterList(preferredName, listed, checked = true) {
   return {
     available: true,
     name: printer.name,
-    message: `Detected ${printer.name}. Native TSPL labels will be sent as RAW data.`,
+    message: `${printer.name} is installed in Windows. Use Test TSC to verify its physical connection; native TSPL labels are sent as RAW data.`,
     printers: listed.printers,
     checked
   };

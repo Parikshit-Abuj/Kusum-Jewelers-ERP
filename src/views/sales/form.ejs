@@ -678,7 +678,7 @@
         <div class="pos-grid-3">
           <div class="pos-field">
             <label>Invoice Number</label>
-            <input name="invoiceNumber" required readonly value="<%= typeof invoiceNumber !== 'undefined' ? invoiceNumber : '' %>" style="font-family:'Courier New',monospace; font-weight:750; background:#fbf9f5;">
+            <input name="invoiceNumber" readonly value="<%= typeof invoiceNumber !== 'undefined' ? invoiceNumber : '' %>" placeholder="Assigned when saved" style="font-family:'Courier New',monospace; font-weight:750; background:#fbf9f5;">
           </div>
           <div class="pos-field">
             <label>Billing Date</label>
@@ -716,7 +716,7 @@
           <div class="cust-new-grid" data-new-customer-fields hidden>
             <div class="pos-field">
               <label>Customer Name *</label>
-              <input name="customerName" disabled data-customer-name placeholder="Customer full name">
+              <input name="customerName" disabled data-customer-name data-title-case placeholder="Customer full name">
             </div>
             <div class="pos-field">
               <label>PAN No. (optional)</label>
@@ -728,7 +728,7 @@
             </div>
             <div class="pos-field">
               <label>City / Address</label>
-              <input name="customerAddress" disabled data-customer-address placeholder="City / Area">
+              <input name="customerAddress" disabled data-customer-address data-title-case placeholder="City / Area">
             </div>
           </div>
         </section>
@@ -843,8 +843,8 @@
             <!-- Tier 2: Secondary Specs -->
             <div class="line-specs-grid">
               <div class="input-unit">
-                <label>Qty</label>
-                <input name="quantity" type="number" min="1" value="1" required data-quantity>
+                <label>Pieces</label>
+                <input name="quantity" type="number" min="1" value="1" readonly aria-label="One barcode equals one piece" data-quantity>
               </div>
               <div class="input-unit">
                 <label>Purity</label>
@@ -888,6 +888,11 @@
       <div class="summary-row">
         <span>GST (3%)</span>
         <strong data-gst>₹0.00</strong>
+      </div>
+
+      <div class="summary-row">
+        <span>Round Off</span>
+        <strong data-round-off>₹0.00</strong>
       </div>
 
       <input name="gstRate" type="hidden" value="3">

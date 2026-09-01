@@ -150,6 +150,7 @@
       <hr style="margin:12px 0;border:0;border-top:1px solid var(--line);">
 
       <label>Customer (optional)
+        <input id="cbCustomerSearch" type="search" autocomplete="off" placeholder="Search name or mobile number…">
         <select name="customerId" id="cbCustomer">
           <option value="">No customer — general entry</option>
           <% customers.forEach(c => { %>
@@ -166,3 +167,46 @@
   </aside>
 
 </div>
+
+<script>
+(() => {
+  const search = document.getElementById('cbCustomerSearch');
+  const select = document.getElementById('cbCustomer');
+  if (!search || !select) return;
+  let timer;
+  let controller;
+  const baseOption = () => {
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = 'No customer — general entry';
+    return option;
+  };
+  search.addEventListener('input', () => {
+    clearTimeout(timer);
+    const query = search.value.trim();
+    if (query.length < 2) {
+      select.replaceChildren(baseOption());
+      return;
+    }
+    timer = setTimeout(async () => {
+      controller?.abort();
+      controller = new AbortController();
+      try {
+        const response = await fetch(`/api/customers/search?q=${encodeURIComponent(query)}`, { signal: controller.signal });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Could not search customers.');
+        const options = (data.customers || []).map((customer) => {
+          const option = document.createElement('option');
+          option.value = String(customer.id);
+          option.textContent = `${customer.name}${customer.phone ? ` · ${customer.phone}` : ''}`;
+          return option;
+        });
+        select.replaceChildren(baseOption(), ...options);
+        if (options.length === 1) select.value = options[0].value;
+      } catch (error) {
+        if (error.name !== 'AbortError') select.replaceChildren(baseOption());
+      }
+    }, 180);
+  });
+})();
+</script>

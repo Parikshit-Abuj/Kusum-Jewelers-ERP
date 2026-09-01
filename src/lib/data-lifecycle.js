@@ -13,6 +13,15 @@ const RESOURCE_LIST = [
 ];
 
 const RESOURCE_MAP = new Map(RESOURCE_LIST.map((resource) => [resource.key, resource]));
+// A workbook is created in a separate Node process and therefore needs a
+// bounded request. Two years keeps an export practical on a shop PC while
+// still allowing long history to be downloaded in consecutive date ranges.
+const MAX_EXPORT_RANGE_DAYS = 731;
+const MAX_SOURCE_ROWS = 20000;
+// Deletion is intentionally more conservative than export. A very large
+// interactive transaction can lock billing/cashbook tables and make a shop PC
+// appear hung. Users can repeat safe smaller archival ranges.
+const MAX_ARCHIVE_OPERATION_ROWS = 500;
 
 function today() {
   return dateInput();
@@ -33,6 +42,21 @@ function parseDateRange(source) {
   const to = String(source.to || today());
   if (!isDate(from) || !isDate(to) || from > to) throw new Error('Choose a valid From and To date range.');
   return { from, to };
+}
+
+function assertExportRange(range) {
+  const [fromYear, fromMonth, fromDay] = range.from.split('-').map(Number);
+  const [toYear, toMonth, toDay] = range.to.split('-').map(Number);
+  const days = Math.floor((Date.UTC(toYear, toMonth - 1, toDay) - Date.UTC(fromYear, fromMonth - 1, fromDay)) / 86400000) + 1;
+  if (days > MAX_EXPORT_RANGE_DAYS) {
+    throw new Error('Excel export is limited to two years at a time for reliable performance. Download longer history in consecutive date ranges.');
+  }
+}
+
+function assertExportRows(rows, label) {
+  if (rows.length > MAX_SOURCE_ROWS) {
+    throw new Error(`${label} has more than ${MAX_SOURCE_ROWS.toLocaleString('en-IN')} records in this range. Choose a shorter date range so the export remains reliable.`);
+  }
 }
 
 function resourceFor(key) {
@@ -115,18 +139,20 @@ function cashbookTotals(rows) {
   }, { in: 0, out: 0 });
 }
 
-function cashbookInfoRows(rows) {
+function cashbookInfoRows(rows, openingBalance = 0) {
   const t = cashbookTotals(rows);
   return [
+    { label: 'Opening balance', value: openingBalance, type: 'currency' },
     { label: 'Total money in', value: t.in, type: 'currency' },
     { label: 'Total money out', value: t.out, type: 'currency' },
-    { label: 'Net balance', value: t.in - t.out, type: 'currency' },
+    { label: 'Net movement', value: t.in - t.out, type: 'currency' },
+    { label: 'Closing balance', value: openingBalance + t.in - t.out, type: 'currency' },
     { label: 'Total entries', value: rows.length, type: 'integer' }
   ];
 }
 
-function cashbookExportRows(entries) {
-  let runningBalance = 0;
+function cashbookExportRows(entries, openingBalance = 0) {
+  let runningBalance = openingBalance;
   return entries.map((entry) => {
     const amount = num(entry.amount);
     runningBalance += entry.type === 'IN' ? amount : -amount;
@@ -193,6 +219,7 @@ function inventorySummaryRows(rows) {
 
 async function getExportPayload(db, key, range) {
   const resource = resourceFor(key);
+  assertExportRange(range);
 
   switch (key) {
 
@@ -203,8 +230,10 @@ async function getExportPayload(db, key, range) {
       const sales = await db.sale.findMany({
         where: { saleDate: dateTimeRange(range) },
         orderBy: [{ saleDate: 'asc' }, { id: 'asc' }],
-        include: { customer: true, items: { include: { product: true } } }
+        include: { customer: true, items: { include: { product: true } } },
+        take: MAX_SOURCE_ROWS + 1
       });
+      assertExportRows(sales, 'Sales register');
 
       // Line-item rows (one per sold piece)
       const lineRows = sales.flatMap((s) => s.items.map((item) => ({
@@ -241,6 +270,7 @@ async function getExportPayload(db, key, range) {
         paymentMethod: paymentLabel(s.paymentMethod),
         notes: str(s.notes)
       })));
+      assertExportRows(lineRows, 'Sales item-wise register');
 
       const allLineColumns = [
         col.date('saleDate', 'Invoice date'),
@@ -383,8 +413,10 @@ async function getExportPayload(db, key, range) {
       const purchases = await db.urdPurchase.findMany({
         where: { purchaseDate: dateTimeRange(range) },
         orderBy: [{ purchaseDate: 'asc' }, { id: 'asc' }],
-        include: { customer: true, sale: true }
+        include: { customer: true, sale: true },
+        take: MAX_SOURCE_ROWS + 1
       });
+      assertExportRows(purchases, 'URD purchase register');
       const rows = purchases.map((p) => ({
         purchaseDate: exportDate(p.purchaseDate),
         purchaseNumber: p.purchaseNumber,
@@ -454,13 +486,27 @@ async function getExportPayload(db, key, range) {
     //  DAILY CASHBOOK — Every entry + running balance
     // ────────────────────────────────────────────────────────────
     case 'cashbook': {
-      const entries = await db.cashbookEntry.findMany({
-        where: { entryDate: { gte: range.from, lte: range.to } },
-        orderBy: [{ entryDate: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
-        include: { customer: true }
-      });
+      const [entries, openingTotals] = await Promise.all([
+        db.cashbookEntry.findMany({
+          where: { entryDate: { gte: range.from, lte: range.to } },
+          orderBy: [{ entryDate: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+          include: { customer: true },
+          take: MAX_SOURCE_ROWS + 1
+        }),
+        db.cashbookEntry.groupBy({
+          by: ['type', 'paymentMethod'],
+          where: { entryDate: { lt: range.from } },
+          _sum: { amount: true }
+        })
+      ]);
+      assertExportRows(entries, 'Cashbook register');
 
-      const rows = cashbookExportRows(entries);
+      const openingBalanceFor = (method = null) => openingTotals
+        .filter((entry) => !method || entry.paymentMethod === method)
+        .reduce((total, entry) => total + (entry.type === 'IN' ? num(entry._sum.amount) : -num(entry._sum.amount)), 0);
+      const openingBalance = openingBalanceFor();
+
+      const rows = cashbookExportRows(entries, openingBalance);
 
       const allColumns = [
         col.date('entryDate', 'Date'),
@@ -481,26 +527,45 @@ async function getExportPayload(db, key, range) {
       // Per-method grouping
       const grouped = CASHBOOK_METHODS.map((method) => {
         const methodEntries = entries.filter((entry) => entry.paymentMethod === method.key);
-        return { ...method, entries: methodEntries, rows: cashbookExportRows(methodEntries) };
+        return {
+          ...method,
+          entries: methodEntries,
+          openingBalance: openingBalanceFor(method.key),
+          rows: cashbookExportRows(methodEntries, openingBalanceFor(method.key))
+        };
       });
       const otherEntries = entries.filter((entry) => !CASHBOOK_METHODS.some((method) => method.key === entry.paymentMethod));
-      const otherRows = cashbookExportRows(otherEntries);
+      const otherOpeningBalance = openingTotals
+        .filter((entry) => !CASHBOOK_METHODS.some((method) => method.key === entry.paymentMethod))
+        .reduce((total, entry) => total + (entry.type === 'IN' ? num(entry._sum.amount) : -num(entry._sum.amount)), 0);
+      const otherRows = cashbookExportRows(otherEntries, otherOpeningBalance);
 
       // Summary rows
       const summaryColumns = [
         col.text('paymentMethod', 'Payment method', 22),
         col.integer('entries', 'Total entries'),
+        col.currency('openingBalance', 'Opening balance'),
         col.currency('moneyIn', 'Total money in'),
         col.currency('moneyOut', 'Total money out'),
-        col.currency('netBalance', 'Net balance')
+        col.currency('netBalance', 'Net movement'),
+        col.currency('closingBalance', 'Closing balance')
       ];
-      const summaryRows = [...grouped, ...(otherRows.length ? [{ key: 'OTHER', label: 'Other methods', rows: otherRows }] : [])].map((g) => {
+      const summaryRows = [...grouped, ...(otherRows.length || otherOpeningBalance ? [{ key: 'OTHER', label: 'Other methods', rows: otherRows }] : [])].map((g) => {
         const totals = cashbookTotals(g.entries || otherEntries);
-        return { paymentMethod: g.label, entries: g.rows.length, moneyIn: totals.in, moneyOut: totals.out, netBalance: totals.in - totals.out };
+        const groupOpeningBalance = g.key === 'OTHER' ? otherOpeningBalance : g.openingBalance;
+        return {
+          paymentMethod: g.label,
+          entries: g.rows.length,
+          openingBalance: groupOpeningBalance,
+          moneyIn: totals.in,
+          moneyOut: totals.out,
+          netBalance: totals.in - totals.out,
+          closingBalance: groupOpeningBalance + totals.in - totals.out
+        };
       });
 
       // Build sheets
-      const infoAll = cashbookInfoRows(entries.map(e => ({ type: e.type, amount: num(e.amount) })));
+      const infoAll = cashbookInfoRows(entries.map(e => ({ type: e.type, amount: num(e.amount) })), openingBalance);
       const sheets = [
         {
           name: 'All entries',
@@ -521,7 +586,7 @@ async function getExportPayload(db, key, range) {
       ];
 
       for (const g of grouped) {
-        const gInfo = cashbookInfoRows(g.entries);
+        const gInfo = cashbookInfoRows(g.entries, g.openingBalance);
         sheets.push({
           name: g.label,
           title: `Daily Cashbook - ${g.label} entries`,
@@ -531,14 +596,14 @@ async function getExportPayload(db, key, range) {
           infoRows: gInfo
         });
       }
-      if (otherRows.length) {
+      if (otherRows.length || otherOpeningBalance) {
         sheets.push({
           name: 'Other methods',
           title: `Daily Cashbook - Other payment methods`,
           subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | ${otherRows.length} entr${otherRows.length === 1 ? 'y' : 'ies'}`,
           columns,
           rows: otherRows,
-          infoRows: cashbookInfoRows(otherEntries)
+          infoRows: cashbookInfoRows(otherEntries, otherOpeningBalance)
         });
       }
 
@@ -559,8 +624,11 @@ async function getExportPayload(db, key, range) {
           createdAt: dateTimeRange(range),
           status: 'AVAILABLE',
           quantity: { gt: 0 }
-        }
+        },
+        orderBy: [{ metal: 'asc' }, { name: 'asc' }, { category: 'asc' }, { barcode: 'asc' }],
+        take: MAX_SOURCE_ROWS + 1
       });
+      assertExportRows(products, 'Inventory register');
 
       const sortedProducts = [...products].sort((a, b) => {
         const md = METAL_ORDER.indexOf(a.metal) - METAL_ORDER.indexOf(b.metal);
@@ -663,8 +731,10 @@ async function getExportPayload(db, key, range) {
       const movements = await db.stockMovement.findMany({
         where: { createdAt: dateTimeRange(range) },
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-        include: { product: true }
+        include: { product: true },
+        take: MAX_SOURCE_ROWS + 1
       });
+      assertExportRows(movements, 'Stock movement register');
       const rows = movements.map((m) => ({
         createdAt: exportDate(m.createdAt),
         type: enumLabel(m.type),
@@ -717,8 +787,16 @@ async function getExportPayload(db, key, range) {
       const customers = await db.customer.findMany({
         where: { createdAt: dateTimeRange(range) },
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-        include: { ledger: { select: { amount: true } }, _count: { select: { sales: true, urdPurchases: true } } }
+        include: { _count: { select: { sales: true, urdPurchases: true } } },
+        take: MAX_SOURCE_ROWS + 1
       });
+      assertExportRows(customers, 'Customer directory');
+      const customerBalances = customers.length ? await db.customerLedger.groupBy({
+        by: ['customerId'],
+        where: { customerId: { in: customers.map((customer) => customer.id) } },
+        _sum: { amount: true }
+      }) : [];
+      const balanceByCustomer = new Map(customerBalances.map((entry) => [entry.customerId, num(entry._sum.amount)]));
       const rows = customers.map((c) => ({
         createdAt: exportDate(c.createdAt),
         customerPhone: c.phone || '',
@@ -728,7 +806,7 @@ async function getExportPayload(db, key, range) {
         address: c.address || '',
         salesCount: c._count.sales,
         urdCount: c._count.urdPurchases,
-        outstanding: c.ledger.reduce((t, e) => t + num(e.amount), 0)
+        outstanding: balanceByCustomer.get(c.id) || 0
       }));
 
       const allColumns = [
@@ -768,8 +846,10 @@ async function getExportPayload(db, key, range) {
       const entries = await db.customerLedger.findMany({
         where: { createdAt: period },
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-        include: { customer: true, sale: true }
+        include: { customer: true, sale: true },
+        take: MAX_SOURCE_ROWS + 1
       });
+      assertExportRows(entries, 'Customer ledger');
       const customerIds = [...new Set(entries.map((entry) => entry.customerId))];
       const openingRows = customerIds.length ? await db.customerLedger.groupBy({
         by: ['customerId'],
@@ -843,7 +923,8 @@ async function getExportPayload(db, key, range) {
     //  DAILY METAL RATES
     // ────────────────────────────────────────────────────────────
     case 'rates': {
-      const rates = await db.dailyRate.findMany({ where: { rateDate: { gte: range.from, lte: range.to } }, orderBy: { rateDate: 'asc' } });
+      const rates = await db.dailyRate.findMany({ where: { rateDate: { gte: range.from, lte: range.to } }, orderBy: { rateDate: 'asc' }, take: MAX_SOURCE_ROWS + 1 });
+      assertExportRows(rates, 'Daily rate register');
       const rows = rates.map((r) => ({
         rateDate: r.rateDate,
         gold22k: num(r.gold22k),
@@ -885,24 +966,44 @@ async function getExportPayload(db, key, range) {
 async function archiveData(db, key, range) {
   const resource = resourceFor(key);
   if (resource.archiveDisabled) throw new Error(resource.archiveNote);
+  const archiveRange = dateTimeRange(range);
+  const takeArchiveWindow = async (tx, model, where, select) => {
+    const rows = await tx[model].findMany({ where, select, orderBy: { id: 'asc' }, take: MAX_ARCHIVE_OPERATION_ROWS + 1 });
+    if (rows.length > MAX_ARCHIVE_OPERATION_ROWS) {
+      throw new Error(`More than ${MAX_ARCHIVE_OPERATION_ROWS} ${resource.label.toLowerCase()} records match this range. Choose a shorter date range before permanently deleting data.`);
+    }
+    return rows;
+  };
   return db.$transaction(async (tx) => {
     if (key === 'sales') {
-      const candidates = await tx.sale.findMany({ where: { saleDate: dateTimeRange(range) }, select: { id: true, balance: true } });
+      const candidates = await takeArchiveWindow(tx, 'sale', { saleDate: archiveRange }, { id: true, invoiceNumber: true, balance: true });
       const ids = candidates.filter((s) => num(s.balance) <= 0).map((s) => s.id);
       if (ids.length) {
+        const invoiceNumbers = candidates.filter((s) => ids.includes(s.id)).map((s) => s.invoiceNumber);
+        const linkedLedger = await tx.customerLedger.findMany({
+          where: { saleId: { in: ids }, cashbookEntryId: { not: null } },
+          select: { cashbookEntryId: true }
+        });
+        const cashbookIds = [...new Set(linkedLedger.map((row) => row.cashbookEntryId).filter(Boolean))];
         await tx.customerLedger.deleteMany({ where: { saleId: { in: ids } } });
+        // Cashbook is an independent money register. Retain its physical
+        // entries, but detach them from removed invoices and their removed
+        // ledger allocations so later cashbook deletion remains safe.
+        await tx.cashbookEntry.updateMany({ where: { saleId: { in: ids } }, data: { saleId: null, syncLedger: false } });
+        if (cashbookIds.length) await tx.cashbookEntry.updateMany({ where: { id: { in: cashbookIds } }, data: { syncLedger: false } });
+        await tx.stockMovement.deleteMany({ where: { type: 'SALE', note: { in: invoiceNumbers.map((invoiceNumber) => `Sold via ${invoiceNumber}`) } } });
         await tx.sale.deleteMany({ where: { id: { in: ids } } });
       }
-      return { deleted: ids.length, skipped: candidates.length - ids.length, note: 'Invoices with an outstanding customer balance were kept.' };
+      return { deleted: ids.length, skipped: candidates.length - ids.length, note: 'Invoices with an outstanding customer balance were kept. Related invoice ledger and sale-movement history was removed; independent cashbook entries were retained.' };
     }
     if (key === 'urd') {
-      const candidates = await tx.urdPurchase.findMany({ where: { purchaseDate: dateTimeRange(range) }, select: { id: true, purchaseNumber: true, totalAmount: true, paid: true, saleOffset: true } });
+      const candidates = await takeArchiveWindow(tx, 'urdPurchase', { purchaseDate: archiveRange }, { id: true, purchaseNumber: true, totalAmount: true, paid: true, saleOffset: true });
       const settled = candidates.filter((p) => num(p.totalAmount) - num(p.paid) - num(p.saleOffset) <= 0);
       for (const purchase of settled) await deleteSettledUrdPurchase(tx, purchase);
       return { deleted: settled.length, skipped: candidates.length - settled.length, note: 'URD purchases with an unpaid customer amount were kept. Linked payout entries were removed with each deleted purchase.' };
     }
     if (key === 'cashbook') {
-      const entries = await tx.cashbookEntry.findMany({ where: { entryDate: { gte: range.from, lte: range.to } }, select: { id: true }, orderBy: { id: 'desc' } });
+      const entries = await takeArchiveWindow(tx, 'cashbookEntry', { entryDate: { gte: range.from, lte: range.to } }, { id: true });
       let deleted = 0;
       for (const entry of entries) {
         const result = await reverseAndDeleteCashbookEntry(tx, entry.id);
@@ -911,23 +1012,25 @@ async function archiveData(db, key, range) {
       return { deleted, skipped: 0, note: 'Linked customer, invoice and URD accounting was reversed before each cashbook entry was removed.' };
     }
     if (key === 'inventory') {
-      const candidates = await tx.product.findMany({ where: { createdAt: dateTimeRange(range) }, select: { id: true, quantity: true } });
+      const candidates = await takeArchiveWindow(tx, 'product', { createdAt: archiveRange }, { id: true, quantity: true });
       const ids = candidates.filter((p) => p.quantity === 0).map((p) => p.id);
       const result = ids.length ? await tx.product.deleteMany({ where: { id: { in: ids } } }) : { count: 0 };
       return { deleted: result.count, skipped: candidates.length - ids.length, note: 'Inventory with remaining stock was kept.' };
     }
     if (key === 'stock-movements') {
-      const result = await tx.stockMovement.deleteMany({ where: { createdAt: dateTimeRange(range) } });
+      const candidates = await takeArchiveWindow(tx, 'stockMovement', { createdAt: archiveRange }, { id: true });
+      const result = candidates.length ? await tx.stockMovement.deleteMany({ where: { id: { in: candidates.map((row) => row.id) } } }) : { count: 0 };
       return { deleted: result.count, skipped: 0, note: 'Current inventory quantity was not adjusted.' };
     }
     if (key === 'customers') {
-      const candidates = await tx.customer.findMany({ where: { createdAt: dateTimeRange(range) }, select: { id: true, _count: { select: { sales: true, ledger: true, urdPurchases: true, cashbookEntries: true } } } });
+      const candidates = await takeArchiveWindow(tx, 'customer', { createdAt: archiveRange }, { id: true, _count: { select: { sales: true, ledger: true, urdPurchases: true, cashbookEntries: true } } });
       const ids = candidates.filter((c) => Object.values(c._count).every((n) => n === 0)).map((c) => c.id);
       const result = ids.length ? await tx.customer.deleteMany({ where: { id: { in: ids } } }) : { count: 0 };
       return { deleted: result.count, skipped: candidates.length - ids.length, note: 'Customers with business history were kept.' };
     }
     if (key === 'rates') {
-      const result = await tx.dailyRate.deleteMany({ where: { rateDate: { gte: range.from, lte: range.to } } });
+      const candidates = await takeArchiveWindow(tx, 'dailyRate', { rateDate: { gte: range.from, lte: range.to } }, { id: true });
+      const result = candidates.length ? await tx.dailyRate.deleteMany({ where: { id: { in: candidates.map((row) => row.id) } } }) : { count: 0 };
       return { deleted: result.count, skipped: 0, note: '' };
     }
     throw new Error('That data register cannot be archived.');

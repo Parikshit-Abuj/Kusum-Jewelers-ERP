@@ -174,14 +174,18 @@ function printerFormValues(form) {
 
 const REQUIRED_RUNTIME_SCHEMA = {
   AppSession: ['id', 'data', 'expiresAt'],
-  Customer: ['id', 'phone', 'panNumber'],
-  Product: ['id', 'barcode', 'batchDocNo', 'makingChargeType', 'makingChargeValue'],
+  BarcodeSequence: ['prefix', 'lastNumber', 'updatedAt'],
+  Customer: ['id', 'name', 'phone', 'panNumber', 'createdAt', 'updatedAt'],
+  DailyRate: ['id', 'rateDate', 'gold22k', 'gold24k', 'silver'],
+  DocumentSequence: ['key', 'lastNumber', 'updatedAt'],
+  ItemName: ['id', 'name', 'category', 'createdAt'],
+  Product: ['id', 'barcode', 'sku', 'quantity', 'status', 'batchDocNo', 'makingChargeType', 'makingChargeValue', 'createdAt', 'updatedAt'],
   Sale: ['id', 'invoiceNumber', 'cashPaid', 'upiPaid', 'cardPaid', 'bankPaid', 'balance'],
-  SaleItem: ['id', 'saleId', 'productBarcode', 'productName', 'weight', 'makingChargeType', 'makingChargeValue'],
-  CashbookEntry: ['id', 'entryDate', 'paymentMethod', 'customerId', 'saleId', 'urdPurchaseId'],
+  SaleItem: ['id', 'saleId', 'productBarcode', 'productName', 'productPurity', 'weight', 'makingChargeType', 'makingChargeValue', 'hsnCode', 'huidCode'],
+  StockMovement: ['id', 'productId', 'productBarcode', 'type', 'quantity', 'createdAt'],
+  CashbookEntry: ['id', 'entryDate', 'paymentMethod', 'customerId', 'saleId', 'urdPurchaseId', 'syncLedger'],
   CustomerLedger: ['id', 'customerId', 'saleId', 'cashbookEntryId', 'amount'],
   UrdPurchase: ['id', 'purchaseNumber', 'customerId', 'saleId', 'saleOffset', 'paid'],
-  DocumentSequence: ['key', 'lastNumber'],
   SyncRevision: ['id', 'revision']
 };
 

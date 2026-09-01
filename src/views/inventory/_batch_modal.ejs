@@ -10,7 +10,7 @@
       <div class="batch-doc-toolbar">
         <div class="batch-doc-field">
           <span>Batch Doc No:</span>
-          <input type="text" id="batchDocNoInput" readonly value="BATCH-..." title="Batch document identifier">
+          <input type="text" id="batchDocNoInput" readonly value="" placeholder="Assigned on first piece" title="A unique batch document number is assigned when the first piece is saved.">
         </div>
         <button type="button" class="button ghost small" id="batchNewDocBtn">+ New Batch</button>
         <button type="button" class="button secondary small" id="batchLoadDocBtn">Load Batch</button>
@@ -32,13 +32,13 @@
             <label>
               <span>Item Name *</span>
               <div class="autocomplete-wrap">
-                <input type="text" id="batchItemName" placeholder="e.g. Silver Payal Chain" autocomplete="off" data-batch-name-input required>
+                <input type="text" id="batchItemName" placeholder="e.g. Silver Payal Chain" autocomplete="off" data-batch-name-input data-title-case required>
                 <ul class="autocomplete-list" data-batch-name-list></ul>
               </div>
             </label>
             <label>
               <span>Category *</span>
-              <input type="text" id="batchCategory" placeholder="e.g. Payal, Ring, Chain" data-batch-category-input required>
+              <input type="text" id="batchCategory" placeholder="e.g. Payal, Ring, Chain" data-batch-category-input data-title-case required>
             </label>
           </div>
 

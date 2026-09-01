@@ -25,7 +25,7 @@ const { provisionShopDatabase, enableNetworkSharing, updatePrinterConfiguration,
 const { buildExcelExport } = require('./lib/excel-export');
 const { RESOURCE_LIST, resourceFor, parseDateRange, getExportPayload, archiveData } = require('./lib/data-lifecycle');
 const { paymentMethodFromComponents, reverseAndDeleteCashbookEntry, deleteSettledUrdPurchase } = require('./lib/accounting-reversal');
-const { number, asArray, dateInput, startOfToday, dateTimeFromInput, localDateTimeRange, money, grams, formatDateDisplay, nextDocumentNumber, nextBatchDocumentNumber, metalRateFromDailyRate, makingAmount } = require('./lib/helpers');
+const { number, roundToNearestRupee, asArray, dateInput, startOfToday, dateTimeFromInput, localDateTimeRange, money, grams, formatDateDisplay, nextDocumentNumber, nextBatchDocumentNumber, metalRateFromDailyRate, makingAmount, titleCase } = require('./lib/helpers');
 const { nextBarcode } = require('./lib/barcode-sequence');
 const { upsertItemName } = require('./lib/item-names');
 const { hasConfiguredPassword, passwordMatchesEnvironment, secureTextMatch, usesKnownDefaultPassword } = require('./lib/auth-security');
@@ -140,7 +140,6 @@ function labelRequests(body) {
 function saleRows(body) {
   const productIds = asArray(body.productId);
   const barcodes = asArray(body.barcode);
-  const quantities = asArray(body.quantity);
   const weights = asArray(body.weight);
   const metalRates = asArray(body.metalRate);
   const makingTypes = asArray(body.makingChargeType);
@@ -152,7 +151,10 @@ function saleRows(body) {
   return productIds.map((productId, index) => ({
     productId: Number(productId),
     barcode: String(barcodes[index] || '').trim().toUpperCase(),
-    quantity: Math.max(1, Math.floor(number(quantities[index], 1))),
+    // Each inventory row is one physical jewellery piece and therefore one
+    // barcode. Quantity is deliberately fixed at one server-side; a modified
+    // browser form must never turn a single barcode into several sold pieces.
+    quantity: 1,
     weight: weights[index] === undefined || weights[index] === '' ? null : number(weights[index]),
     metalRate: number(metalRates[index]),
     makingChargeType: ['FIXED', 'PER_GRAM', 'PERCENTAGE'].includes(makingTypes[index]) ? makingTypes[index] : null,
@@ -242,7 +244,7 @@ function roundedMoney(value) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 }
 
-function stockMovementSnapshot(product, type, quantity, note) {
+function stockMovementSnapshot(product, type, quantity, note, overrides = {}) {
   return {
     productId: product.id,
     productBarcode: product.barcode || null,
@@ -250,11 +252,26 @@ function stockMovementSnapshot(product, type, quantity, note) {
     productName: product.name || '',
     productMetal: product.metal || null,
     productPurity: product.purity || null,
-    netWeight: product.netWeight || 0,
+    // Billing permits a final negotiated net weight. Keep the immutable stock
+    // movement snapshot aligned with the SaleItem/PDF rather than silently
+    // recording the older inventory weight.
+    netWeight: overrides.netWeight ?? product.netWeight ?? 0,
     type,
     quantity,
     note
   };
+}
+
+function expectsJson(req) {
+  return req.path.startsWith('/api/')
+    || Boolean(req.xhr)
+    || String(req.headers.accept || '').includes('application/json');
+}
+
+function generatedReference(prefix, value = new Date()) {
+  const dateKey = dateInput(value).replaceAll('-', '');
+  const nonce = crypto.randomBytes(5).toString('hex').toUpperCase();
+  return `${prefix}-${dateKey}-${nonce}`;
 }
 
 async function lockCustomerForLedger(tx, customerId) {
@@ -357,11 +374,13 @@ async function resolveBillingCustomer(tx, body) {
     }
     return existing;
   }
-  const name = String(body.customerName || '').trim();
+  // Billing customer details are stored in a consistent print-ready form even
+  // when a request is submitted without the browser's title-case formatting.
+  const name = titleCase(body.customerName);
   if (!name) throw new Error('This mobile number is new. Enter the customer name to create their customer ledger.');
   return tx.customer.create({ data: {
     phone, name, email: String(body.customerEmail || '').trim() || null,
-    address: String(body.customerAddress || '').trim() || null,
+    address: titleCase(body.customerAddress) || null,
     panNumber
   } });
 }
@@ -595,7 +614,7 @@ app.use(async (req, res, next) => {
   return next();
 });
 
-app.get('/network-setup', (req, res, next) => {
+app.get('/network-setup', requireLoopback, (req, res, next) => {
   try {
     const connection = parseDatabaseConnection(process.env.DATABASE_URL);
     res.render('network-setup', {
@@ -607,7 +626,7 @@ app.get('/network-setup', (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-app.post('/network-setup', async (req, res, next) => {
+app.post('/network-setup', requireLoopback, async (req, res, next) => {
   try {
     const access = await enableNetworkSharing({ databaseUrl: process.env.DATABASE_URL, configPath, currentEnv: process.env, form: req.body });
     if (access.updatedConfig) {
@@ -620,11 +639,11 @@ app.post('/network-setup', async (req, res, next) => {
   }
 });
 
-app.get('/printer-setup', (req, res) => {
+app.get('/printer-setup', requireLoopback, (req, res) => {
   res.render('printer-setup', { title: 'Barcode printer setup', printer: configuredLabelPrinter() });
 });
 
-app.post('/printer-setup', (req, res) => {
+app.post('/printer-setup', requireLoopback, (req, res) => {
   try {
     const values = updatePrinterConfiguration({ configPath, currentEnv: process.env, form: req.body });
     Object.assign(process.env, values);
@@ -662,7 +681,7 @@ app.post('/data/export', async (req, res) => {
   }
 });
 
-app.post('/data/archive', async (req, res) => {
+app.post('/data/archive', requireLoopback, async (req, res) => {
   let resource;
   let range;
   try {
@@ -919,13 +938,24 @@ app.post('/labels/test-print', async (req, res) => {
   }
 });
 
+// Run printer checks only on demand. Page rendering must stay fast when the
+// printer is disconnected or its Windows queue is slow to respond.
+app.get('/api/printer/check', async (req, res) => {
+  try {
+    const status = await resolveLabelPrinter(true);
+    res.json({ success: true, status });
+  } catch (error) {
+    res.status(503).json({ success: false, error: error.message || 'Could not check the configured label printer.' });
+  }
+});
+
 app.post('/labels/print', express.json(), async (req, res, next) => {
   const isJson = req.is('json') || req.headers['content-type']?.includes('application/json') || req.body?.isJson;
   try {
     let requests;
     if (req.body.batchDocNo) {
       const batchDocProducts = await prisma.product.findMany({
-        where: { batchDocNo: String(req.body.batchDocNo).trim() },
+        where: { batchDocNo: String(req.body.batchDocNo).trim(), status: 'AVAILABLE', quantity: 1 },
         orderBy: { id: 'asc' }
       });
       requests = batchDocProducts.map(p => ({ id: p.id, copies: 1 }));
@@ -955,7 +985,9 @@ app.post('/labels/print', express.json(), async (req, res, next) => {
     const printerName = printerTransport.mode === 'TCP'
       ? `TCP ${printerTransport.host}:${printerTransport.port}`
       : printerTransport.name;
-    const products = await prisma.product.findMany({ where: { id: { in: requests.map((row) => row.id) } } });
+    const products = await prisma.product.findMany({
+      where: { id: { in: requests.map((row) => row.id) }, status: 'AVAILABLE', quantity: 1 }
+    });
     if (products.length !== requests.length) {
       if (isJson) return res.status(400).json({ error: 'One or more selected inventory items could not be found.' });
       return redirectWith(res, '/inventory', 'error', 'One or more selected inventory items could not be found.');
@@ -979,17 +1011,12 @@ app.post('/labels/print', express.json(), async (req, res, next) => {
   }
 });
 
-async function reserveBatchDocumentRoute(req, res, next) {
-  try {
-    const batchDocNo = await nextBatchDocumentNumber(prisma);
-    res.json({ batchDocNo });
-  } catch (error) { next(error); }
-}
-
-app.post('/api/inventory/batch-docs/reserve', reserveBatchDocumentRoute);
-// Compatibility for an already-open browser window from the previous source.
-// This path now reserves atomically too; fresh UI uses the POST endpoint above.
-app.get('/api/inventory/batch-docs/next', reserveBatchDocumentRoute);
+// A batch document is allocated atomically with its first physical piece. A
+// page open/cancel must never consume a document number or merge two PCs into
+// a pre-reserved batch.
+app.all(['/api/inventory/batch-docs/reserve', '/api/inventory/batch-docs/next'], (req, res) => {
+  res.status(410).json({ error: 'Refresh Batch Add. The batch number is assigned when the first piece is saved.' });
+});
 
 app.get('/api/inventory/batch-docs', async (req, res, next) => {
   try {
@@ -1044,17 +1071,17 @@ app.get('/api/inventory/batch-docs/:batchDocNo', async (req, res, next) => {
 
 app.post('/api/inventory/batch-piece', express.json(), async (req, res, next) => {
   try {
-    const name = String(req.body.name || '').trim();
-    const category = String(req.body.category || '').trim();
-    const metal = req.body.metal || 'SILVER';
-    const purity = req.body.purity || null;
+    const name = titleCase(req.body.name);
+    const category = titleCase(req.body.category);
+    const metal = ['GOLD', 'SILVER', 'PLATINUM', 'DIAMOND', 'OTHER'].includes(req.body.metal) ? req.body.metal : 'SILVER';
+    const purity = metal === 'SILVER' ? null : (req.body.purity || null);
     const grossWeight = Math.max(0, number(req.body.grossWeight));
     const stoneWeight = Math.max(0, number(req.body.stoneWeight));
     const netWeight = number(req.body.netWeight) > 0 ? number(req.body.netWeight) : Math.max(0, grossWeight - stoneWeight);
     const makingChargeType = ['FIXED', 'PER_GRAM', 'PERCENTAGE'].includes(req.body.makingChargeType) ? req.body.makingChargeType : 'PER_GRAM';
     const makingChargeValue = number(req.body.makingChargeValue);
     const location = req.body.location ? String(req.body.location).trim() : null;
-    const batchDocNo = req.body.batchDocNo ? String(req.body.batchDocNo).trim() : null;
+    const requestedBatchDocNo = req.body.batchDocNo ? String(req.body.batchDocNo).trim() : null;
     const notes = req.body.notes ? String(req.body.notes).trim() : null;
 
     if (!name) return res.status(400).json({ error: 'Item name is required.' });
@@ -1128,9 +1155,13 @@ app.put('/api/inventory/batch-piece/:id', express.json(), async (req, res, next)
       const existing = await tx.product.findUniqueOrThrow({ where: { id } });
       const rateInfo = await getRateForDate(tx);
       const metal = req.body.metal || existing.metal;
-      const purity = req.body.purity !== undefined ? req.body.purity : existing.purity;
-      const name = req.body.name ? String(req.body.name).trim() : existing.name;
-      const category = req.body.category ? String(req.body.category).trim() : existing.category;
+      if (metal !== existing.metal) {
+        throw new Error(`Metal cannot be changed after barcode ${existing.barcode || 'generation'}. Delete the unsold item and add it again so its barcode remains correct.`);
+      }
+      const requestedPurity = req.body.purity !== undefined ? req.body.purity : existing.purity;
+      const purity = metal === 'SILVER' ? null : requestedPurity;
+      const name = req.body.name ? titleCase(req.body.name) : existing.name;
+      const category = req.body.category ? titleCase(req.body.category) : existing.category;
       const makingChargeType = ['FIXED', 'PER_GRAM', 'PERCENTAGE'].includes(req.body.makingChargeType) ? req.body.makingChargeType : existing.makingChargeType;
       const makingChargeValue = req.body.makingChargeValue !== undefined ? number(req.body.makingChargeValue) : Number(existing.makingChargeValue);
       const location = req.body.location !== undefined ? (req.body.location ? String(req.body.location).trim() : null) : existing.location;
@@ -1152,6 +1183,8 @@ app.put('/api/inventory/batch-piece/:id', express.json(), async (req, res, next)
           location
         }
       });
+
+      await upsertItemName(tx, name, category, { updateCategory: false });
 
       return {
         ...product,
@@ -1195,17 +1228,21 @@ app.get('/inventory/new', async (req, res, next) => {
 
 app.post('/inventory', async (req, res, next) => {
   try {
-    const quantity = req.body.quantity !== undefined && req.body.quantity !== ''
-      ? Math.max(0, Math.floor(number(req.body.quantity, 1)))
-      : 1;
     const reorderLevel = req.body.reorderLevel !== undefined && req.body.reorderLevel !== ''
       ? Math.max(0, Math.floor(number(req.body.reorderLevel, 0)))
       : 0;
     const product = await prisma.$transaction(async (tx) => {
+      const existingBatch = requestedBatchDocNo
+        ? await tx.product.findFirst({ where: { batchDocNo: requestedBatchDocNo }, select: { id: true } })
+        : null;
+      const batchDocNo = existingBatch ? requestedBatchDocNo : await nextBatchDocumentNumber(tx);
       const rateInfo = await getRateForDate(tx);
-      const metal = req.body.metal;
-      const purity = req.body.purity || null;
+      const metal = ['GOLD', 'SILVER', 'PLATINUM', 'DIAMOND', 'OTHER'].includes(req.body.metal) ? req.body.metal : 'GOLD';
+      const purity = metal === 'SILVER' ? null : (req.body.purity || null);
+      const itemName = titleCase(req.body.name);
+      const category = titleCase(req.body.category);
       const netWeight = number(req.body.netWeight);
+      if (netWeight <= 0) throw new Error('Net weight must be greater than zero.');
       const makingChargeType = ['FIXED', 'PER_GRAM', 'PERCENTAGE'].includes(req.body.makingChargeType) ? req.body.makingChargeType : 'PER_GRAM';
       const makingChargeValue = number(req.body.makingChargeValue);
       const metalAmount = metalRateFromDailyRate({ metal, purity }, rateInfo.rate) * netWeight;
@@ -1214,19 +1251,21 @@ app.post('/inventory', async (req, res, next) => {
       const product = await tx.product.create({
         data: {
           barcode,
-          sku: (req.body.sku || barcode.replaceAll(' ', '-')).trim().toUpperCase(), name: req.body.name.trim(), category: req.body.category.trim(),
+          sku: (req.body.sku || barcode.replaceAll(' ', '-')).trim().toUpperCase(), name: itemName, category,
           metal, purity,
           grossWeight: number(req.body.grossWeight), stoneWeight: number(req.body.stoneWeight), netWeight,
-          quantity, reorderLevel,
+          // One record always represents one physical piece. Identical name,
+          // metal and weight still receive a different database-reserved code.
+          quantity: 1, reorderLevel,
           purchasePrice: number(req.body.purchasePrice), sellingPrice: suggestedPrice,
           makingChargePerGram: makingChargeType === 'PER_GRAM' ? makingChargeValue : 0,
           makingChargeType, makingChargeValue, location: req.body.location || null,
-          notes: req.body.notes || null, status: quantity ? 'AVAILABLE' : 'SOLD_OUT'
+          notes: req.body.notes || null, status: 'AVAILABLE'
         }
       });
-      if (quantity) await tx.stockMovement.create({ data: stockMovementSnapshot(product, 'OPENING', quantity, `Opening stock · ${barcode}`) });
+      await tx.stockMovement.create({ data: stockMovementSnapshot(product, 'OPENING', 1, `Opening stock · ${barcode}`) });
       // Auto-register item name in the master list for future autocomplete
-      await upsertItemName(tx, req.body.name.trim(), req.body.category.trim(), { updateCategory: false });
+      await upsertItemName(tx, itemName, category, { updateCategory: false });
       return product;
     });
     redirectWith(res, '/inventory', 'message', `${product.barcode} saved to inventory.`);
@@ -1254,8 +1293,13 @@ app.post('/inventory/:id', async (req, res, next) => {
       : 0;
     await prisma.$transaction(async (tx) => {
       const existing = await tx.product.findUniqueOrThrow({ where: { id } });
-      const metal = req.body.metal;
-      const purity = req.body.purity || null;
+      const metal = req.body.metal || existing.metal;
+      if (metal !== existing.metal) {
+        throw new Error(`Metal cannot be changed after barcode ${existing.barcode || 'generation'}. Delete the unsold item and add it again so its barcode remains correct.`);
+      }
+      const purity = metal === 'SILVER' ? null : (req.body.purity || null);
+      const itemName = titleCase(req.body.name);
+      const category = titleCase(req.body.category);
       const netWeight = number(req.body.netWeight);
       const makingChargeType = ['FIXED', 'PER_GRAM', 'PERCENTAGE'].includes(req.body.makingChargeType) ? req.body.makingChargeType : 'PER_GRAM';
       const makingChargeValue = Math.max(0, number(req.body.makingChargeValue));
@@ -1264,13 +1308,13 @@ app.post('/inventory/:id', async (req, res, next) => {
       const metalAmount = metalRateFromDailyRate({ metal, purity }, rateInfo.rate) * netWeight;
       const suggestedPrice = roundedMoney(metalAmount + makingAmount(makingChargeType, makingChargeValue, metalAmount, netWeight));
       await tx.product.update({ where: { id }, data: {
-        sku: String(req.body.sku || existing.sku).trim().toUpperCase(), name: req.body.name.trim(), category: req.body.category.trim(), metal,
+        sku: String(req.body.sku || existing.sku).trim().toUpperCase(), name: itemName, category, metal,
         purity, grossWeight: number(req.body.grossWeight), stoneWeight: number(req.body.stoneWeight), netWeight,
         reorderLevel, purchasePrice: number(req.body.purchasePrice), sellingPrice: suggestedPrice,
         makingChargePerGram: makingChargeType === 'PER_GRAM' ? makingChargeValue : 0,
-        makingChargeType, makingChargeValue, location: req.body.location || null, notes: req.body.notes || null, status: req.body.status
+        makingChargeType, makingChargeValue, location: req.body.location || null, notes: req.body.notes || null, status: 'AVAILABLE'
       } });
-      await upsertItemName(tx, req.body.name.trim(), req.body.category.trim(), { updateCategory: false });
+      await upsertItemName(tx, itemName, category, { updateCategory: false });
     });
     redirectWith(res, '/inventory', 'message', 'Item details updated.');
   } catch (error) { next(error); }
@@ -1294,17 +1338,11 @@ app.post('/inventory/:id/delete', async (req, res, next) => {
 
 app.post('/inventory/:id/adjust', async (req, res, next) => {
   try {
-    const id = Number(req.params.id);
-    const delta = Math.floor(number(req.body.quantity));
-    if (!delta) return redirectWith(res, '/inventory', 'error', 'Enter a non-zero adjustment quantity.');
-    await prisma.$transaction(async (tx) => {
-      const product = await tx.product.findUniqueOrThrow({ where: { id } });
-      const nextQuantity = product.quantity + delta;
-      if (nextQuantity < 0) throw new Error('Adjustment would make stock negative.');
-      await tx.product.update({ where: { id }, data: { quantity: nextQuantity, status: nextQuantity ? 'AVAILABLE' : 'SOLD_OUT' } });
-      await tx.stockMovement.create({ data: stockMovementSnapshot(product, delta > 0 ? 'ADJUSTMENT_IN' : 'ADJUSTMENT_OUT', delta, req.body.note || 'Manual stock adjustment') });
-    });
-    redirectWith(res, '/inventory', 'message', 'Stock adjustment recorded.');
+    // A stock adjustment used to increase/decrease Product.quantity. That
+    // creates extra physical pieces under one barcode and later allows a sale
+    // to delete more than the billed item. Keep this old endpoint harmless so
+    // bookmarked pages cannot violate the one-item/one-barcode invariant.
+    return redirectWith(res, '/inventory', 'error', 'Quantity adjustment is no longer available. Add each physical piece separately so every item keeps its own barcode.');
   } catch (error) { redirectWith(res, '/inventory', 'error', error.message || 'Could not adjust stock.'); }
 });
 
@@ -1343,7 +1381,7 @@ app.post('/customers', async (req, res, next) => {
   try {
     const phone = normalizePhone(req.body.phone);
     if (!validCustomerPhone(phone)) return redirectWith(res, '/customers', 'error', 'Enter a valid customer mobile number (10 to 15 digits).');
-    const customer = await prisma.customer.create({ data: { name: req.body.name.trim(), phone, email: req.body.email || null, address: req.body.address || null } });
+    const customer = await prisma.customer.create({ data: { name: titleCase(req.body.name), phone, email: req.body.email || null, address: titleCase(req.body.address) || null } });
     redirectWith(res, '/customers', 'message', 'Customer added.');
   } catch (error) {
     if (error.code === 'P2002') return redirectWith(res, '/customers', 'error', 'That phone number already belongs to a customer.');
@@ -1399,7 +1437,7 @@ app.post('/customers/:id/payments', async (req, res, next) => {
     const paymentMethod = receiptPaymentMethod(req.body.paymentMethod);
     if (amount <= 0) return redirectWith(res, `/customers/${customerId}`, 'error', 'Enter a valid payment amount.');
     await prisma.$transaction(async (tx) => {
-      const receipt = req.body.reference?.trim() || `RCPT-${String(Date.now()).slice(-7)}`;
+      const receipt = req.body.reference?.trim() || generatedReference('RCPT');
       const cashbookEntry = await tx.cashbookEntry.create({ data: {
         entryDate: dateInput(), type: 'IN', paymentMethod, amount,
         description: `Customer payment received — ${receipt}`, reference: receipt, customerId, syncLedger: true,
@@ -1430,8 +1468,8 @@ app.get('/api/item-names', async (req, res, next) => {
 
 app.post('/api/item-names', express.json(), async (req, res, next) => {
   try {
-    const name = (req.body.name || '').trim();
-    const category = (req.body.category || '').trim();
+    const name = titleCase(req.body.name);
+    const category = titleCase(req.body.category);
     if (!name || !category) return res.status(400).json({ error: 'Name and category are required.' });
     const item = await upsertItemName(prisma, name, category, { returnItem: true });
     res.json(item);
@@ -1456,8 +1494,8 @@ app.get('/item-names', async (req, res, next) => {
 
 app.post('/item-names/add', async (req, res, next) => {
   try {
-    const name = (req.body.name || '').trim();
-    const category = (req.body.category || '').trim();
+    const name = titleCase(req.body.name);
+    const category = titleCase(req.body.category);
     if (!name || !category) return redirectWith(res, '/item-names', 'error', 'Name and category are required.');
     await upsertItemName(prisma, name, category);
     redirectWith(res, '/item-names', 'message', `"${name}" added.`);
@@ -1467,8 +1505,8 @@ app.post('/item-names/add', async (req, res, next) => {
 app.post('/item-names/:id', async (req, res, next) => {
   try {
     const id = Number(req.params.id);
-    const name = (req.body.name || '').trim();
-    const category = (req.body.category || '').trim();
+    const name = titleCase(req.body.name);
+    const category = titleCase(req.body.category);
     if (!name || !category) return redirectWith(res, '/item-names', 'error', 'Name and category are required.');
     await prisma.itemName.update({ where: { id }, data: { name, category } });
     redirectWith(res, '/item-names', 'message', `"${name}" updated.`);
@@ -1574,13 +1612,32 @@ app.get('/api/customers/phone/:phone', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+// Forms that need an existing customer search on demand rather than loading
+// the entire customer directory (which becomes slow after several years).
+app.get('/api/customers/search', async (req, res, next) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 2) return res.json({ customers: [] });
+    const customers = await prisma.customer.findMany({
+      where: { OR: [
+        { name: { contains: q } },
+        { phone: { contains: normalizePhone(q) || q } },
+        { email: { contains: q } }
+      ] },
+      select: { id: true, name: true, phone: true },
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+      take: 20
+    });
+    res.json({ customers });
+  } catch (error) { next(error); }
+});
+
 app.get('/sales/new', async (req, res, next) => {
   try {
-    const [rateInfo, nextInvoiceNumber] = await Promise.all([
-      getRateForDate(prisma),
-      nextDocumentNumber(prisma, 'INV')
-    ]);
-    res.render('sales/form', { title: 'New sale', invoiceNumber: nextInvoiceNumber, rateInfo });
+    const rateInfo = await getRateForDate(prisma);
+    // Invoice number allocation happens in the save transaction. Merely
+    // opening or cancelling a bill cannot consume a number.
+    res.render('sales/form', { title: 'New sale', invoiceNumber: '', rateInfo });
   } catch (error) { next(error); }
 });
 
@@ -1588,6 +1645,9 @@ app.post('/sales', async (req, res, next) => {
   try {
     const rows = saleRows(req.body);
     if (!rows.length) return redirectWith(res, '/sales/new', 'error', 'Enter at least one scanned barcode.');
+    if (new Set(rows.map((row) => row.productId)).size !== rows.length) {
+      return redirectWith(res, '/sales/new', 'error', 'The same barcode was entered more than once. Each physical item can be billed only once.');
+    }
     const discount = Math.max(0, number(req.body.discount));
     const payment = salePaymentBreakdown(req.body);
     const saleDate = dateTimeFromInput(req.body.saleDate);
@@ -1606,12 +1666,15 @@ app.post('/sales', async (req, res, next) => {
       if (products.length !== productIds.length) throw new Error('One or more scanned items no longer exist.');
       for (const product of products) {
         if (product.status !== 'AVAILABLE') throw new Error(`${product.barcode} is not available for sale.`);
+        if (Number(product.quantity) !== 1) {
+          throw new Error(`${product.barcode} is a legacy combined-stock record. Split it into individual barcode pieces before billing so no unbilled piece is removed.`);
+        }
         const submittedRows = rows.filter((row) => row.productId === product.id);
         if (submittedRows.some((row) => row.barcode && ![product.barcode].filter(Boolean).map((value) => String(value).toUpperCase()).includes(row.barcode))) {
           throw new Error('A barcode changed before the bill was saved. Scan the item again to prevent billing the wrong piece.');
         }
         const requested = rows.filter((row) => row.productId === product.id).reduce((total, row) => total + row.quantity, 0);
-        if (product.quantity < requested) throw new Error(`${product.barcode} has only ${product.quantity} piece(s) in stock.`);
+        if (requested !== 1) throw new Error(`${product.barcode} must be billed as exactly one physical piece.`);
       }
       const pricedRows = rows.map((row) => {
         const product = products.find((item) => item.id === row.productId);
@@ -1638,7 +1701,10 @@ app.post('/sales', async (req, res, next) => {
       const taxable = roundedMoney(Math.max(0, subtotal - appliedDiscount));
       const gstRate = 3;
       const gstAmount = roundedMoney(taxable * gstRate / 100);
-      const total = roundedMoney(taxable + gstAmount);
+      // Round only once, after GST. This is the invoice-level amount used for
+      // every payment validation, customer balance, cashbook entry and PDF.
+      // Example: Rs. 1.80 becomes Rs. 2.00; Rs. 1.10 becomes Rs. 1.00.
+      const total = roundToNearestRupee(roundedMoney(taxable + gstAmount));
       const customer = await resolveBillingCustomer(tx, req.body);
       const customerId = customer.id;
       const customerPan = String(req.body.customerPan || req.body.existingCustomerPan || customer.panNumber || '').trim().toUpperCase() || null;
@@ -1655,7 +1721,7 @@ app.post('/sales', async (req, res, next) => {
       const acceptedPaid = payment.paid;
       const balance = roundedMoney(Math.max(0, netPayable - acceptedPaid));
       const sale = await tx.sale.create({ data: {
-        invoiceNumber: req.body.invoiceNumber || await nextDocumentNumber(tx, 'INV', saleDate), customerId, customerPan, saleDate,
+        invoiceNumber: await nextDocumentNumber(tx, 'INV', saleDate), customerId, customerPan, saleDate,
         subtotal, discount: appliedDiscount, gstRate, gstAmount, total, urdOffset: urdAmount, paid: acceptedPaid,
         cashPaid: payment.cashPaid, upiPaid: payment.upiPaid, cardPaid: payment.cardPaid, bankPaid: payment.bankPaid, balance,
         paymentMethod: payment.paymentMethod, notes: req.body.notes || null,
@@ -1675,7 +1741,7 @@ app.post('/sales', async (req, res, next) => {
       });
       if (includeUrdPurchase) {
         await tx.urdPurchase.create({ data: {
-          purchaseNumber: req.body.urdPurchaseNumber || await nextDocumentNumber(tx, 'URD', saleDate), customerId, purchaseDate: saleDate,
+          purchaseNumber: await nextDocumentNumber(tx, 'URD', saleDate), customerId, purchaseDate: saleDate,
           metal: req.body.urdMetal || 'GOLD', purity: req.body.urdPurity || null,
           grossWeight: number(req.body.urdGrossWeight), netWeight: number(req.body.urdNetWeight),
           ratePerGram: number(req.body.urdRatePerGram), totalAmount: urdAmount, saleOffset: urdAmount,
@@ -1694,8 +1760,11 @@ app.post('/sales', async (req, res, next) => {
         }
       }
       for (const product of products) {
-        const quantitySold = rows.filter((row) => row.productId === product.id).reduce((total, row) => total + row.quantity, 0);
-        await tx.stockMovement.create({ data: stockMovementSnapshot(product, 'SALE', -quantitySold, `Sold via ${sale.invoiceNumber}`) });
+        const saleRow = pricedRows.find((row) => row.productId === product.id);
+        const quantitySold = saleRow.quantity;
+        await tx.stockMovement.create({
+          data: stockMovementSnapshot(product, 'SALE', -quantitySold, `Sold via ${sale.invoiceNumber}`, { netWeight: saleRow.weight })
+        });
         // One barcode represents one physical jewellery item. Once that barcode
         // appears on a committed bill, remove its inventory row permanently.
         // SaleItem and StockMovement snapshots preserve all historical details.
@@ -1735,14 +1804,13 @@ app.get('/cashbook', async (req, res, next) => {
     };
     const totalItems = await prisma.cashbookEntry.count({ where });
     const pagination = paginationFor(req, totalItems, req.query.page, 200);
-    const [entries, totals, customers] = await Promise.all([
+    const [entries, totals] = await Promise.all([
       prisma.cashbookEntry.findMany({ where, include: { customer: true }, orderBy: [{ entryDate: 'desc' }, { createdAt: 'desc' }], skip: (pagination.page - 1) * pagination.pageSize, take: pagination.pageSize }),
       prisma.cashbookEntry.groupBy({
         by: ['type', 'paymentMethod'],
         where,
         _sum: { amount: true }
-      }),
-      prisma.customer.findMany({ orderBy: { name: 'asc' }, take: 500 })
+      })
     ]);
     const summary = { totalIn: 0, totalOut: 0, cashIn: 0, cashOut: 0, upiIn: 0, upiOut: 0, bankIn: 0, bankOut: 0 };
     totals.forEach((row) => {
@@ -1756,7 +1824,7 @@ app.get('/cashbook', async (req, res, next) => {
     summary.cashNet = (summary.cashIn || 0) - (summary.cashOut || 0);
     summary.upiNet = (summary.upiIn || 0) - (summary.upiOut || 0);
     summary.bankNet = (summary.bankIn || 0) - (summary.bankOut || 0);
-    res.render('cashbook/index', { title: 'Cashbook', entries, summary, fromDate, toDate, selectedDate, methodFilter, customers, pagination });
+    res.render('cashbook/index', { title: 'Cashbook', entries, summary, fromDate, toDate, selectedDate, methodFilter, customers: [], pagination });
   } catch (error) { next(error); }
 });
 
@@ -1774,7 +1842,7 @@ app.post('/cashbook', async (req, res, next) => {
     if (!description) return redirectWith(res, '/cashbook', 'error', 'Enter a description for this entry.');
 
     await prisma.$transaction(async (tx) => {
-      const receipt = req.body.reference?.trim() || `CB-${String(Date.now()).slice(-7)}`;
+      const receipt = req.body.reference?.trim() || generatedReference('CB');
       const cashbookEntry = await tx.cashbookEntry.create({
         data: {
           entryDate, type: entryType, paymentMethod, description, amount,
@@ -1849,12 +1917,9 @@ app.get('/urd-purchases', async (req, res, next) => {
 
 app.get('/urd-purchases/new', async (req, res, next) => {
   try {
-    const [customers, rateInfo] = await Promise.all([
-      prisma.customer.findMany({ orderBy: { name: 'asc' }, take: 500 }),
-      getRateForDate(prisma, dateInput())
-    ]);
-    const purchaseNumber = await nextDocumentNumber(prisma, 'URD');
-    res.render('urd-purchases/form', { title: 'New URD purchase', customers, rateInfo, purchaseNumber, purchase: null });
+    const rateInfo = await getRateForDate(prisma, dateInput());
+    // The final number is assigned only when the purchase is committed.
+    res.render('urd-purchases/form', { title: 'New URD purchase', customers: [], rateInfo, purchaseNumber: '', purchase: null });
   } catch (error) { next(error); }
 });
 
@@ -1882,7 +1947,7 @@ app.post('/urd-purchases', async (req, res, next) => {
     const purchase = await prisma.$transaction(async (tx) => {
       const record = await tx.urdPurchase.create({
         data: {
-          purchaseNumber: req.body.purchaseNumber || await nextDocumentNumber(tx, 'URD', purchaseDate),
+          purchaseNumber: await nextDocumentNumber(tx, 'URD', purchaseDate),
           customerId,
           purchaseDate,
           metal: req.body.metal || 'GOLD', purity: req.body.purity || null,
@@ -1917,7 +1982,7 @@ app.post('/urd-purchases/:id/payments', async (req, res) => {
       const outstanding = roundedMoney(Math.max(0, Number(purchase.totalAmount) - Number(purchase.saleOffset) - Number(purchase.paid)));
       if (outstanding <= 0) throw new Error('This URD purchase is already fully paid or settled.');
       if (amount > outstanding) throw new Error(`Payout is greater than the outstanding amount of ${money(outstanding)}.`);
-      const reference = req.body.reference?.trim() || `${purchase.purchaseNumber}-PAY`;
+      const reference = req.body.reference?.trim() || generatedReference(`${purchase.purchaseNumber}-PAY`);
       const nextMethod = Number(purchase.paid) <= 0 || purchase.paymentMethod === paymentMethod
         ? paymentMethod
         : 'MIXED';
@@ -2084,13 +2149,11 @@ app.get('/reports/balance-register', async (req, res, next) => {
     const toKey = req.query.to ? String(req.query.to).trim() : '';
     
     let dateJoinClause = Prisma.empty;
-    let activityDateClause = Prisma.empty;
     if (fromKey || toKey) {
       const f = fromKey || '2000-01-01';
       const t = toKey || dateInput();
       const range = localDateTimeRange(f, t);
-      dateJoinClause = Prisma.sql`AND l.createdAt <= ${range.lte}`;
-      activityDateClause = Prisma.sql`AND (MAX(l.createdAt) >= ${range.gte} AND MAX(l.createdAt) <= ${range.lte})`;
+      dateJoinClause = Prisma.sql`AND l.createdAt >= ${range.gte} AND l.createdAt <= ${range.lte}`;
     }
 
     const like = `%${q}%`;
@@ -2110,7 +2173,6 @@ app.get('/reports/balance-register', async (req, res, next) => {
         ${searchClause}
         GROUP BY c.id
         ${balanceClause}
-        ${activityDateClause}
       ) AS balance_rows
     `;
     const totalItems = Number(countRows[0]?.total || 0);
@@ -2127,7 +2189,6 @@ app.get('/reports/balance-register', async (req, res, next) => {
       ${searchClause}
       GROUP BY c.id, c.name, c.phone
       ${balanceClause}
-      ${activityDateClause}
       ORDER BY balance DESC, lastActivity DESC, c.name ASC
       LIMIT ${pagination.pageSize} OFFSET ${(pagination.page - 1) * pagination.pageSize}
     `;
@@ -2190,6 +2251,11 @@ app.use((error, req, res, next) => {
   // committed response headers. Never turn that into an uncaught exception
   // that closes the whole desktop ERP.
   if (res.headersSent) return next(error);
+  if (expectsJson(req)) {
+    return res.status(error.statusCode || error.status || 500).json({
+      error: error.message || 'The request could not be completed.'
+    });
+  }
   res.status(500).render('error', { title: 'Something went wrong', detail: process.env.NODE_ENV === 'development' ? error.message : null });
 });
 

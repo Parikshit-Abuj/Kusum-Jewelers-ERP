@@ -99,6 +99,18 @@ function sqlValue(value) {
   return mysqlCore.escape(value);
 }
 
+async function primaryKeyOrderClause(connection, table) {
+  // Tables are obtained from the fixed ERP allowlist, and identifiers are
+  // escaped regardless. A stable primary-key order prevents LIMIT/OFFSET from
+  // producing an ambiguous row order during a long consistent snapshot.
+  const [indexes] = await connection.query(`SHOW INDEX FROM ${mysqlCore.escapeId(table)} WHERE Key_name = 'PRIMARY'`);
+  const columns = indexes
+    .sort((left, right) => Number(left.Seq_in_index || left.seq_in_index || 0) - Number(right.Seq_in_index || right.seq_in_index || 0))
+    .map((index) => index.Column_name || index.column_name)
+    .filter(Boolean);
+  return columns.length ? ` ORDER BY ${columns.map((column) => mysqlCore.escapeId(column)).join(', ')}` : '';
+}
+
 async function writeStreamChunk(stream, value) {
   if (stream.write(value, 'utf8')) return;
   await once(stream, 'drain');
@@ -178,15 +190,18 @@ async function generateSqlBackupFile(databaseUrl, destinationDirectory = null) {
       const [columnRows] = await connection.query(`SHOW COLUMNS FROM \`${table}\``);
       const columns = columnRows.map((column) => column.Field);
       const columnList = columns.map((column) => `\`${column}\``).join(', ');
-      await writeProtected(`LOCK TABLES \`${table}\` WRITE;\n`);
+      const orderBy = await primaryKeyOrderClause(connection, table);
+      // The consistent read transaction is already active. LOCK TABLES would
+      // implicitly commit it in MySQL, breaking snapshot consistency and
+      // blocking normal shop work during a long backup.
       const batchSize = 500;
       for (let offset = 0; offset < rowCount; offset += batchSize) {
-        const [rows] = await connection.query(`SELECT * FROM \`${table}\` LIMIT ? OFFSET ?`, [batchSize, offset]);
+        const [rows] = await connection.query(`SELECT * FROM \`${table}\`${orderBy} LIMIT ? OFFSET ?`, [batchSize, offset]);
         if (!rows.length) throw new Error(`The consistent backup snapshot ended early while reading ${table}.`);
         const values = rows.map((row) => `(${columns.map((column) => sqlValue(row[column])).join(', ')})`);
         await writeProtected(`INSERT INTO \`${table}\` (${columnList}) VALUES\n${values.join(',\n')};\n`);
       }
-      await writeProtected('UNLOCK TABLES;\n\n');
+      await writeProtected('\n');
     }
 
     const manifest = Buffer.from(JSON.stringify({ formatVersion: 2, tables: rowCounts }), 'utf8').toString('base64');
@@ -310,12 +325,12 @@ async function generateSqlBackup(databaseUrl) {
       // Login sessions are runtime-only and must never be copied to another PC
       // or revived after a disaster restore. Preserve the table schema but
       // intentionally export it empty.
+      const orderBy = table === 'AppSession' ? '' : await primaryKeyOrderClause(connection, table);
       const [rows] = table === 'AppSession'
         ? [[]]
-        : await connection.query(`SELECT * FROM \`${table}\``);
+        : await connection.query(`SELECT * FROM \`${table}\`${orderBy}`);
       rowCounts[table] = rows.length;
       if (rows.length > 0) {
-        sql += `LOCK TABLES \`${table}\` WRITE;\n`;
         const columns = Object.keys(rows[0]);
         const colList = columns.map((c) => `\`${c}\``).join(', ');
 
@@ -342,7 +357,7 @@ async function generateSqlBackup(databaseUrl) {
 
           sql += `INSERT INTO \`${table}\` (${colList}) VALUES\n${valuesList.join(',\n')};\n`;
         }
-        sql += `UNLOCK TABLES;\n\n`;
+        sql += '\n';
       }
     }
 

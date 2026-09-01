@@ -17,11 +17,30 @@ function n(value) {
   return Number.isFinite(v) ? v : 0;
 }
 
+function roundMoney(value) {
+  return Math.round((n(value) + Number.EPSILON) * 100) / 100;
+}
+
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (character) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   })[character]);
 }
+
+function titleCaseValue(value) {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/(^|[^A-Za-z])([A-Za-z])/g, (_, prefix, letter) => `${prefix}${letter.toUpperCase()}`);
+}
+
+// Keep the form readable as the cashier types. Server routes apply the same
+// title-case rule before saving, including batch/API submissions.
+document.addEventListener('input', (event) => {
+  const input = event.target;
+  if (!input?.matches?.('[data-title-case]')) return;
+  const formatted = titleCaseValue(input.value);
+  if (input.value !== formatted) input.value = formatted;
+});
 
 function replaceWithTextElements(container, elements) {
   container.replaceChildren(...elements.map(({ tag, text, className }) => {
@@ -258,6 +277,17 @@ document.querySelectorAll('.flash').forEach((el) => {
   let requestNumber = 0;
   let lastAlertedCustomerId = null;
 
+  // PAN is an identifier, so it remains uppercase. Customer names and
+  // addresses use the shared title-case input rule instead.
+  function enforceUppercase(input) {
+    input?.addEventListener('input', () => {
+      const upper = String(input.value || '').toUpperCase();
+      if (input.value !== upper) input.value = upper;
+    });
+  }
+  enforceUppercase(panInput);
+  enforceUppercase(existingPanInput);
+
   function normalizedPhone() {
     let digits = (phoneInput.value || '').replace(/\D/g, '');
     if (digits.startsWith('00')) digits = digits.slice(2);
@@ -389,6 +419,7 @@ document.querySelectorAll('.flash').forEach((el) => {
   const subtotalEl = form.querySelector('[data-subtotal]');
   const discountInput = form.querySelector('[data-discount]');
   const gstEl = form.querySelector('[data-gst]');
+  const roundOffEl = form.querySelector('[data-round-off]');
   const totalEl = form.querySelector('[data-total]');
   const paidInput = form.querySelector('[data-paid]');
   const paymentMethodInput = form.querySelector('[data-payment-method]');
@@ -465,7 +496,8 @@ document.querySelectorAll('.flash').forEach((el) => {
 
     function recalcRow() {
       if (!productData) return;
-      const qty = n(qtyInput.value) || 1;
+      const qty = 1;
+      qtyInput.value = '1';
       const weight = n(weightInput.value);
       const metalRate = n(metalRateInput.value);
       const makingType = makingTypeSelect.value;
@@ -573,8 +605,8 @@ document.querySelectorAll('.flash').forEach((el) => {
       }
     });
 
-    // Quantity and billing-weight changes
-    qtyInput.addEventListener('input', recalcRow);
+    // Quantity is intentionally fixed to one because each scanned barcode is
+    // one physical jewellery piece. Billing weight remains negotiable/editable.
     weightInput.addEventListener('input', recalcRow);
 
     // Rate change (manual override)
@@ -622,10 +654,15 @@ document.querySelectorAll('.flash').forEach((el) => {
       subtotal += n(input.value);
     });
 
-    const discount = n(discountInput ? discountInput.value : 0);
-    const taxable = Math.max(0, subtotal - discount);
-    const gst = taxable * 0.03;
-    const total = taxable + gst;
+    subtotal = roundMoney(subtotal);
+    const discount = roundMoney(n(discountInput ? discountInput.value : 0));
+    const taxable = roundMoney(Math.max(0, subtotal - discount));
+    const gst = roundMoney(taxable * 0.03);
+    // Match the server exactly: GST is calculated first, then the final invoice is
+    // rounded to the nearest whole rupee before payment/credit calculations.
+    const beforeRoundOff = roundMoney(taxable + gst);
+    const total = Math.round(beforeRoundOff);
+    const roundOff = roundMoney(total - beforeRoundOff);
     const urdAdjustment = urdEnabled?.checked ? Math.max(0, n(urdAmount?.value)) : 0;
     const netPayable = Math.max(0, total - urdAdjustment);
     const paid = paymentMethodInput?.value === 'MIXED'
@@ -636,6 +673,7 @@ document.querySelectorAll('.flash').forEach((el) => {
 
     if (subtotalEl) subtotalEl.textContent = fmt(subtotal);
     if (gstEl) gstEl.textContent = fmt(gst);
+    if (roundOffEl) roundOffEl.textContent = fmt(roundOff);
     if (totalEl) totalEl.textContent = fmt(total);
     if (urdOffsetRow) urdOffsetRow.hidden = urdAdjustment <= 0;
     if (urdOffsetEl) urdOffsetEl.textContent = fmt(urdAdjustment);
@@ -1045,15 +1083,13 @@ function updateInventoryLabelBatchState() {
     } catch (_) {}
   }
 
-  // Fetch next Batch Doc No
-  async function fetchNextBatchDocNo() {
-    try {
-      const res = await fetch('/api/inventory/batch-docs/reserve', { method: 'POST' });
-      if (res.ok) {
-        const data = await res.json();
-        if (docNoInput) docNoInput.value = data.batchDocNo;
-      }
-    } catch (_) {}
+  // A document number is allocated with the first database save, never by
+  // opening this popup. This prevents skipped or duplicated batch numbers.
+  function clearNewBatchDocument() {
+    if (!docNoInput) return;
+    docNoInput.value = '';
+    docNoInput.placeholder = 'Assigned on first piece';
+    docNoInput.title = 'A unique batch document number is assigned when the first piece is saved.';
   }
 
   function updatePurities() {
@@ -1090,7 +1126,7 @@ function updateInventoryLabelBatchState() {
   }
 
   function autoDetectMetal(nameText) {
-    if (!nameText || !metalSel) return;
+    if (!nameText || !metalSel || editingPieceId) return;
     const lower = nameText.toLowerCase();
     if (lower.includes('silver') || lower.includes('chandi')) {
       if (metalSel.value !== 'SILVER') {
@@ -1193,6 +1229,7 @@ function updateInventoryLabelBatchState() {
     if (entryTitle) entryTitle.textContent = 'Edit Piece Details';
     if (entrySubtitle) entrySubtitle.textContent = '(Update weight and press Enter ↵ to save)';
     if (addPieceBtn) addPieceBtn.textContent = '💾 Save Updates ↵';
+    if (metalSel) metalSel.disabled = true;
 
     grossWeightInput.value = Number(piece.grossWeight || piece.netWeight).toFixed(3);
     stoneWeightInput.value = Number(piece.stoneWeight || 0).toFixed(3);
@@ -1211,6 +1248,7 @@ function updateInventoryLabelBatchState() {
     if (entryPanel) entryPanel.classList.remove('is-editing');
     if (entryTitle) entryTitle.textContent = 'Weight Entry';
     if (addPieceBtn) addPieceBtn.textContent = '+ Add Piece ↵';
+    if (metalSel) metalSel.disabled = false;
 
     grossWeightInput.value = '';
     netWeightInput.value = '';
@@ -1225,9 +1263,7 @@ function updateInventoryLabelBatchState() {
     modal.setAttribute('aria-hidden', 'false');
     fetchLiveRates();
     updatePurities();
-    if (!docNoInput.value || docNoInput.value === 'BATCH-...') {
-      fetchNextBatchDocNo();
-    }
+    if (!docNoInput.value) clearNewBatchDocument();
     setTimeout(() => {
       if (nameInput && !nameInput.value) {
         nameInput.focus();
@@ -1276,7 +1312,7 @@ function updateInventoryLabelBatchState() {
     }
     sessionPieces = [];
     if (editingPieceId) exitEditMode();
-    fetchNextBatchDocNo();
+    clearNewBatchDocument();
     renderTable();
   });
 
@@ -1471,6 +1507,7 @@ function updateInventoryLabelBatchState() {
 
         const p = data.product;
         sessionPieces.unshift(p);
+        if (docNoInput && p.batchDocNo) docNoInput.value = p.batchDocNo;
         renderTable();
 
         if (feedbackEl) {
@@ -1584,7 +1621,7 @@ function updateInventoryLabelBatchState() {
           <td><strong>${escapeHtml(p.name)}</strong></td>
           <td><span class="metal-dot ${escapeHtml((p.metal || '').toLowerCase())}"></span>${escapeHtml(p.metal)}</td>
           <td class="right"><strong>${Number(p.netWeight).toFixed(3)}g</strong></td>
-          <td><small>${escapeHtml(p.makingChargeType === 'PERCENTAGE' ? `${p.makingChargeValue}%` : `₹${p.makingChargeValue}/g`)}</small></td>
+          <td><small>${escapeHtml(p.makingChargeType === 'PERCENTAGE' ? `${p.makingChargeValue}%` : p.makingChargeType === 'FIXED' ? `₹${p.makingChargeValue} fixed` : `₹${p.makingChargeValue}/g`)}</small></td>
           <td class="right"><strong>${escapeHtml(p.formattedSellingPrice || fmt(p.sellingPrice))}</strong></td>
           <td class="center">${statusHtml}</td>
           <td class="center" style="white-space:nowrap;">
@@ -1731,19 +1768,20 @@ function updateInventoryLabelBatchState() {
     checkPrinterBtn.textContent = 'Checking...';
     try {
       const res = await fetch('/api/printer/check');
-      const data = await res.json();
-      if (data.success && data.status) {
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success && data.status) {
+        const status = data.status;
         if (data.status.available === true) {
           if (printerDot) printerDot.style.color = '#2e7d32';
-          if (printerStatusText) printerStatusText.innerHTML = `Printer ready: <strong>${escapeHtml(data.name)}</strong>`;
+          if (printerStatusText) printerStatusText.innerHTML = `Printer ready: <strong>${escapeHtml(status.name)}</strong>`;
         } else if (data.status.available === false) {
           if (printerDot) printerDot.style.color = '#c62828';
-          if (printerStatusText) printerStatusText.innerHTML = `<span style="color:#c62828;">Not connected: ${escapeHtml(data.name)}</span>`;
+          if (printerStatusText) printerStatusText.innerHTML = `<span style="color:#c62828;">Not connected: ${escapeHtml(status.name)}</span>`;
         } else {
           if (printerDot) printerDot.style.color = '#f57f17';
-          if (printerStatusText) printerStatusText.innerHTML = `Queue: <strong>${escapeHtml(data.name)}</strong>`;
+          if (printerStatusText) printerStatusText.innerHTML = `Queue: <strong>${escapeHtml(status.name)}</strong>`;
         }
-        alert(data.message || `Printer status: ${data.name} is configured.`);
+        alert(status.message || `Printer status: ${status.name} is configured.`);
       } else {
         throw new Error(data.error || 'Check failed');
       }

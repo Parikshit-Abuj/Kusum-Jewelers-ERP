@@ -4,6 +4,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# Retired deliberately. This legacy package started a background Node server
+# and launched the user's browser, allowing a persistent browser cookie to
+# bypass the login screen. Shop releases must use the Electron portable build.
+throw 'This legacy browser installer is retired. Build the supported shop release with scripts\\build-electron-portable.ps1.'
 $scriptDirectory = $PSScriptRoot
 if (-not $scriptDirectory) { $scriptDirectory = Split-Path $MyInvocation.MyCommand.Path -Parent }
 $projectRoot = Split-Path $scriptDirectory -Parent

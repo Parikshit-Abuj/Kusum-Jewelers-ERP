@@ -50,12 +50,12 @@
       <% } %>
       <label>Item name *
         <div class="autocomplete-wrap">
-          <input name="name" required placeholder="e.g. Gold bridal necklace" value="<%= product?.name || '' %>" data-item-name-input autocomplete="off">
+          <input name="name" required placeholder="e.g. Gold bridal necklace" value="<%= product?.name || '' %>" data-item-name-input data-title-case autocomplete="off">
           <ul class="autocomplete-list" data-item-name-list></ul>
         </div>
       </label>
       <label>Category *
-        <input name="category" required placeholder="Ring, Chain, Bangle, Pendant…" value="<%= product?.category || '' %>" data-item-category-input>
+        <input name="category" required placeholder="Ring, Chain, Bangle, Pendant…" value="<%= product?.category || '' %>" data-item-category-input data-title-case>
       </label>
     </div>
   </section>
@@ -65,13 +65,15 @@
     <h2>Metal &amp; weight</h2>
     <div class="form-grid four">
       <label>Metal *
-        <select name="metal" data-product-metal>
+        <% if (product) { %><input type="hidden" name="metal" value="<%= product.metal %>"><% } %>
+        <select name="metal" data-product-metal <%= product ? 'disabled' : '' %>>
           <option value="GOLD"     <%= product?.metal === 'GOLD'     || !product ? 'selected' : '' %>>Gold</option>
           <option value="SILVER"   <%= product?.metal === 'SILVER'   ? 'selected' : '' %>>Silver</option>
           <option value="PLATINUM" <%= product?.metal === 'PLATINUM' ? 'selected' : '' %>>Platinum</option>
           <option value="DIAMOND"  <%= product?.metal === 'DIAMOND'  ? 'selected' : '' %>>Diamond</option>
           <option value="OTHER"    <%= product?.metal === 'OTHER'    ? 'selected' : '' %>>Other</option>
         </select>
+        <% if (product) { %><small class="muted">Metal is locked after barcode generation.</small><% } %>
       </label>
       <label>Purity (optional)
         <select name="purity" data-product-purity>
@@ -123,22 +125,13 @@
   <!-- Section 4: Stock & logistics -->
   <section class="form-section">
     <h2>Stock &amp; details</h2>
-    <div class="form-grid <%= product ? 'three' : 'two' %>">
+    <div class="form-grid two">
       <label>Purchase cost (₹)
         <input name="purchasePrice" type="number" step="0.01" min="0" placeholder="0.00" value="<%= product ? product.purchasePrice : '' %>">
       </label>
       <label>Storage / counter location
         <input name="location" placeholder="e.g. Gold Tray A, Safe 3" value="<%= product?.location || '' %>">
       </label>
-      <% if (product) { %>
-      <label>Status
-        <select name="status">
-          <% ['AVAILABLE','SOLD_OUT','INACTIVE'].forEach((status) => { %>
-          <option value="<%= status %>" <%= product.status === status ? 'selected' : '' %>><%= status.replace('_', ' ') %></option>
-          <% }) %>
-        </select>
-      </label>
-      <% } %>
     </div>
     <input type="hidden" name="sellingPrice" value="<%= product?.sellingPrice || 0 %>" data-selling-price>
   </section>

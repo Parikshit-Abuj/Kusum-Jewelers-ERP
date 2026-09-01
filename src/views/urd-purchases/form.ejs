@@ -7,9 +7,10 @@
 <% } %>
 <form class="panel form-panel" method="post" action="/urd-purchases" data-urd-form>
   <section class="form-section"><h2>Purchase details</h2><div class="form-grid four">
-    <label>URD No.<input name="purchaseNumber" required readonly value="<%= typeof purchaseNumber !== 'undefined' ? purchaseNumber : '' %>"></label>
+    <label>URD No.<input name="purchaseNumber" readonly value="<%= typeof purchaseNumber !== 'undefined' ? purchaseNumber : '' %>" placeholder="Assigned when saved"></label>
     <label>Date *<input name="purchaseDate" type="date" required value="<%= dateInput() %>"></label>
-    <label>Customer *<select name="customerId" required><option value="">Select customer</option><% customers.forEach(c => { %><option value="<%= c.id %>"><%= c.name %><%= c.phone ? ` · ${c.phone}` : '' %></option><% }); %></select></label>
+    <label>Customer search *<input id="urdCustomerSearch" type="search" autocomplete="off" placeholder="Search name or mobile number…"></label>
+    <label>Customer *<select name="customerId" id="urdCustomer" required><option value="">Search and select customer</option><% customers.forEach(c => { %><option value="<%= c.id %>"><%= c.name %><%= c.phone ? ` · ${c.phone}` : '' %></option><% }); %></select></label>
     <label>Metal *<select name="metal" data-urd-metal><option value="GOLD" selected>Gold</option><option value="SILVER">Silver</option><option value="PLATINUM">Platinum</option><option value="OTHER">Other</option></select></label>
   </div></section>
   <section class="form-section"><h2>Weight &amp; rate</h2><div class="form-grid four">
@@ -36,5 +37,28 @@
   function recalc() { const total = (parseFloat(netInput.value) || 0) * (parseFloat(rateInput.value) || 0); amountInput.value = total.toFixed(2); if (!payoutEdited) paidInput.value = total.toFixed(2); totalDisplay.textContent = '₹' + total.toLocaleString('en-IN', { minimumFractionDigits: 2 }); }
   function updateRate() { if (rates[puritySel.value]) rateInput.value = rates[puritySel.value].toFixed(2); recalc(); }
   grossInput.addEventListener('input', () => { netInput.value = grossInput.value; recalc(); }); netInput.addEventListener('input', recalc); rateInput.addEventListener('input', recalc); paidInput.addEventListener('input', () => { payoutEdited = true; }); puritySel.addEventListener('change', updateRate); updateRate();
+
+  const customerSearch = document.getElementById('urdCustomerSearch');
+  const customerSelect = document.getElementById('urdCustomer');
+  let customerTimer, customerController;
+  if (customerSearch && customerSelect) {
+    const blankOption = () => { const option = document.createElement('option'); option.value = ''; option.textContent = 'Search and select customer'; return option; };
+    customerSearch.addEventListener('input', () => {
+      clearTimeout(customerTimer);
+      const query = customerSearch.value.trim();
+      if (query.length < 2) { customerSelect.replaceChildren(blankOption()); return; }
+      customerTimer = setTimeout(async () => {
+        customerController?.abort(); customerController = new AbortController();
+        try {
+          const response = await fetch(`/api/customers/search?q=${encodeURIComponent(query)}`, { signal: customerController.signal });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || 'Could not search customers.');
+          const options = (data.customers || []).map((customer) => { const option = document.createElement('option'); option.value = String(customer.id); option.textContent = `${customer.name}${customer.phone ? ` · ${customer.phone}` : ''}`; return option; });
+          customerSelect.replaceChildren(blankOption(), ...options);
+          if (options.length === 1) customerSelect.value = options[0].value;
+        } catch (error) { if (error.name !== 'AbortError') customerSelect.replaceChildren(blankOption()); }
+      }, 180);
+    });
+  }
 })();
 </script>

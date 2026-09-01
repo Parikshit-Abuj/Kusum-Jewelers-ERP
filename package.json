@@ -9,9 +9,10 @@
     "start": "node src/server.js",
     "desktop": "electron .",
     "db:generate": "prisma generate",
-    "db:migrate": "prisma migrate dev --name init",
+    "db:migrate": "prisma migrate deploy",
     "db:seed": "prisma db seed",
-    "db:backfill": "node prisma/backfill.js"
+    "db:backfill": "node prisma/backfill.js",
+    "test": "node --test test/barcode-sequence.test.js test/data-lifecycle.test.js test/excel-export.test.js test/sale-invoice-pdf.test.js test/tspl-labels.test.js"
   },
   "prisma": {
     "seed": "node prisma/seed.js"

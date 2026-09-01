@@ -164,14 +164,54 @@ function invoiceQrPayload(sale) {
   ].join('\n');
 }
 
-async function invoiceQrImage(sale) {
-  return QRCode.toBuffer(invoiceQrPayload(sale), {
-    type: 'png',
-    errorCorrectionLevel: 'L',
-    margin: 0,
-    width: 420,
-    color: { dark: '#000000', light: '#FFFFFF' }
+function compactQrText(value, maximum = 56) {
+  const text = qrText(value, 'Jewellery item');
+  return text.length <= maximum ? text : `${text.slice(0, Math.max(1, maximum - 1)).trimEnd()}…`;
+}
+
+function compactInvoiceQrPayload(sale) {
+  // Phone scanner QR codes have a finite capacity. This compact form keeps
+  // every sold line, its weight, paid value and due value when an unusually
+  // long customer/item description does not fit in the full readable form.
+  const items = (sale.items || []).map((item, index) => {
+    const product = item.product || {};
+    return `${index + 1}:${compactQrText(item.productName || product.name)} (${weight(item.weight || product.netWeight)}g)`;
   });
+  const balance = Number(sale.balance || 0);
+  return [
+    `KUSUM|INV:${qrText(sale.invoiceNumber, '—')}`,
+    `CUSTOMER:${compactQrText(sale.customer?.name || 'Walk-in customer', 72)}`,
+    `ITEMS:${items.join('; ')}`,
+    `PAID:Rs.${amount(sale.paid)}`,
+    ...(balance > 0 ? [`BALANCE:Rs.${amount(balance)}`] : [])
+  ].join('\n');
+}
+
+async function invoiceQrImage(sale) {
+  // Keep expensive QR encoding bounded. QR capacity is finite and an invoice
+  // can contain an arbitrary number of long item names; trying to encode the
+  // entire unbounded string first can delay or fail PDF generation.
+  const maximumPayloadBytes = 2200;
+  const options = {
+    type: 'png', errorCorrectionLevel: 'L', margin: 0, width: 420,
+    color: { dark: '#000000', light: '#FFFFFF' }
+  };
+  const safeQrBuffer = async (payload) => {
+    if (Buffer.byteLength(payload, 'utf8') > maximumPayloadBytes) return null;
+    try {
+      return await QRCode.toBuffer(payload, options);
+    } catch (_) {
+      return null;
+    }
+  };
+  const full = await safeQrBuffer(invoiceQrPayload(sale));
+  if (full) return full;
+  const compact = await safeQrBuffer(compactInvoiceQrPayload(sale));
+  if (compact) return compact;
+  // Do not let a very large invoice fail to produce its tax PDF. The full
+  // invoice remains the source of truth if a normal phone QR code cannot hold
+  // all item text within its physical capacity.
+  return QRCode.toBuffer(`KUSUM JEWELLERS\nInvoice: ${qrText(sale.invoiceNumber, '—')}\nSee this invoice for complete item details.`, options);
 }
 
 function drawItem(doc, item, y) {

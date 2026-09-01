@@ -14,6 +14,9 @@ try {
       [PSCustomObject]@{
         name = [string]$_
         isValid = [bool]$settings.IsValid
+        # PrinterSettings can confirm a queue exists but cannot reliably report
+        # USB/network power state. Do not claim an invented online/offline state.
+        canConfirmPhysicalStatus = $false
         workOffline = $false
         printerStatus = 0
       }

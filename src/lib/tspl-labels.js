@@ -9,12 +9,27 @@ const templates = {
   SILVER: fs.readFileSync(path.join(templateDir, 'SILVER.PRN'), 'utf8')
 };
 
-function cleanTsplValue(value) {
-  return String(value ?? '')
+function cleanTsplValue(value, fieldName = 'label text', maximumLength = null) {
+  const source = String(value ?? '');
+  // The supplied GOLD.PRN and SILVER.PRN layouts explicitly use CODEPAGE
+  // 1252. Replacing unsupported Indian-script characters with '?' silently
+  // produces an incorrect physical label, so stop before sending the job.
+  if (/[^\x20-\xFF\r\n]/.test(source)) {
+    throw new Error(`${fieldName} contains characters not supported by the supplied TSC CODEPAGE 1252 template. Use an English/Latin item name for this barcode label.`);
+  }
+  const cleaned = source
     .replace(/[\r\n]+/g, ' ')
     .replace(/"/g, "'")
     .replace(/[^\x20-\xFF]/g, '?')
     .trim();
+  // Keep the supplied PRN geometry unchanged. Long descriptions otherwise
+  // overflow the fixed 12 mm label and can overlap the weight/barcode fields.
+  // ASCII "..." is used instead of a Unicode ellipsis because the template
+  // is explicitly CODEPAGE 1252.
+  if (maximumLength && cleaned.length > maximumLength) {
+    return `${cleaned.slice(0, Math.max(1, maximumLength - 3)).trimEnd()}...`;
+  }
+  return cleaned;
 }
 
 function labelKind(product) {
@@ -37,17 +52,17 @@ function replaceAll(template, replacements) {
 function buildTsplLabel(product) {
   if (!product.barcode) throw new Error(`${product.name} has no barcode.`);
   const kind = labelKind(product);
-  const barcode = cleanTsplValue(product.barcode);
+  const barcode = cleanTsplValue(product.barcode, 'Barcode');
   const replacements = kind === 'GOLD'
     ? {
-        '<Item_name>': cleanTsplValue(product.name),
+        '<Item_name>': cleanTsplValue(product.name, 'Item name', 40),
         '<Barcode>': barcode,
         '<Gross_wt>': weight(product.grossWeight),
         '<TOT_STN_WT3>': weight(product.stoneWeight),
         '<net_wt>': weight(product.netWeight)
       }
     : {
-        '<ITEM_NAME>': cleanTsplValue(product.name),
+        '<ITEM_NAME>': cleanTsplValue(product.name, 'Item name', 40),
         '<Barcode>': barcode,
         '<Gross_wt>': weight(product.grossWeight),
         '<stn_wt3>': weight(product.stoneWeight),
@@ -94,8 +109,9 @@ function sendTsplToWindowsPrinter(printerName, tspl) {
       if (code === 0) return finish(null, stdout.trim());
       const rawMsg = stderr.trim() || stdout.trim() || `Windows printer process stopped with code ${code}.`;
       let cleanMsg = rawMsg;
-      if (/OpenPrinter for '([^']+)' failed/i.test(rawMsg)) {
-        cleanMsg = `Printer "${RegExp.$1 || printerName}" is not installed or connected to this computer. Please plug in your USB TSC barcode printer or install its driver in Windows.`;
+      if (/OpenPrinter for '([^']+)' failed/i.test(rawMsg) || /OpenPrinter|Win32Exception/i.test(rawMsg)) {
+        const matchedName = /OpenPrinter for '([^']+)' failed/i.exec(rawMsg)?.[1] || printerName;
+        cleanMsg = `Windows could not open the printer queue "${matchedName}". Check its exact name in Printer setup, then check the TSC driver, cable/network connection and printer power.`;
       }
       finish(new Error(cleanMsg));
     });
