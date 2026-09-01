@@ -42,6 +42,21 @@ document.addEventListener('input', (event) => {
   if (input.value !== formatted) input.value = formatted;
 });
 
+// Convert HUID, PAN, and explicit uppercase inputs to UPPERCASE in real time as the user types
+document.addEventListener('input', (event) => {
+  const input = event.target;
+  if (!input?.matches?.('[data-huid-code], [data-uppercase], [name="huidCode"]')) return;
+  const start = input.selectionStart;
+  const end = input.selectionEnd;
+  const upper = String(input.value || '').toUpperCase();
+  if (input.value !== upper) {
+    input.value = upper;
+    if (start !== null && end !== null) {
+      input.setSelectionRange(start, end);
+    }
+  }
+});
+
 /* ── Form Enter navigation ───────────────────────────────────
    Cashiers enter a large amount of data from the keyboard. Enter moves to
    the next visible, editable field in the current form (or explicitly marked
@@ -676,6 +691,19 @@ document.querySelectorAll('.flash').forEach((el) => {
     if (makingTypeSelect) makingTypeSelect.addEventListener('change', recalcRow);
     if (makingValueInput) makingValueInput.addEventListener('input', recalcRow);
 
+    // HUID code: auto-convert to UPPERCASE in real time
+    const huidInput = row.querySelector('[data-huid-code]');
+    if (huidInput) {
+      huidInput.addEventListener('input', () => {
+        const start = huidInput.selectionStart;
+        const end = huidInput.selectionEnd;
+        huidInput.value = huidInput.value.toUpperCase();
+        if (start !== null && end !== null) {
+          huidInput.setSelectionRange(start, end);
+        }
+      });
+    }
+
     // Taxable amount: mark as manual override when user edits it
     taxableInput.addEventListener('input', () => {
       taxableInput.dataset.manualOverride = '1';
@@ -725,10 +753,19 @@ document.querySelectorAll('.flash').forEach((el) => {
     const roundOff = roundMoney(total - beforeRoundOff);
     const urdAdjustment = urdEnabled?.checked ? Math.max(0, n(urdAmount?.value)) : 0;
     const netPayable = Math.max(0, total - urdAdjustment);
-    const paid = paymentMethodInput?.value === 'MIXED'
-      ? n(cashPaidInput?.value) + n(upiPaidInput?.value) + n(cardPaidInput?.value) + n(bankPaidInput?.value)
-      : n(paidInput ? paidInput.value : 0);
-    if (paymentMethodInput?.value === 'MIXED' && paidInput) paidInput.value = paid.toFixed(2);
+    let paid = 0;
+    if (paymentMethodInput?.value === 'MIXED') {
+      const c = n(cashPaidInput?.value);
+      const u = n(upiPaidInput?.value);
+      const cd = n(cardPaidInput?.value);
+      const b = n(bankPaidInput?.value);
+      paid = c + u + cd + b;
+      if (paidInput) {
+        paidInput.value = paid > 0 ? paid.toFixed(2) : '';
+      }
+    } else {
+      paid = n(paidInput ? paidInput.value : 0);
+    }
     const balance = Math.max(0, netPayable - paid);
 
     if (subtotalEl) subtotalEl.textContent = fmt(subtotal);
@@ -762,7 +799,12 @@ document.querySelectorAll('.flash').forEach((el) => {
     if (upiPaidInput) upiPaidInput.disabled = !mixed;
     if (cardPaidInput) cardPaidInput.disabled = !mixed;
     if (bankPaidInput) bankPaidInput.disabled = !mixed;
-    if (paidInput) paidInput.disabled = mixed;
+    if (paidInput) {
+      paidInput.disabled = mixed;
+      if (!mixed && (paidInput.value === '0.00' || paidInput.value === '0')) {
+        paidInput.value = '';
+      }
+    }
     updateFormTotals();
   }
 

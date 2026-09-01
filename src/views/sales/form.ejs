@@ -856,7 +856,7 @@
               </div>
               <div class="input-unit">
                 <label>HUID</label>
-                <input name="huidCode" placeholder="ABC123" data-huid-code autocomplete="off">
+                <input name="huidCode" placeholder="ABC123" data-huid-code autocomplete="off" style="text-transform: uppercase;">
               </div>
             </div>
 
@@ -934,19 +934,19 @@
       <div class="form-grid two compact-fields" data-split-payment hidden style="display:none; background:#faf7f2; padding:10px; border-radius:8px; margin-bottom:10px; gap:8px;">
         <div class="pos-field">
           <label>Cash (₹)</label>
-          <input name="cashPaid" type="number" min="0" step="0.01" value="0" data-cash-paid disabled>
+          <input name="cashPaid" type="number" min="0" step="0.01" value="" placeholder="0.00" data-cash-paid disabled>
         </div>
         <div class="pos-field">
           <label>UPI (₹)</label>
-          <input name="upiPaid" type="number" min="0" step="0.01" value="0" data-upi-paid disabled>
+          <input name="upiPaid" type="number" min="0" step="0.01" value="" placeholder="0.00" data-upi-paid disabled>
         </div>
         <div class="pos-field">
           <label>Card (₹)</label>
-          <input name="cardPaid" type="number" min="0" step="0.01" value="0" data-card-paid disabled>
+          <input name="cardPaid" type="number" min="0" step="0.01" value="" placeholder="0.00" data-card-paid disabled>
         </div>
         <div class="pos-field">
           <label>Bank (₹)</label>
-          <input name="bankPaid" type="number" min="0" step="0.01" value="0" data-bank-paid disabled>
+          <input name="bankPaid" type="number" min="0" step="0.01" value="" placeholder="0.00" data-bank-paid disabled>
         </div>
       </div>
 
