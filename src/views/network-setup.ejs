@@ -1,6 +1,6 @@
 <header class="page-header">
   <div><p class="eyebrow">Shared shop data</p><h1>Network PC setup</h1></div>
-  <a class="button ghost" href="/connection-repair">Change connection</a>
+  <button class="button ghost" type="button" data-connection-repair-open>Change connection</button>
 </header>
 
 <% if (!canEnableSharing) { %>
@@ -31,3 +31,22 @@
     </aside>
   </section>
 <% } %>
+
+<div class="modal-overlay connection-repair-modal" id="connectionRepairModal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="connectionRepairModalTitle" aria-hidden="true">
+  <section class="modal-card" role="document">
+    <header class="modal-header">
+      <div>
+        <p class="eyebrow">Confirm change</p>
+        <h2 id="connectionRepairModalTitle">Change ERP connection?</h2>
+      </div>
+      <button class="modal-close-btn" type="button" data-connection-repair-close aria-label="Close confirmation">&times;</button>
+    </header>
+    <div class="modal-body">
+      <p class="muted">Continue only when the database server, port, database name, or login details have changed.</p>
+    </div>
+    <footer class="modal-footer connection-repair-modal-footer">
+      <button class="button ghost" type="button" data-connection-repair-close>Cancel</button>
+      <a class="button danger" href="/connection-repair">Continue</a>
+    </footer>
+  </section>
+</div>

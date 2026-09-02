@@ -158,9 +158,49 @@ async function deleteSettledUrdPurchase(tx, purchase) {
   await tx.urdPurchase.delete({ where: { id: purchase.id } });
 }
 
+async function cancelUrdPurchase(tx, purchaseId, cancelledAt = new Date()) {
+  const locked = await tx.$queryRaw`SELECT id FROM \`UrdPurchase\` WHERE id = ${purchaseId} FOR UPDATE`;
+  if (!locked.length) throw new Error('This URD purchase no longer exists.');
+  const purchase = await tx.urdPurchase.findUniqueOrThrow({ where: { id: purchaseId } });
+  if (purchase.cancelledAt) throw new Error('This URD purchase is already cancelled.');
+  // A cancelled purchase must not remain in the cashbook as money paid out.
+  // We keep the purchase itself for the dedicated cancelled-URD register.
+  await tx.cashbookEntry.deleteMany({ where: { urdPurchaseId: purchaseId } });
+  await tx.urdPurchase.update({ where: { id: purchaseId }, data: { cancelledAt } });
+  return purchase;
+}
+
+async function cancelSale(tx, saleId, cancelledAt = new Date()) {
+  const locked = await tx.$queryRaw`SELECT id FROM \`Sale\` WHERE id = ${saleId} FOR UPDATE`;
+  if (!locked.length) throw new Error('This sales invoice no longer exists.');
+  const sale = await tx.sale.findUniqueOrThrow({ where: { id: saleId }, include: { urdPurchase: true } });
+  if (sale.cancelledAt) throw new Error('This sales invoice is already cancelled.');
+
+  // Payment receipts posted after billing may be linked through the ledger.
+  // Remove just their allocation to this cancelled bill. A receipt that was
+  // shared with another invoice/loan remains intact for those other records.
+  const linkedLedger = await tx.customerLedger.findMany({
+    where: { saleId }, select: { id: true, cashbookEntryId: true }
+  });
+  const receiptIds = [...new Set(linkedLedger.map((row) => row.cashbookEntryId).filter(Boolean))];
+  await tx.customerLedger.deleteMany({ where: { saleId } });
+  await tx.cashbookEntry.deleteMany({ where: { saleId } });
+  for (const cashbookEntryId of receiptIds) {
+    const entry = await tx.cashbookEntry.findUnique({ where: { id: cashbookEntryId }, select: { id: true, saleId: true, syncLedger: true } });
+    if (!entry || entry.saleId || !entry.syncLedger) continue;
+    const allocationsLeft = await tx.customerLedger.count({ where: { cashbookEntryId } });
+    if (allocationsLeft === 0) await tx.cashbookEntry.delete({ where: { id: cashbookEntryId } });
+  }
+  if (sale.urdPurchase) await cancelUrdPurchase(tx, sale.urdPurchase.id, cancelledAt);
+  await tx.sale.update({ where: { id: saleId }, data: { cancelledAt } });
+  return sale;
+}
+
 module.exports = {
   PAYMENT_COMPONENT_FIELDS,
   paymentMethodFromComponents,
   reverseAndDeleteCashbookEntry,
-  deleteSettledUrdPurchase
+  deleteSettledUrdPurchase,
+  cancelUrdPurchase,
+  cancelSale
 };

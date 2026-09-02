@@ -1,7 +1,7 @@
 <% const unpaidCount = typeof unpaidSalesCount !== 'undefined' ? unpaidSalesCount : customer.sales.filter((sale) => Number(sale.balance) > 0).length; %>
 <header class="page-header">
   <div><p class="eyebrow">Customer credit sheet</p><h1><%= customer.name %></h1><p class="muted"><%= customer.phone || 'No phone saved' %><%= customer.address ? ` · ${customer.address}` : '' %></p></div>
-  <div class="header-actions"><a class="button ghost" href="/customers">All customers</a><a class="button ghost" href="/data-management?resource=customer-ledger">Export ledger</a><a class="button secondary" href="/sales/new">New sale</a></div>
+  <div class="header-actions"><a class="button ghost" href="/customers">All customers</a><a class="button ghost" href="/data-management?resource=customer-ledger">Export ledger</a><button class="button ghost" type="button" data-customer-edit-open>Edit customer</button><a class="button secondary" href="/sales/new">New sale</a></div>
 </header>
 <section class="customer-summary">
   <article class="stat-card accent-gold"><span class="stat-label">Current credit due</span><strong><%= money(outstanding) %></strong><p>Across <%= unpaidCount %> unpaid invoice<%= unpaidCount === 1 ? '' : 's' %></p></article>
@@ -31,3 +31,23 @@
     </form>
   </aside>
 </section>
+<div class="modal-overlay customer-edit-modal" id="customerEditModal" style="display:none" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="customerEditTitle">
+  <section class="modal-card">
+    <header class="modal-header">
+      <div><p class="eyebrow">Customer profile</p><h2 id="customerEditTitle">Edit customer</h2></div>
+      <button class="modal-close-btn" type="button" data-customer-edit-close aria-label="Close edit customer">✕</button>
+    </header>
+    <form method="post" action="/customers/<%= customer.id %>" onsubmit="return confirm('Save these customer details? All linked invoices and PDFs will show the updated customer information.')">
+      <div class="modal-body">
+        <div class="form-grid customer-edit-fields">
+          <label>Full name *<input name="name" data-title-case required value="<%= customer.name %>"></label>
+          <label>Mobile number / ID *<input name="phone" inputmode="numeric" minlength="10" maxlength="15" required value="<%= customer.phone || '' %>"></label>
+          <label>Email<input name="email" type="email" value="<%= customer.email || '' %>"></label>
+          <label>PAN<input name="panNumber" maxlength="20" data-uppercase value="<%= customer.panNumber || '' %>"></label>
+          <label class="full">Address<textarea name="address" data-title-case rows="3"><%= customer.address || '' %></textarea></label>
+        </div>
+      </div>
+      <footer class="modal-footer customer-edit-footer"><button class="button ghost" type="button" data-customer-edit-close>Cancel</button><button class="button" type="submit">Save changes</button></footer>
+    </form>
+  </section>
+</div>

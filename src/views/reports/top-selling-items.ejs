@@ -1,0 +1,49 @@
+<%
+  const exportQuery = new URLSearchParams({
+    from: filters.from, to: filters.to, metal: filters.metal,
+    item: filters.item, sortBy: filters.sortBy, sortOrder: filters.sortOrder
+  }).toString();
+  const sortLabels = { QUANTITY: 'Pieces sold', WEIGHT: 'Net weight sold', VALUE: 'Sales value' };
+%>
+<header class="page-header">
+  <div><p class="eyebrow">Sales performance</p><h1>Top selling items</h1></div>
+  <div class="header-actions"><a class="button ghost" href="/reports">← All reports</a><a class="button secondary" href="/reports/top-selling-items/export?<%= exportQuery %>">Export Excel</a></div>
+</header>
+
+<section class="panel report-filter-panel">
+  <form class="report-filter-form" method="get">
+    <label>From<input type="date" name="from" value="<%= filters.from %>"></label>
+    <label>To<input type="date" name="to" value="<%= filters.to %>"></label>
+    <label>Metal<select name="metal"><option value="">Gold &amp; Silver</option><option value="GOLD" <%= filters.metal === 'GOLD' ? 'selected' : '' %>>Gold only</option><option value="SILVER" <%= filters.metal === 'SILVER' ? 'selected' : '' %>>Silver only</option></select></label>
+    <label>Item / purity<input name="item" value="<%= filters.item %>" placeholder="Ring, 22K…"></label>
+    <label>Rank by<select name="sortBy"><% Object.entries(sortLabels).forEach(([value, label]) => { %><option value="<%= value %>" <%= filters.sortBy === value ? 'selected' : '' %>><%= label %></option><% }) %></select></label>
+    <label>Order<select name="sortOrder"><option value="DESC" <%= filters.sortOrder === 'DESC' ? 'selected' : '' %>>Highest first</option><option value="ASC" <%= filters.sortOrder === 'ASC' ? 'selected' : '' %>>Lowest first</option></select></label>
+    <div class="report-filter-actions"><button class="button small" type="submit">Apply filters</button><a class="button ghost small" href="/reports/top-selling-items">Reset</a></div>
+  </form>
+</section>
+
+<section class="stats-grid report-register-summary">
+  <article class="stat-card accent-gold"><span class="stat-label">Item types</span><strong><%= summary.itemTypes %></strong><p>Matching Gold and Silver items</p></article>
+  <article class="stat-card"><span class="stat-label">Pieces sold</span><strong><%= summary.quantitySold %></strong><p>Across the selected invoices</p></article>
+  <article class="stat-card"><span class="stat-label">Net weight sold</span><strong><%= grams(summary.netWeight) %></strong><p>Selected sale period</p></article>
+  <article class="stat-card"><span class="stat-label">Sales value</span><strong><%= money(summary.salesValue) %></strong><p>Selected sale period</p></article>
+</section>
+
+<section class="panel">
+  <div class="panel-heading"><div><h2>Ranked items</h2><p>Sorted by <%= sortLabels[filters.sortBy] %>, <%= filters.sortOrder === 'DESC' ? 'highest first' : 'lowest first' %>.</p></div></div>
+  <% if (rows.length) { %>
+  <div class="table-wrap"><table><thead><tr><th>Rank</th><th>Item</th><th>Metal</th><th>Purity</th><th class="right">Invoices</th><th class="right">Pieces sold</th><th class="right">Net wt. sold</th><th class="right">Sales value</th></tr></thead><tbody>
+    <% rows.forEach((row, index) => { %><tr>
+      <td><strong><%= pagination.fromItem + index %></strong></td>
+      <td><strong><%= row.itemName %></strong></td>
+      <td><span class="metal-dot <%= row.metal.toLowerCase() %>"></span><%= row.metal %></td>
+      <td><%= row.purity || '—' %></td>
+      <td class="right"><%= row.invoiceCount %></td>
+      <td class="right"><strong><%= row.quantitySold %></strong></td>
+      <td class="right"><%= grams(row.netWeight) %></td>
+      <td class="right"><strong><%= money(row.salesValue) %></strong></td>
+    </tr><% }) %>
+  </tbody></table></div>
+  <%- include('../_pagination', { pagination }) %>
+  <% } else { %><div class="empty-state compact"><span>▤</span><h3>No sold items match these filters</h3><p>Choose a wider sale date range or change the item filter.</p></div><% } %>
+</section>

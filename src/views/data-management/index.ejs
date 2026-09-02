@@ -4,9 +4,10 @@
     <h1 style="font-size: 24px; font-weight: 800; color: #1a1612; margin: 4px 0 6px;">Data Exports &amp; Archiving</h1>
     <p class="muted" style="color: #756f69; font-size: 13.5px; margin: 0;">Generate multi-sheet Excel (.xlsx) workbooks or manage historical data lifecycle with automated safety rules.</p>
   </div>
+  <button class="button danger" type="button" data-archive-modal-open>Controlled archival</button>
 </header>
 
-<div class="content-grid archive-layout" style="display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr); gap: 24px; align-items: start;">
+<div class="archive-layout">
   
   <!-- Section 1: Excel Export -->
   <article class="panel" style="background: #ffffff; border: 1px solid #e5ded5; border-radius: 14px; padding: 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.03);">
@@ -60,14 +61,20 @@
     </form>
   </article>
 
-  <!-- Section 2: Data Archival -->
-  <aside class="panel" style="background: #ffffff; border: 1.5px solid #ebd4d2; border-top: 4px solid #bc5148; border-radius: 14px; padding: 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.03);">
-    <div style="margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #f8eceb;">
-      <h2 style="font-size: 17px; font-weight: 750; color: #7b302b; margin: 0 0 2px;">Controlled Archival</h2>
-      <p style="font-size: 12px; color: #885e5b; margin: 0;">Safely purge historical records.</p>
-    </div>
+</div>
+
+<div class="modal-overlay archival-modal" id="archiveModal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="archiveModalTitle" aria-hidden="true">
+  <section class="modal-card" role="document">
+    <header class="modal-header">
+      <div>
+        <p class="eyebrow">Data lifecycle</p>
+        <h2 id="archiveModalTitle">Controlled archival</h2>
+      </div>
+      <button class="modal-close-btn" type="button" data-archive-modal-close aria-label="Close controlled archival">&times;</button>
+    </header>
 
     <form method="post" action="/data/archive" data-archive-form>
+      <div class="modal-body archival-modal-body">
       <div style="margin-bottom: 14px;">
         <label style="display: block; font-size: 11.5px; font-weight: 700; color: #4a3e31; text-transform: uppercase; margin-bottom: 5px;">
           Register to Purge
@@ -109,12 +116,15 @@
         <span>Type <strong>DELETE</strong> to confirm</span>
         <input name="archiveConfirm" autocomplete="off" placeholder="DELETE" style="padding: 7px 10px; border: 1.5px solid #e0c0bc; border-radius: 7px; font-size: 12.5px; font-weight: 700; letter-spacing: 1px; color: #b53d36;">
       </label>
-
-      <button class="button danger full" type="submit" data-archive-submit <%= resource.archiveDisabled ? 'disabled' : '' %> style="width: 100%; padding: 10px; font-size: 13px; font-weight: 750; border-radius: 8px;">
-        Permanently Delete Selected Data
-      </button>
+      </div>
+      <footer class="modal-footer archival-modal-footer">
+        <button class="button ghost" type="button" data-archive-modal-close>Cancel</button>
+        <button class="button danger full" type="submit" data-archive-submit <%= resource.archiveDisabled ? 'disabled' : '' %> style="width: 100%; padding: 10px; font-size: 13px; font-weight: 750; border-radius: 8px;">
+          Permanently Delete Selected Data
+        </button>
+      </footer>
     </form>
-  </aside>
+  </section>
 </div>
 
 <script>
@@ -165,20 +175,51 @@
 
   // Archival register selector dynamic rule update
   const archiveForm = document.querySelector('[data-archive-form]');
-  if (!archiveForm) return;
-  const select = archiveForm.querySelector('[data-resource-select]');
-  const submit = archiveForm.querySelector('[data-archive-submit]');
-  const note = document.getElementById('archiveRuleNoteText');
+  if (archiveForm) {
+    const select = archiveForm.querySelector('[data-resource-select]');
+    const submit = archiveForm.querySelector('[data-archive-submit]');
+    const note = document.getElementById('archiveRuleNoteText');
 
-  function update() {
-    const option = select.options[select.selectedIndex];
-    if (!option) return;
-    const disabled = option.dataset.archiveDisabled === 'true';
-    if (submit) submit.disabled = disabled;
-    if (note) note.textContent = option.dataset.archiveNote || '';
+    function update() {
+      const option = select.options[select.selectedIndex];
+      if (!option) return;
+      const disabled = option.dataset.archiveDisabled === 'true';
+      if (submit) submit.disabled = disabled;
+      if (note) note.textContent = option.dataset.archiveNote || '';
+    }
+
+    select.addEventListener('change', update);
+    update();
   }
 
-  select.addEventListener('change', update);
-  update();
+  const archiveModal = document.getElementById('archiveModal');
+  const archiveOpen = document.querySelector('[data-archive-modal-open]');
+  if (!archiveModal || !archiveOpen) return;
+
+  let archiveTrigger = null;
+  const closeArchiveModal = () => {
+    archiveModal.style.display = 'none';
+    archiveModal.setAttribute('aria-hidden', 'true');
+    archiveTrigger?.focus();
+  };
+
+  archiveOpen.addEventListener('click', () => {
+    archiveTrigger = archiveOpen;
+    archiveModal.style.display = 'flex';
+    archiveModal.setAttribute('aria-hidden', 'false');
+    window.setTimeout(() => archiveModal.querySelector('[data-resource-select]')?.focus(), 0);
+  });
+
+  archiveModal.querySelectorAll('[data-archive-modal-close]').forEach((button) => {
+    button.addEventListener('click', closeArchiveModal);
+  });
+
+  archiveModal.addEventListener('click', (event) => {
+    if (event.target === archiveModal) closeArchiveModal();
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && archiveModal.style.display !== 'none') closeArchiveModal();
+  });
 })();
 </script>

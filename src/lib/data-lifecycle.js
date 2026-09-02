@@ -1,10 +1,14 @@
 const { dateInput, localDateTimeRange, localTimeZoneName } = require('./helpers');
 const { reverseAndDeleteCashbookEntry, deleteSettledUrdPurchase } = require('./accounting-reversal');
 const { urdSettlement } = require('./urd-settlement');
+const { listTopSellingItems, topSellingSummary, normalizeTopSellingFilters } = require('./top-selling-items');
 
 const RESOURCE_LIST = [
   { key: 'sales', label: 'Sales invoices', dateLabel: 'Invoice date', archiveNote: 'Only invoices with no credit balance due can be removed. URD settlements do not block deletion.' },
+  { key: 'top-selling-items', label: 'Top selling items report', dateLabel: 'Sale date', archiveNote: 'This is a calculated report and cannot be archived.', archiveDisabled: true },
+  { key: 'cancelled-sales', label: 'Cancelled invoices', dateLabel: 'Cancelled invoice date', archiveNote: 'Cancelled invoices are audit records and cannot be archived from this screen.', archiveDisabled: true },
   { key: 'urd', label: 'URD purchases', dateLabel: 'URD purchase date', archiveNote: 'Only URD purchases with no amount still payable to the customer can be removed.' },
+  { key: 'cancelled-urd', label: 'Cancelled URD purchases', dateLabel: 'Cancelled URD purchase date', archiveNote: 'Cancelled URD purchases are audit records and cannot be archived from this screen.', archiveDisabled: true },
   { key: 'cashbook', label: 'Daily cashbook', dateLabel: 'Entry date', archiveNote: 'Cashbook entries in the chosen period are permanently removed. Any linked customer balance, invoice payment or URD payout is reversed safely.' },
   { key: 'inventory', label: 'Inventory records', dateLabel: 'Created date', archiveNote: 'Only zero-stock records can be removed. Sold barcode items are automatically removed when billed.' },
   { key: 'stock-movements', label: 'Stock movements', dateLabel: 'Movement date', archiveNote: 'Movement history can be removed without changing current stock quantity.' },
@@ -218,7 +222,7 @@ function inventorySummaryRows(rows) {
 //  EXPORT PAYLOAD BUILDERS
 // ═══════════════════════════════════════════════════════════════
 
-async function getExportPayload(db, key, range) {
+async function getExportPayload(db, key, range, options = {}) {
   const resource = resourceFor(key);
   assertExportRange(range);
 
@@ -229,7 +233,7 @@ async function getExportPayload(db, key, range) {
     // ────────────────────────────────────────────────────────────
     case 'sales': {
       const sales = await db.sale.findMany({
-        where: { saleDate: dateTimeRange(range) },
+        where: { saleDate: dateTimeRange(range), cancelledAt: null },
         orderBy: [{ saleDate: 'asc' }, { id: 'asc' }],
         include: { customer: true, urdPurchase: true, items: { include: { product: true } } },
         take: MAX_SOURCE_ROWS + 1
@@ -437,12 +441,64 @@ async function getExportPayload(db, key, range) {
       return exportEnvelope(resource, range, lineColumns, lineRows, { sheets });
     }
 
+    case 'top-selling-items': {
+      const selected = normalizeTopSellingFilters(options);
+      const metals = selected.metal ? [selected.metal] : ['GOLD', 'SILVER'];
+      const dateRange = dateTimeRange(range);
+      const columns = [
+        col.text('itemName', 'Item name', 28),
+        col.text('metal', 'Metal', 12),
+        col.text('purity', 'Purity', 12),
+        col.integer('invoiceCount', 'Invoices', 12),
+        col.integer('quantitySold', 'Pieces sold', 14),
+        col.weight('netWeight', 'Net wt. sold (g)'),
+        col.currency('salesValue', 'Sales value')
+      ];
+      const sheets = [];
+      for (const metal of metals) {
+        const rows = await listTopSellingItems(db, {
+          ...selected,
+          metal,
+          from: dateRange.gte,
+          to: dateRange.lte
+        }, { take: MAX_SOURCE_ROWS + 1 });
+        assertExportRows(rows, `${metal === 'GOLD' ? 'Gold' : 'Silver'} top selling items report`);
+        const totals = topSellingSummary(rows);
+        sheets.push({
+          name: metal === 'GOLD' ? 'Gold top sellers' : 'Silver top sellers',
+          title: `Top Selling Items - ${metal === 'GOLD' ? 'Gold' : 'Silver'}`,
+          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | Sorted by ${selected.sortBy.toLowerCase()} ${selected.sortOrder.toLowerCase()}`,
+          columns,
+          rows,
+          infoRows: [
+            { label: 'Item types', value: totals.itemTypes, type: 'integer' },
+            { label: 'Pieces sold', value: totals.quantitySold, type: 'integer' },
+            { label: 'Net weight sold', value: totals.netWeight, type: 'weight' },
+            { label: 'Sales value', value: totals.salesValue, type: 'currency' }
+          ]
+        });
+      }
+      const allRows = sheets.flatMap((sheet) => sheet.rows);
+      return exportEnvelope(resource, range, columns, allRows, {
+        filename: `top-selling-items-${range.from}-to-${range.to}.xlsx`,
+        sheets
+      });
+    }
+
+    case 'cancelled-sales': {
+      const sales = await db.sale.findMany({ where: { cancelledAt: { not: null }, saleDate: dateTimeRange(range) }, orderBy: [{ cancelledAt: 'asc' }, { id: 'asc' }], include: { customer: true, items: true }, take: MAX_SOURCE_ROWS + 1 });
+      assertExportRows(sales, 'Cancelled invoice register');
+      const rows = sales.map((sale) => ({ saleDate: exportDate(sale.saleDate), cancelledAt: exportDate(sale.cancelledAt), invoiceNumber: sale.invoiceNumber, customerPhone: sale.customer?.phone || '', customerName: sale.customer?.name || 'Walk-in customer', itemCount: sale.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0), total: num(sale.total), paid: num(sale.paid), urdValuation: num(sale.urdOffset), itemNames: sale.items.map((item) => item.productName || item.productBarcode || 'Jewellery item').join('; ') }));
+      const columns = [col.date('saleDate', 'Invoice date'), col.date('cancelledAt', 'Cancelled date'), col.identifier('invoiceNumber', 'Invoice no.', 20), col.identifier('customerPhone', 'Customer phone', 16), col.text('customerName', 'Customer'), col.integer('itemCount', 'Items'), col.currency('total', 'Invoice total'), col.currency('paid', 'Amount paid'), col.currency('urdValuation', 'URD valuation'), col.text('itemNames', 'Items', 42)];
+      return exportEnvelope(resource, range, columns, rows, { sheets: [{ name: 'Cancelled Invoices', title: 'Cancelled Invoices', subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | ${rows.length} cancelled invoice${rows.length === 1 ? '' : 's'}`, columns, rows, infoRows: [{ label: 'Cancelled invoices', value: rows.length, type: 'integer' }, { label: 'Cancelled invoice value', value: rows.reduce((sum, row) => sum + row.total, 0), type: 'currency' }] }] });
+    }
+
     // ────────────────────────────────────────────────────────────
     //  URD PURCHASES
     // ────────────────────────────────────────────────────────────
     case 'urd': {
       const purchases = await db.urdPurchase.findMany({
-        where: { purchaseDate: dateTimeRange(range) },
+        where: { purchaseDate: dateTimeRange(range), cancelledAt: null },
         orderBy: [{ purchaseDate: 'asc' }, { id: 'asc' }],
         include: { customer: true, sale: true },
         take: MAX_SOURCE_ROWS + 1
@@ -511,6 +567,14 @@ async function getExportPayload(db, key, range) {
           ]
         }]
       });
+    }
+
+    case 'cancelled-urd': {
+      const purchases = await db.urdPurchase.findMany({ where: { cancelledAt: { not: null }, purchaseDate: dateTimeRange(range) }, orderBy: [{ cancelledAt: 'asc' }, { id: 'asc' }], include: { customer: true }, take: MAX_SOURCE_ROWS + 1 });
+      assertExportRows(purchases, 'Cancelled URD purchase register');
+      const rows = purchases.map((p) => ({ purchaseDate: exportDate(p.purchaseDate), cancelledAt: exportDate(p.cancelledAt), purchaseNumber: p.purchaseNumber, customerPhone: p.customer?.phone || '', customerName: p.customer?.name || '', metal: p.metal, purity: p.purity || '', netWeight: num(p.netWeight), totalAmount: num(p.totalAmount), saleOffset: num(p.saleOffset), paid: num(p.paid), description: str(p.description) }));
+      const columns = [col.date('purchaseDate', 'Purchase date'), col.date('cancelledAt', 'Cancelled date'), col.identifier('purchaseNumber', 'URD no.', 22), col.identifier('customerPhone', 'Customer phone', 16), col.text('customerName', 'Customer'), col.text('metal', 'Metal', 12), col.text('purity', 'Purity', 12), col.weight('netWeight', 'Net wt. (g)'), col.currency('totalAmount', 'Valuation'), col.currency('saleOffset', 'Sale adjustment'), col.currency('paid', 'Payout / refund'), col.text('description', 'Description', 30)];
+      return exportEnvelope(resource, range, columns, rows, { sheets: [{ name: 'Cancelled URD Purchases', title: 'Cancelled URD Purchases', subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | ${rows.length} cancelled purchase${rows.length === 1 ? '' : 's'}`, columns, rows, infoRows: [{ label: 'Cancelled purchases', value: rows.length, type: 'integer' }, { label: 'Cancelled valuation', value: rows.reduce((sum, p) => sum + p.totalAmount, 0), type: 'currency' }] }] });
     }
 
     // ────────────────────────────────────────────────────────────

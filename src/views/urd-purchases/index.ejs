@@ -2,15 +2,15 @@
   <div>
     <p class="eyebrow">Old gold / silver buying</p>
     <h1>URD Purchases</h1>
-    <p class="muted">Track metal purchased from walk-in and regular customers.</p>
   </div>
   <div class="header-actions"><a class="button ghost" href="/data-management?resource=urd">Export / archive</a><a class="button" href="/urd-purchases/new">+ New purchase</a></div>
 </header>
 
-<% const qVal = typeof q !== 'undefined' ? q : ''; const purchaseList = typeof purchases !== 'undefined' && Array.isArray(purchases) ? purchases : []; %>
+<% const qVal = typeof q !== 'undefined' ? q : ''; const currentState = typeof state !== 'undefined' ? state : 'ACTIVE'; const purchaseList = typeof purchases !== 'undefined' && Array.isArray(purchases) ? purchases : []; %>
 <section class="panel">
   <form class="search-bar" method="get" action="/urd-purchases">
     <input name="q" value="<%= qVal %>" placeholder="Search by customer name, mobile number or URD no.">
+    <select name="state"><option value="ACTIVE" <%= currentState === 'ACTIVE' ? 'selected' : '' %>>Active purchases</option><option value="CANCELLED" <%= currentState === 'CANCELLED' ? 'selected' : '' %>>Cancelled purchases</option></select>
     <button class="button secondary" type="submit">Search</button>
     <% if (qVal) { %><a class="button ghost" href="/urd-purchases">Clear</a><% } %>
   </form>
@@ -52,16 +52,13 @@
           <td class="right"><strong><%- money(p.totalAmount) %></strong><% if (Number(p.saleOffset) > 0) { %><small>Settled: <%- money(p.saleOffset) %></small><% } %></td>
           <td class="right"><strong><%- money(p.paid) %></strong><small><%= p.paymentMethod.replace('_', ' ') %></small></td>
           <td class="actions">
-            <a class="button ghost small" href="/urd-purchases/<%= p.id %>/invoice.pdf" target="_blank">PDF</a>
-            <form method="post" action="/urd-purchases/<%= p.id %>/delete" onsubmit="return confirm('Delete this URD entry?')">
-              <button class="icon-button" type="submit" title="Delete" style="color:#b53d36">✕</button>
-            </form>
+            <% if (currentState === 'ACTIVE') { %><a class="button ghost small" href="/urd-purchases/<%= p.id %>/invoice.pdf" target="_blank">PDF</a><form method="post" action="/urd-purchases/<%= p.id %>/delete" onsubmit="return confirm('Cancel this URD purchase? Its linked payout entries will be reversed.')"><button class="icon-button" type="submit" title="Cancel" style="color:#b53d36">✕</button></form><% } else { %><span class="pill danger">Cancelled</span><% } %>
           </td>
         </tr>
         <% if (p.description) { %>
         <tr class="sub-row"><td colspan="10"><small><%= p.description %></small></td></tr>
         <% } %>
-        <% const urdDue = Math.max(0, Number(p.totalAmount) - Number(p.saleOffset) - Number(p.paid)); if (urdDue > 0) { %>
+        <% const urdDue = Math.max(0, Number(p.totalAmount) - Number(p.saleOffset) - Number(p.paid)); if (currentState === 'ACTIVE' && urdDue > 0) { %>
         <tr class="sub-row">
           <td colspan="10">
             <form method="post" action="/urd-purchases/<%= p.id %>/payments" class="search-bar" style="margin:0;align-items:end">

@@ -180,12 +180,12 @@ const REQUIRED_RUNTIME_SCHEMA = {
   DocumentSequence: ['key', 'lastNumber', 'updatedAt'],
   ItemName: ['id', 'name', 'category', 'createdAt'],
   Product: ['id', 'barcode', 'sku', 'quantity', 'status', 'batchDocNo', 'makingChargeType', 'makingChargeValue', 'createdAt', 'updatedAt'],
-  Sale: ['id', 'invoiceNumber', 'cashPaid', 'upiPaid', 'cardPaid', 'bankPaid', 'balance'],
+  Sale: ['id', 'invoiceNumber', 'cashPaid', 'upiPaid', 'cardPaid', 'bankPaid', 'balance', 'cancelledAt'],
   SaleItem: ['id', 'saleId', 'productBarcode', 'productName', 'productPurity', 'weight', 'makingChargeType', 'makingChargeValue', 'hsnCode', 'huidCode'],
   StockMovement: ['id', 'productId', 'productBarcode', 'type', 'quantity', 'createdAt'],
   CashbookEntry: ['id', 'entryDate', 'paymentMethod', 'customerId', 'saleId', 'urdPurchaseId', 'syncLedger'],
   CustomerLedger: ['id', 'customerId', 'saleId', 'cashbookEntryId', 'amount'],
-  UrdPurchase: ['id', 'purchaseNumber', 'customerId', 'saleId', 'saleOffset', 'paid'],
+  UrdPurchase: ['id', 'purchaseNumber', 'customerId', 'saleId', 'saleOffset', 'paid', 'cancelledAt'],
   SyncRevision: ['id', 'revision']
 };
 

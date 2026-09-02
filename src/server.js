@@ -24,8 +24,10 @@ const { resolveTscPrinter, cachedTscPrinterStatus } = require('./lib/windows-pri
 const { provisionShopDatabase, enableNetworkSharing, updatePrinterConfiguration, updateLoginConfiguration, parseDatabaseConnection, isLocalHost, runBundledMigrations, verifyClientConnection } = require('./lib/shop-provisioning');
 const { buildExcelExport } = require('./lib/excel-export');
 const { RESOURCE_LIST, resourceFor, parseDateRange, getExportPayload, archiveData } = require('./lib/data-lifecycle');
-const { paymentMethodFromComponents, reverseAndDeleteCashbookEntry, deleteSettledUrdPurchase } = require('./lib/accounting-reversal');
+const { paymentMethodFromComponents, reverseAndDeleteCashbookEntry, deleteSettledUrdPurchase, cancelUrdPurchase, cancelSale } = require('./lib/accounting-reversal');
 const { urdSettlement } = require('./lib/urd-settlement');
+const { productSearchClauses } = require('./lib/product-search-filters');
+const { normalizeTopSellingFilters, countTopSellingItems, listTopSellingItems, summarizeTopSellingItems } = require('./lib/top-selling-items');
 const { number, roundToNearestRupee, asArray, dateInput, startOfToday, dateTimeFromInput, localDateTimeRange, money, grams, formatDateDisplay, nextDocumentNumber, nextBatchDocumentNumber, metalRateFromDailyRate, makingAmount, titleCase } = require('./lib/helpers');
 const { nextBarcode } = require('./lib/barcode-sequence');
 const { upsertItemName } = require('./lib/item-names');
@@ -297,7 +299,7 @@ async function allocateCustomerPayment(tx, { customerId, amount, paymentMethod, 
   }
 
   const openSales = await tx.sale.findMany({
-    where: { customerId, balance: { gt: 0 } },
+    where: { customerId, cancelledAt: null, balance: { gt: 0 } },
     orderBy: [{ saleDate: 'asc' }, { id: 'asc' }]
   });
   let remaining = roundedMoney(amount);
@@ -645,14 +647,15 @@ app.get('/printer-setup', requireLoopback, (req, res) => {
 });
 
 app.post('/printer-setup', requireLoopback, (req, res) => {
+  const returnTo = req.body.returnTo === '/inventory' ? '/inventory' : '/printer-setup';
   try {
     const values = updatePrinterConfiguration({ configPath, currentEnv: process.env, form: req.body });
     Object.assign(process.env, values);
-    redirectWith(res, '/inventory', 'message', values.TSC_PRINTER_MODE === 'TCP'
+    redirectWith(res, returnTo, 'message', values.TSC_PRINTER_MODE === 'TCP'
       ? `Direct TCP printer saved: ${values.TSC_PRINTER_HOST}:${values.TSC_PRINTER_PORT}. Use Test TSC to verify the printer.`
       : `Windows printer saved: ${values.TSC_PRINTER_NAME}. Use Test TSC to verify the printer.`);
   } catch (error) {
-    redirectWith(res, '/printer-setup', 'error', error.message || 'Could not save barcode printer settings.');
+    redirectWith(res, returnTo, 'error', error.message || 'Could not save barcode printer settings.');
   }
 });
 
@@ -723,9 +726,9 @@ app.get('/', async (req, res, next) => {
         ORDER BY weight DESC, name ASC
         LIMIT 100
       `,
-      prisma.sale.aggregate({ where: { saleDate: { gte: today, lt: tomorrow } }, _sum: { total: true, paid: true, balance: true, urdOffset: true }, _count: true }),
+      prisma.sale.aggregate({ where: { cancelledAt: null, saleDate: { gte: today, lt: tomorrow } }, _sum: { total: true, paid: true, balance: true, urdOffset: true }, _count: true }),
       prisma.product.findMany({ where: { quantity: { lte: 1 }, status: 'AVAILABLE' }, orderBy: { quantity: 'asc' }, take: 6 }),
-      prisma.sale.findMany({ include: { customer: true }, orderBy: { saleDate: 'desc' }, take: 6 }),
+      prisma.sale.findMany({ where: { cancelledAt: null }, include: { customer: true }, orderBy: { saleDate: 'desc' }, take: 6 }),
       prisma.cashbookEntry.groupBy({ by: ['type'], where: { entryDate: todayKey }, _sum: { amount: true } }),
       prisma.customerLedger.aggregate({ _sum: { amount: true } }),
       prisma.$queryRaw`
@@ -737,7 +740,7 @@ app.get('/', async (req, res, next) => {
           SUM(si.lineTotal) AS billed
         FROM \`SaleItem\` si
         INNER JOIN \`Sale\` s ON s.id = si.saleId
-        WHERE s.saleDate >= ${today} AND s.saleDate < ${tomorrow}
+        WHERE s.cancelledAt IS NULL AND s.saleDate >= ${today} AND s.saleDate < ${tomorrow}
         GROUP BY
           COALESCE(NULLIF(si.productName, ''), 'Jewellery item'),
           COALESCE(si.productMetal, 'OTHER'),
@@ -831,80 +834,14 @@ app.post('/rates', async (req, res, next) => {
 
 app.get('/inventory', async (req, res, next) => {
   try {
-    const q = (req.query.q || '').trim();
+    const filters = {
+      itemName: String(req.query.itemName || req.query.q || '').trim(),
+      weight: String(req.query.weight || '').trim(),
+      barcode: String(req.query.barcode || '').trim()
+    };
     const availableStock = { status: 'AVAILABLE', quantity: { gt: 0 } };
-    let where = availableStock;
-    if (q) {
-      const barcodeVariants = [...new Set([
-        q,
-        q.replace(/-/g, ' '),
-        q.replace(/\s+/g, '-'),
-        q.replace(/[\s-]+/g, ''),
-        q.replace(/^([A-Za-z]+)(\d.*)$/, '$1 $2'),
-        q.replace(/^(G22|G24|G18|G14|G9)(\d+)$/i, '$1 $2'),
-        q.replace(/^([A-Za-z]+\d+)\s*([A-Za-z0-9]+)$/, '$1 $2')
-      ])].filter(Boolean);
-
-      const orClauses = [];
-
-      // 1. Direct barcode, SKU, name and category matching (exact and variant matching)
-      for (const variant of barcodeVariants) {
-        orClauses.push({ barcode: { contains: variant } });
-        orClauses.push({ sku: { contains: variant } });
-      }
-      orClauses.push({ name: { contains: q } });
-      orClauses.push({ category: { contains: q } });
-
-      // 2. Weight search support (e.g. "18.25", "18.25g", "payal 18.25", "gold chain 22.5")
-      const cleanQ = q.replace(/(\d+(?:\.\d+)?)\s*(?:g|gm|gms|gram|grams)\b/gi, '$1');
-      const tokens = cleanQ.split(/\s+/).filter(Boolean);
-      const numTokens = [];
-      const textTokens = [];
-      for (const token of tokens) {
-        if (/^\d+(?:\.\d+)?$/.test(token)) {
-          numTokens.push(parseFloat(token));
-        } else {
-          textTokens.push(token);
-        }
-      }
-
-      if (numTokens.length > 0) {
-        const weightVal = numTokens[0];
-        if (textTokens.length > 0) {
-          const textStr = textTokens.join(' ');
-          orClauses.push({
-            AND: [
-              {
-                OR: [
-                  { name: { contains: textStr } },
-                  { category: { contains: textStr } }
-                ]
-              },
-              {
-                netWeight: {
-                  gte: weightVal - 0.005,
-                  lte: weightVal + 0.005
-                }
-              }
-            ]
-          });
-        } else {
-          orClauses.push({
-            netWeight: {
-              gte: weightVal - 0.005,
-              lte: weightVal + 0.005
-            }
-          });
-        }
-      }
-
-      where = {
-        AND: [
-          availableStock,
-          { OR: orClauses }
-        ]
-      };
-    }
+    const searchClauses = productSearchClauses(filters);
+    const where = searchClauses.length ? { AND: [availableStock, ...searchClauses] } : availableStock;
     const totalItems = await prisma.product.count({ where });
     const pagination = paginationFor(req, totalItems, req.query.page, 150);
     const products = await prisma.product.findMany({
@@ -915,7 +852,7 @@ app.get('/inventory', async (req, res, next) => {
     });
     const printerStatus = await resolveLabelPrinter(req.query.checkPrinter === '1');
     const printerTransport = configuredLabelPrinter();
-    res.render('inventory/index', { title: 'Inventory', products, q, pagination, printerName: printerStatus.name || printerTransport.name, printerStatus, printerTransport });
+    res.render('inventory/index', { title: 'Inventory', products, filters, pagination, printerName: printerStatus.name || printerTransport.name, printerStatus, printerTransport });
   } catch (error) { next(error); }
 });
 
@@ -1388,10 +1325,28 @@ app.post('/customers', async (req, res, next) => {
   try {
     const phone = normalizePhone(req.body.phone);
     if (!validCustomerPhone(phone)) return redirectWith(res, '/customers', 'error', 'Enter a valid customer mobile number (10 to 15 digits).');
-    const customer = await prisma.customer.create({ data: { name: titleCase(req.body.name), phone, email: req.body.email || null, address: titleCase(req.body.address) || null } });
+    const customer = await prisma.customer.create({ data: { name: titleCase(req.body.name), phone, email: req.body.email || null, address: titleCase(req.body.address) || null, panNumber: String(req.body.panNumber || '').trim().toUpperCase() || null } });
     redirectWith(res, '/customers', 'message', 'Customer added.');
   } catch (error) {
     if (error.code === 'P2002') return redirectWith(res, '/customers', 'error', 'That phone number already belongs to a customer.');
+    next(error);
+  }
+});
+
+app.post('/customers/:id', async (req, res, next) => {
+  const customerId = Number(req.params.id);
+  try {
+    const phone = normalizePhone(req.body.phone);
+    const name = titleCase(req.body.name);
+    if (!name) return redirectWith(res, `/customers/${customerId}`, 'error', 'Enter the customer name.');
+    if (!validCustomerPhone(phone)) return redirectWith(res, `/customers/${customerId}`, 'error', 'Enter a valid customer mobile number (10 to 15 digits).');
+    await prisma.customer.update({ where: { id: customerId }, data: {
+      name, phone, email: String(req.body.email || '').trim() || null,
+      address: titleCase(req.body.address) || null, panNumber: String(req.body.panNumber || '').trim().toUpperCase() || null
+    } });
+    redirectWith(res, `/customers/${customerId}`, 'message', 'Customer details updated across linked invoices and registers.');
+  } catch (error) {
+    if (error.code === 'P2002') return redirectWith(res, `/customers/${customerId}`, 'error', 'That mobile number already belongs to another customer.');
     next(error);
   }
 });
@@ -1402,11 +1357,11 @@ app.get('/customers/:id', async (req, res, next) => {
     const [customer, ledgerCount, ledgerTotal, unpaidSalesCount] = await Promise.all([
       prisma.customer.findUniqueOrThrow({
         where: { id: customerId },
-        include: { sales: { orderBy: { saleDate: 'desc' }, take: 10 } }
+        include: { sales: { where: { cancelledAt: null }, orderBy: { saleDate: 'desc' }, take: 10 } }
       }),
       prisma.customerLedger.count({ where: { customerId } }),
       prisma.customerLedger.aggregate({ where: { customerId }, _sum: { amount: true } }),
-      prisma.sale.count({ where: { customerId, balance: { gt: 0 } } })
+      prisma.sale.count({ where: { customerId, cancelledAt: null, balance: { gt: 0 } } })
     ]);
     const pagination = paginationFor(req, ledgerCount, req.query.page, 200);
     const skip = (pagination.page - 1) * pagination.pageSize;
@@ -1536,7 +1491,7 @@ app.get('/sales', async (req, res, next) => {
     const q = (req.query.q || '').trim();
     const from = req.query.from || '';
     const to = req.query.to || '';
-    const where = {};
+    const where = { cancelledAt: null };
     // Text search: customer name OR customer phone OR invoice number
     if (q) {
       where.OR = [
@@ -1796,16 +1751,58 @@ app.post('/sales', async (req, res, next) => {
   } catch (error) { redirectWith(res, '/sales/new', 'error', error.message || 'Could not save sale.'); }
 });
 
+app.get('/sales/:id/edit', async (req, res, next) => {
+  try {
+    const sale = await prisma.sale.findFirstOrThrow({
+      where: { id: Number(req.params.id), cancelledAt: null },
+      include: { customer: true, items: true }
+    });
+    res.render('sales/edit', { title: `Edit ${sale.invoiceNumber}`, sale });
+  } catch (error) { next(error); }
+});
+
+app.post('/sales/:id/edit', async (req, res, next) => {
+  const saleId = Number(req.params.id);
+  try {
+    await prisma.$transaction(async (tx) => {
+      const sale = await tx.sale.findFirstOrThrow({ where: { id: saleId, cancelledAt: null }, include: { customer: true } });
+      if (!sale.customerId || !sale.customer) throw new Error('This invoice has no customer record to edit.');
+      const name = titleCase(req.body.customerName);
+      const phone = normalizePhone(req.body.customerPhone);
+      if (!name) throw new Error('Enter the customer name.');
+      if (!validCustomerPhone(phone)) throw new Error('Enter a valid customer mobile number (10 to 15 digits).');
+      const panNumber = String(req.body.customerPan || '').trim().toUpperCase() || null;
+      await tx.customer.update({ where: { id: sale.customerId }, data: {
+        name, phone, email: String(req.body.customerEmail || '').trim() || null,
+        address: titleCase(req.body.customerAddress) || null, panNumber
+      } });
+      await tx.sale.update({ where: { id: sale.id }, data: { customerPan: panNumber, notes: String(req.body.notes || '').trim() || null } });
+    });
+    redirectWith(res, `/sales/${saleId}`, 'message', 'Invoice and customer details updated. The PDF and QR code now use the updated details.');
+  } catch (error) {
+    if (error.code === 'P2002') return redirectWith(res, `/sales/${saleId}/edit`, 'error', 'That mobile number already belongs to another customer.');
+    redirectWith(res, `/sales/${saleId}/edit`, 'error', error.message || 'Could not update this invoice.');
+  }
+});
+
+app.post('/sales/:id/cancel', async (req, res, next) => {
+  const saleId = Number(req.params.id);
+  try {
+    const sale = await prisma.$transaction((tx) => cancelSale(tx, saleId));
+    redirectWith(res, '/sales', 'message', `${sale.invoiceNumber} cancelled. Inventory and its barcode remain permanently unavailable.`);
+  } catch (error) { redirectWith(res, `/sales/${saleId}`, 'error', error.message || 'Could not cancel this invoice.'); }
+});
+
 app.get('/sales/:id', async (req, res, next) => {
   try {
-    const sale = await prisma.sale.findUniqueOrThrow({ where: { id: Number(req.params.id) }, include: { customer: true, urdPurchase: true, items: { include: { product: true } } } });
+    const sale = await prisma.sale.findFirstOrThrow({ where: { id: Number(req.params.id), cancelledAt: null }, include: { customer: true, urdPurchase: true, items: { include: { product: true } } } });
     res.render('sales/invoice', { title: sale.invoiceNumber, sale });
   } catch (error) { next(error); }
 });
 
 app.get('/sales/:id/invoice.pdf', async (req, res, next) => {
   try {
-    const sale = await prisma.sale.findUnique({ where: { id: Number(req.params.id) }, include: { customer: true, urdPurchase: true, items: { include: { product: true } } } });
+    const sale = await prisma.sale.findFirst({ where: { id: Number(req.params.id), cancelledAt: null }, include: { customer: true, urdPurchase: true, items: { include: { product: true } } } });
     if (!sale) return res.status(404).render('not-found', { title: 'Invoice not found' });
     await writeSaleInvoice(res, sale);
   } catch (error) { next(error); }
@@ -1909,7 +1906,8 @@ app.post('/cashbook/:id/delete', async (req, res, next) => {
 app.get('/urd-purchases', async (req, res, next) => {
   try {
     const q = (req.query.q || '').trim();
-    const where = {};
+    const state = String(req.query.state || 'ACTIVE').toUpperCase() === 'CANCELLED' ? 'CANCELLED' : 'ACTIVE';
+    const where = state === 'CANCELLED' ? { cancelledAt: { not: null } } : { cancelledAt: null };
     if (q) {
       const metalMatch = ['GOLD', 'SILVER', 'PLATINUM', 'DIAMOND', 'OTHER'].includes(q.toUpperCase())
         ? [{ metal: q.toUpperCase() }]
@@ -1931,7 +1929,7 @@ app.get('/urd-purchases', async (req, res, next) => {
       skip: (pagination.page - 1) * pagination.pageSize,
       take: pagination.pageSize
     });
-    res.render('urd-purchases/index', { title: 'URD Purchases', purchases, q, pagination });
+    res.render('urd-purchases/index', { title: 'URD Purchases', purchases, q, state, pagination });
   } catch (error) { next(error); }
 });
 
@@ -1998,7 +1996,7 @@ app.post('/urd-purchases/:id/payments', async (req, res) => {
     const result = await prisma.$transaction(async (tx) => {
       const locked = await tx.$queryRaw`SELECT id FROM \`UrdPurchase\` WHERE id = ${id} FOR UPDATE`;
       if (!locked.length) throw new Error('This URD purchase no longer exists.');
-      const purchase = await tx.urdPurchase.findUniqueOrThrow({ where: { id } });
+      const purchase = await tx.urdPurchase.findFirstOrThrow({ where: { id, cancelledAt: null } });
       const outstanding = roundedMoney(Math.max(0, Number(purchase.totalAmount) - Number(purchase.saleOffset) - Number(purchase.paid)));
       if (outstanding <= 0) throw new Error('This URD purchase is already fully paid or settled.');
       if (amount > outstanding) throw new Error(`Payout is greater than the outstanding amount of ${money(outstanding)}.`);
@@ -2035,7 +2033,7 @@ app.post('/urd-purchases/:id/payments', async (req, res) => {
 app.get('/urd-purchases/:id/invoice.pdf', async (req, res, next) => {
   try {
     const purchase = await prisma.urdPurchase.findUnique({
-      where: { id: Number(req.params.id) }, include: { customer: true, sale: true }
+      where: { id: Number(req.params.id), cancelledAt: null }, include: { customer: true, sale: true }
     });
     if (!purchase) return res.status(404).render('not-found', { title: 'URD invoice not found' });
     writeUrdPurchaseInvoice(res, purchase);
@@ -2044,14 +2042,8 @@ app.get('/urd-purchases/:id/invoice.pdf', async (req, res, next) => {
 
 app.post('/urd-purchases/:id/delete', async (req, res, next) => {
   try {
-    const purchase = await prisma.$transaction(async (tx) => {
-      const record = await tx.urdPurchase.findUniqueOrThrow({ where: { id: Number(req.params.id) } });
-      const outstanding = Math.max(0, Number(record.totalAmount) - Number(record.paid) - Number(record.saleOffset));
-      if (outstanding > 0) throw new Error(`This URD purchase has ${money(outstanding)} still payable to the customer and cannot be deleted.`);
-      await deleteSettledUrdPurchase(tx, record);
-      return record;
-    });
-    redirectWith(res, '/urd-purchases', 'message', 'Purchase and its linked payout entries deleted.');
+    const purchase = await prisma.$transaction((tx) => cancelUrdPurchase(tx, Number(req.params.id)));
+    redirectWith(res, '/urd-purchases', 'message', `${purchase.purchaseNumber} cancelled and its linked payouts reversed.`);
   } catch (error) {
     redirectWith(res, '/urd-purchases', 'error', error.message || 'Could not delete this URD purchase.');
   }
@@ -2079,7 +2071,9 @@ app.get('/reports', (req, res) => {
 
 app.get('/reports/stock', async (req, res, next) => {
   try {
-    const q = reportText(req.query.q);
+    const itemName = reportText(req.query.itemName || req.query.q);
+    const weight = reportText(req.query.weight);
+    const barcode = reportText(req.query.barcode);
     const metal = REPORT_METALS.includes(String(req.query.metal || '').toUpperCase()) ? String(req.query.metal).toUpperCase() : '';
     const category = reportText(req.query.category);
     const location = reportText(req.query.location);
@@ -2091,30 +2085,15 @@ app.get('/reports/stock', async (req, res, next) => {
       const t = toKey || dateInput();
       dateRangeFilter = { createdAt: localDateTimeRange(f, t) };
     }
-    const barcodeVariants = q ? [...new Set([
-      q,
-      q.replace(/-/g, ' '),
-      q.replace(/\s+/g, '-'),
-      q.replace(/[\s-]+/g, ''),
-      q.replace(/^([A-Za-z]+)(\d.*)$/, '$1 $2'),
-      q.replace(/^(G22|G24|G18|G14|G9)(\d+)$/i, '$1 $2'),
-      q.replace(/^([A-Za-z]+\d+)\s*([A-Za-z0-9]+)$/, '$1 $2')
-    ])].filter(Boolean) : [];
-
     const stockWhere = {
-      quantity: { gt: 0 },
-      status: 'AVAILABLE',
-      ...dateRangeFilter,
-      ...(metal ? { metal } : {}),
-      ...(category ? { category: { contains: category } } : {}),
-      ...(location ? { location: { contains: location } } : {}),
-      ...(q ? { OR: [
-        ...barcodeVariants.map((b) => ({ barcode: { contains: b } })),
-        { name: { contains: q } },
-        { category: { contains: q } },
-        { purity: { contains: q } },
-        { location: { contains: q } }
-      ] } : {})
+      AND: [
+        { quantity: { gt: 0 }, status: 'AVAILABLE' },
+        ...(Object.keys(dateRangeFilter).length ? [dateRangeFilter] : []),
+        ...(metal ? [{ metal }] : []),
+        ...(category ? [{ category: { contains: category } }] : []),
+        ...(location ? [{ location: { contains: location } }] : []),
+        ...productSearchClauses({ itemName, weight, barcode })
+      ]
     };
     const totalItems = await prisma.product.count({ where: stockWhere });
     const pagination = paginationFor(req, totalItems, req.query.page, 100);
@@ -2125,7 +2104,7 @@ app.get('/reports/stock', async (req, res, next) => {
       skip: (pagination.page - 1) * pagination.pageSize,
       take: pagination.pageSize
     });
-    res.render('reports/stock', { title: 'Stock report', products, pagination, filters: { q, metal, category, location, from: fromKey, to: toKey } });
+    res.render('reports/stock', { title: 'Stock report', products, pagination, filters: { itemName, weight, barcode, metal, category, location, from: fromKey, to: toKey } });
   } catch (error) { next(error); }
 });
 
@@ -2229,7 +2208,9 @@ app.get('/reports/sales-register', async (req, res, next) => {
       ? String(req.query.paymentMethod).toUpperCase() : '';
     const balanceState = ['ALL', 'DUE', 'SETTLED'].includes(String(req.query.balanceState || 'ALL').toUpperCase())
       ? String(req.query.balanceState).toUpperCase() : 'ALL';
+    const recordState = String(req.query.recordState || 'ACTIVE').toUpperCase() === 'CANCELLED' ? 'CANCELLED' : 'ACTIVE';
     const saleWhere = {
+      ...(recordState === 'CANCELLED' ? { cancelledAt: { not: null } } : { cancelledAt: null }),
       saleDate: { gte: from, lte: to },
       ...(invoice ? { invoiceNumber: { contains: invoice } } : {}),
       ...(paymentMethod ? { paymentMethod } : {}),
@@ -2259,11 +2240,73 @@ app.get('/reports/sales-register', async (req, res, next) => {
     ]);
     res.render('reports/sales-register', {
       title: 'Sales register', sales, summary, pagination,
-      filters: { from: fromKey, to: toKey, item, customer, invoice, paymentMethod, balanceState }
+      filters: { from: fromKey, to: toKey, item, customer, invoice, paymentMethod, balanceState, recordState }
     });
   } catch (error) { next(error); }
 });
 
+app.get('/reports/top-selling-items', async (req, res, next) => {
+  try {
+    const { fromKey, toKey, gte: from, lte: to } = reportDates(req.query);
+    const filters = { ...normalizeTopSellingFilters(req.query), from: fromKey, to: toKey };
+    const source = { ...filters, from, to };
+    const [totalItems, summary] = await Promise.all([
+      countTopSellingItems(prisma, source),
+      summarizeTopSellingItems(prisma, source)
+    ]);
+    const pagination = paginationFor(req, totalItems, req.query.page, 100);
+    const rows = await listTopSellingItems(prisma, source, {
+      skip: (pagination.page - 1) * pagination.pageSize,
+      take: pagination.pageSize
+    });
+    res.render('reports/top-selling-items', {
+      title: 'Top selling items report', rows, pagination,
+      summary, filters
+    });
+  } catch (error) { next(error); }
+});
+
+app.get('/reports/top-selling-items/export', async (req, res) => {
+  try {
+    const range = parseDateRange(req.query);
+    const filters = normalizeTopSellingFilters(req.query);
+    const payload = await getExportPayload(prisma, 'top-selling-items', range, filters);
+    const workbook = await buildExcelExport(payload);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${payload.filename}"`);
+    res.send(workbook);
+  } catch (error) {
+    const query = new URLSearchParams({
+      from: String(req.query.from || ''), to: String(req.query.to || ''),
+      metal: String(req.query.metal || ''), item: String(req.query.item || ''),
+      sortBy: String(req.query.sortBy || ''), sortOrder: String(req.query.sortOrder || ''),
+      error: error.message || 'Could not create the Top Selling Items Excel report.'
+    });
+    res.redirect(`/reports/top-selling-items?${query.toString()}`);
+  }
+});
+
+app.get('/reports/cashbook-register', async (req, res, next) => {
+  try {
+    const { fromKey, toKey } = reportDates(req.query);
+    const paymentMethod = RECEIPT_PAYMENT_METHODS.has(String(req.query.paymentMethod || '').toUpperCase()) ? String(req.query.paymentMethod).toUpperCase() : '';
+    const type = ['IN', 'OUT'].includes(String(req.query.type || '').toUpperCase()) ? String(req.query.type).toUpperCase() : '';
+    const q = reportText(req.query.q);
+    const where = { entryDate: { gte: fromKey, lte: toKey }, ...(paymentMethod ? { paymentMethod } : {}), ...(type ? { type } : {}), ...(q ? { OR: [{ description: { contains: q } }, { reference: { contains: q } }, { customer: { is: { name: { contains: q } } } }] } : {}) };
+    const totalItems = await prisma.cashbookEntry.count({ where });
+    const pagination = paginationFor(req, totalItems, req.query.page, 200);
+    const [entries, totals] = await Promise.all([
+      prisma.cashbookEntry.findMany({ where, include: { customer: true }, orderBy: [{ entryDate: 'desc' }, { createdAt: 'desc' }], skip: (pagination.page - 1) * pagination.pageSize, take: pagination.pageSize }),
+      prisma.cashbookEntry.groupBy({ by: ['type'], where, _sum: { amount: true } })
+    ]);
+    const summary = { in: 0, out: 0 }; totals.forEach((row) => { summary[row.type === 'IN' ? 'in' : 'out'] = Number(row._sum.amount || 0); });
+    res.render('reports/cashbook-register', { title: 'Cashbook register', entries, summary, pagination, filters: { from: fromKey, to: toKey, paymentMethod, type, q } });
+  } catch (error) { next(error); }
+});
+
+// Keep fall-through and error handlers last. Reports registered after either
+// handler would otherwise always resolve to the 404 page before reaching their
+// route.
 app.use((req, res) => res.status(404).render('not-found', { title: 'Page not found' }));
 
 app.use((error, req, res, next) => {

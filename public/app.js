@@ -508,7 +508,8 @@ document.querySelectorAll('.flash').forEach((el) => {
   const urdEnabled = form.querySelector('[data-urd-enabled]');
   const urdFields = form.querySelector('[data-urd-fields]');
   const urdMetal = form.querySelector('[data-urd-metal]');
-  const urdPurity = form.querySelector('[data-urd-purity]');
+  const urdPuritySelect = form.querySelector('[data-urd-purity-select]');
+  const urdPurityManual = form.querySelector('[data-urd-purity-manual]');
   const urdGrossWeight = form.querySelector('[data-urd-gross-weight]');
   const urdNetWeight = form.querySelector('[data-urd-net-weight]');
   const urdRate = form.querySelector('[data-urd-rate]');
@@ -839,12 +840,22 @@ document.querySelectorAll('.flash').forEach((el) => {
   }
 
   function updateUrdRate() {
-    if (!urdRate || !urdPurity) return;
-    const purity = urdPurity.value;
-    const rate = purity === '24K' ? n(urdRate.dataset.rate24)
-      : (purity === '925' || purity === 'PURE') ? n(urdRate.dataset.rateSilver)
+    if (!urdRate || !urdMetal) return;
+    const rate = urdMetal.value === 'SILVER' ? n(urdRate.dataset.rateSilver)
+      : urdPuritySelect?.value === '24K' ? n(urdRate.dataset.rate24)
         : n(urdRate.dataset.rate22);
     if (rate > 0) urdRate.value = rate.toFixed(2);
+  }
+
+  function syncUrdPurityControl() {
+    if (!urdMetal || !urdPuritySelect || !urdPurityManual) return;
+    const isManual = urdMetal.value !== 'GOLD';
+    const fieldsEnabled = Boolean(urdEnabled?.checked);
+    urdPuritySelect.hidden = isManual;
+    urdPuritySelect.disabled = !fieldsEnabled || isManual;
+    urdPurityManual.hidden = !isManual;
+    urdPurityManual.disabled = !fieldsEnabled || !isManual;
+    if (!isManual && !urdPuritySelect.value) urdPuritySelect.value = '22K';
   }
 
   function recalcUrdAmount() {
@@ -858,17 +869,18 @@ document.querySelectorAll('.flash').forEach((el) => {
     const enabled = urdEnabled.checked;
     urdFields.hidden = !enabled;
     urdFields.querySelectorAll('input, select, textarea').forEach((input) => { input.disabled = !enabled; });
+    syncUrdPurityControl();
     if (enabled) { updateUrdRate(); recalcUrdAmount(); }
     updateFormTotals();
   }
 
   if (urdEnabled) urdEnabled.addEventListener('change', toggleUrdFields);
   if (urdMetal) urdMetal.addEventListener('change', () => {
-    if (urdPurity && urdMetal.value === 'SILVER') urdPurity.value = '925';
-    if (urdPurity && urdMetal.value === 'GOLD' && !['22K', '24K'].includes(urdPurity.value)) urdPurity.value = '22K';
+    syncUrdPurityControl();
     updateUrdRate(); recalcUrdAmount();
   });
-  if (urdPurity) urdPurity.addEventListener('change', () => { updateUrdRate(); recalcUrdAmount(); });
+  if (urdPuritySelect) urdPuritySelect.addEventListener('change', () => { updateUrdRate(); recalcUrdAmount(); });
+  if (urdPurityManual) urdPurityManual.addEventListener('input', recalcUrdAmount);
   if (urdGrossWeight && urdNetWeight) urdGrossWeight.addEventListener('input', () => { urdNetWeight.value = urdGrossWeight.value; recalcUrdAmount(); });
   if (urdNetWeight) urdNetWeight.addEventListener('input', recalcUrdAmount);
   if (urdRate) urdRate.addEventListener('input', recalcUrdAmount);
@@ -1976,5 +1988,109 @@ function updateInventoryLabelBatchState() {
     if (!manuallyEdited) {
       catInput.value = nameInput.value;
     }
+  });
+})();
+
+// ── Customer Profile Editor ───────────────────────────────────
+(function initCustomerEditModal() {
+  const modal = document.getElementById('customerEditModal');
+  const openButton = document.querySelector('[data-customer-edit-open]');
+  if (!modal || !openButton) return;
+
+  const closeButtons = modal.querySelectorAll('[data-customer-edit-close]');
+  const firstField = modal.querySelector('input[name="name"]');
+  let previousFocus = null;
+
+  function closeModal() {
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+    previousFocus?.focus();
+  }
+
+  openButton.addEventListener('click', () => {
+    previousFocus = document.activeElement;
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    setTimeout(() => firstField?.focus(), 0);
+  });
+
+  closeButtons.forEach((button) => button.addEventListener('click', closeModal));
+  modal.addEventListener('click', (event) => {
+    if (event.target === modal) closeModal();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && modal.style.display === 'flex') closeModal();
+  });
+})();
+
+// ── Inventory Printer Setup ──────────────────────────────────
+(function initInventoryPrinterSetupModal() {
+  const modal = document.getElementById('printerSetupModal');
+  const openButton = document.querySelector('[data-printer-setup-open]');
+  const form = document.getElementById('inventory-printer-setup-form');
+  if (!modal || !openButton || !form) return;
+
+  const windowsFields = form.querySelector('[data-windows-printer-fields]');
+  const tcpFields = form.querySelector('[data-tcp-printer-fields]');
+  let previousFocus = null;
+
+  function updateTransportFields() {
+    const selected = form.querySelector('input[name="printerMode"]:checked');
+    const directTcp = selected?.value === 'TCP';
+    windowsFields.hidden = directTcp;
+    tcpFields.hidden = !directTcp;
+  }
+
+  function closeModal() {
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+    previousFocus?.focus();
+  }
+
+  openButton.addEventListener('click', () => {
+    previousFocus = document.activeElement;
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    updateTransportFields();
+    setTimeout(() => form.querySelector('input[name="printerMode"]:checked')?.focus(), 0);
+  });
+
+  form.querySelectorAll('input[name="printerMode"]').forEach((input) => input.addEventListener('change', updateTransportFields));
+  modal.querySelectorAll('[data-printer-setup-close]').forEach((button) => button.addEventListener('click', closeModal));
+  modal.addEventListener('click', (event) => {
+    if (event.target === modal) closeModal();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && modal.style.display === 'flex') closeModal();
+  });
+  updateTransportFields();
+})();
+
+// ── Network Connection Change Confirmation ───────────────────
+(function initConnectionRepairModal() {
+  const modal = document.getElementById('connectionRepairModal');
+  const openButton = document.querySelector('[data-connection-repair-open]');
+  if (!modal || !openButton) return;
+
+  let previousFocus = null;
+  function closeModal() {
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+    previousFocus?.focus();
+  }
+
+  openButton.addEventListener('click', () => {
+    previousFocus = document.activeElement;
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    setTimeout(() => modal.querySelector('[data-connection-repair-close]')?.focus(), 0);
+  });
+
+  modal.querySelectorAll('[data-connection-repair-close]').forEach((button) => button.addEventListener('click', closeModal));
+  modal.addEventListener('click', (event) => {
+    if (event.target === modal) closeModal();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && modal.style.display === 'flex') closeModal();
   });
 })();

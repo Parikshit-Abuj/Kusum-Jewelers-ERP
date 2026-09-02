@@ -143,6 +143,7 @@ model Sale {
   balance         Decimal          @default(0) @db.Decimal(12, 2)
   paymentMethod   PaymentMethod    @default(CASH)
   notes           String?          @db.Text
+  cancelledAt     DateTime?
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   customer        Customer?        @relation(fields: [customerId], references: [id], onDelete: SetNull)
@@ -152,6 +153,7 @@ model Sale {
   cashbookEntries CashbookEntry[]
 
   @@index([saleDate])
+  @@index([cancelledAt, saleDate])
   @@index([customerId, balance, saleDate])
 }
 
@@ -260,6 +262,7 @@ model UrdPurchase {
   description     String?         @db.Text
   notes           String?         @db.Text
   saleId          Int?            @unique
+  cancelledAt     DateTime?
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
   customer        Customer        @relation(fields: [customerId], references: [id], onDelete: Restrict)
@@ -267,6 +270,7 @@ model UrdPurchase {
   cashbookEntries CashbookEntry[]
 
   @@index([purchaseDate])
+  @@index([cancelledAt, purchaseDate])
   @@index([customerId])
 }
 

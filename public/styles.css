@@ -212,6 +212,11 @@ nav a.active { box-shadow: inset 3px 0 0 #dfa437; }
 /* ── Search bar ───────────────────────────────────────────── */
 .search-bar { display: flex; gap: 8px; margin-bottom: 18px; }
 .search-bar input { max-width: 410px; }
+.inventory-filter-form { display: grid; grid-template-columns: repeat(3, minmax(165px, 1fr)) auto auto; align-items: end; gap: 10px; }
+.inventory-filter-form label { display: grid; gap: 5px; min-width: 0; font-size: 11px; font-weight: 700; color: #554e47; }
+.inventory-filter-form input { width: 100%; max-width: none; min-height: 35px; padding: 7px 9px; font-size: 12px; }
+@media (max-width: 900px) { .inventory-filter-form { grid-template-columns: repeat(2, minmax(165px, 1fr)); } }
+@media (max-width: 560px) { .inventory-filter-form { grid-template-columns: 1fr; } }
 .customer-search { margin-top: -4px; }
 .inline-details { position: relative; }
 .inline-details summary { list-style: none; cursor: pointer; }
@@ -657,6 +662,37 @@ input:focus, select:focus, textarea:focus { border-color: #c08a32; box-shadow: 0
 .archive-resource-grid p { margin: 9px 0 0; color: #756f69; font-size: 12px; line-height: 1.4; }
 @media (max-width: 1000px) { .archive-layout { grid-template-columns: 1fr; } .archive-resource-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 600px) { .archive-notice { display: block; } .archive-notice strong { display: block; margin-bottom: 5px; } .archive-resource-grid { grid-template-columns: 1fr; } }
+
+/* ── Controlled archival modal ─────────────────────────────── */
+.archival-modal .modal-card { max-width: 600px; }
+.archival-modal form { display: flex; flex: 1; min-height: 0; flex-direction: column; overflow: hidden; }
+.archival-modal .modal-body { padding: 20px 24px; }
+.archival-modal-footer { display: flex; gap: 8px; justify-content: flex-end; padding: 14px 24px; border-top: 1px solid var(--line); background: #faf8f5; }
+.archival-modal-footer .button.danger { flex: 1; }
+@media (max-width: 580px) {
+  .archival-modal .modal-body,
+  .archival-modal-footer { padding: 16px; }
+  .archival-modal-footer { flex-direction: column-reverse; }
+  .archival-modal-footer .button { width: 100%; }
+}
+
+/* ── Inventory printer and connection confirmations ────────── */
+.printer-setup-modal .modal-card,
+.connection-repair-modal .modal-card { max-width: 620px; }
+.printer-setup-modal form { display: flex; flex: 1; min-height: 0; flex-direction: column; overflow: hidden; }
+.printer-setup-modal .modal-body { padding: 20px 24px; }
+.printer-setup-modal .stack-form { gap: 14px; }
+.printer-setup-modal-footer,
+.connection-repair-modal-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 24px; border-top: 1px solid var(--line); background: #faf8f5; }
+@media (max-width: 580px) {
+  .printer-setup-modal .modal-body,
+  .printer-setup-modal-footer,
+  .connection-repair-modal-footer { padding: 16px; }
+  .printer-setup-modal-footer,
+  .connection-repair-modal-footer { flex-direction: column-reverse; }
+  .printer-setup-modal-footer .button,
+  .connection-repair-modal-footer .button { width: 100%; }
+}
 
 /* ── Autocomplete dropdown ────────────────────────────────── */
 .autocomplete-wrap { position: relative; }
@@ -1425,4 +1461,247 @@ input:focus, select:focus, textarea:focus { border-color: #c08a32; box-shadow: 0
 @media (max-width: 620px) {
   .pagination { align-items: flex-start; flex-direction: column; }
   .pagination > div { width: 100%; justify-content: space-between; }
+}
+
+/* ── Focused workspace polish ────────────────────────────────
+   Compact the working area without changing any route, form control,
+   table column, or transaction detail. */
+.sidebar {
+  width: 232px;
+  padding: 18px 12px;
+}
+
+.brand {
+  padding: 2px 10px 20px;
+}
+
+nav {
+  gap: 2px;
+}
+
+nav a {
+  min-height: 38px;
+  padding: 8px 10px;
+}
+
+.sidebar-foot {
+  padding: 12px 10px 0;
+}
+
+.main-content {
+  width: calc(100% - 232px);
+  margin-left: 232px;
+  padding: 28px 32px 40px;
+}
+
+.page-header {
+  align-items: center;
+  gap: 14px;
+  margin: 0 0 20px;
+}
+
+.eyebrow {
+  margin-bottom: 4px;
+  font-size: 10px;
+}
+
+.header-actions {
+  flex-wrap: wrap;
+  gap: 5px;
+  justify-content: flex-end;
+}
+
+.button {
+  min-height: 35px;
+  padding: 7px 12px;
+  border-radius: 7px;
+}
+
+.button.ghost {
+  border-color: #e4ded6;
+  background: #fff;
+}
+
+.button.ghost:hover {
+  background: #faf7f1;
+}
+
+.content-grid {
+  gap: 14px;
+}
+
+.stat-card,
+.panel {
+  border-radius: 10px;
+}
+
+.stat-card {
+  min-height: 108px;
+  padding: 15px;
+}
+
+.stat-card strong {
+  margin-top: 9px;
+  font-size: 22px;
+}
+
+.stat-card p {
+  margin-top: 5px;
+  font-size: 11px;
+}
+
+.stats-grid,
+.cashbook-summary {
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.panel {
+  padding: 16px;
+  box-shadow: 0 5px 18px rgba(47, 38, 28, .045);
+}
+
+.panel-heading {
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.panel-heading p {
+  font-size: 11px;
+}
+
+.table-wrap {
+  max-height: 68vh;
+  margin: 0 -16px -16px;
+}
+
+.table-wrap th {
+  padding: 9px 16px;
+}
+
+.table-wrap td {
+  padding: 10px 16px;
+}
+
+.search-bar,
+.sales-filter,
+.report-filter-panel {
+  margin-bottom: 14px;
+}
+
+.search-bar {
+  gap: 6px;
+}
+
+.form-section {
+  padding: 18px 20px;
+}
+
+.form-section h2 {
+  margin-bottom: 12px;
+}
+
+.form-grid {
+  gap: 12px;
+}
+
+.form-footer {
+  padding: 12px 20px;
+}
+
+.side-form {
+  padding: 16px;
+}
+
+.side-form h2 {
+  margin-bottom: 12px;
+}
+
+.side-form label {
+  margin-bottom: 10px;
+}
+
+.rate-notice,
+.label-batch-toolbar {
+  margin-bottom: 14px;
+  padding: 9px 12px;
+}
+
+.report-menu {
+  gap: 12px;
+  max-width: 980px;
+}
+
+.report-menu-card {
+  min-height: 88px;
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+.report-menu-card > span:nth-child(2) {
+  gap: 2px;
+}
+
+.report-menu-card strong {
+  font-size: 14px;
+}
+
+.report-menu-card small {
+  font-size: 11px;
+}
+
+.report-menu-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  font-size: 18px;
+}
+
+.empty-state {
+  padding: 34px 18px 24px;
+}
+
+.empty-state p {
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+
+@media (max-width: 900px) {
+  .sidebar { width: 260px; }
+  .main-content { padding: 72px 16px 32px !important; }
+  .page-header { gap: 10px; margin-bottom: 16px; }
+  .header-actions { justify-content: flex-start; }
+}
+
+/* ── Customer profile editor ───────────────────────────────── */
+.customer-edit-modal .modal-card {
+  max-width: 700px;
+}
+
+.customer-edit-modal .modal-body {
+  padding: 20px 24px;
+}
+
+.customer-edit-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.customer-edit-fields .full {
+  grid-column: 1 / -1;
+}
+
+.customer-edit-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 24px;
+  border-top: 1px solid var(--line);
+  background: #faf8f5;
+}
+
+@media (max-width: 580px) {
+  .customer-edit-modal .modal-body,
+  .customer-edit-footer { padding: 16px; }
+  .customer-edit-fields { grid-template-columns: 1fr; }
+  .customer-edit-fields .full { grid-column: auto; }
 }

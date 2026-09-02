@@ -1,5 +1,5 @@
 <header class="page-header">
-  <div><p class="eyebrow">Invoice history</p><h1>Sales register</h1><p class="muted">Find invoices by item, date, customer, invoice number, payment or balance.</p></div>
+  <div><p class="eyebrow">Invoice history</p><h1>Sales register</h1></div>
   <a class="button ghost" href="/reports">← All reports</a>
 </header>
 
@@ -10,6 +10,7 @@
     <label>Customer / mobile<input name="customer" value="<%= filters.customer %>" placeholder="Name or mobile"></label>
     <label>Invoice no.<input name="invoice" value="<%= filters.invoice %>" placeholder="INV…"></label>
     <label>Payment<select name="paymentMethod"><option value="">All payments</option><% ['CASH','UPI','CARD','BANK_TRANSFER','CREDIT','MIXED'].forEach((value) => { %><option value="<%= value %>" <%= filters.paymentMethod === value ? 'selected' : '' %>><%= value.replace('_', ' ') %></option><% }) %></select></label>
+    <label>Records<select name="recordState"><option value="ACTIVE" <%= filters.recordState !== 'CANCELLED' ? 'selected' : '' %>>Active invoices</option><option value="CANCELLED" <%= filters.recordState === 'CANCELLED' ? 'selected' : '' %>>Cancelled invoices</option></select></label>
     <label>Balance<select name="balanceState"><option value="ALL" <%= filters.balanceState === 'ALL' ? 'selected' : '' %>>All invoices</option><option value="DUE" <%= filters.balanceState === 'DUE' ? 'selected' : '' %>>Balance due</option><option value="SETTLED" <%= filters.balanceState === 'SETTLED' ? 'selected' : '' %>>Settled</option></select></label>
     <div class="report-filter-actions"><button class="button small" type="submit">Apply filters</button><a class="button ghost small" href="/reports/sales-register">Reset</a></div>
   </form>
@@ -30,7 +31,7 @@
       <td><% sale.items.forEach((item) => { %><small><%= item.productName || item.productBarcode || 'Jewellery item' %><%= item.productPurity ? ` · ${item.productPurity}` : '' %></small><% }) %><% if (sale._count.items > sale.items.length) { %><small>+ <%= sale._count.items - sale.items.length %> more</small><% } %></td>
       <% const netDifference = Number(sale.total) - Number(sale.urdOffset); const refundable = netDifference < 0; %>
       <td><span class="pill neutral"><%= refundable ? 'URD REFUND' : sale.paymentMethod.replace('_', ' ') %></span><% if (refundable) { %><small>Net refundable <%= money(Math.abs(netDifference)) %><%= Number(sale.urdPurchase?.paid) > 0 ? ` · ${sale.urdPurchase.paymentMethod.replace('_', ' ')}` : '' %></small><% } %></td><td class="right"><strong><%= money(sale.total) %></strong></td><td class="right"><%= money(sale.paid) %></td><td class="right"><strong class="<%= Number(sale.balance) > 0 ? 'credit-amount' : 'paid-amount' %>"><%= money(sale.balance) %></strong></td>
-      <td class="actions"><a class="button ghost small" href="/sales/<%= sale.id %>">Open</a><a class="button ghost small" href="/sales/<%= sale.id %>/invoice.pdf" target="_blank" rel="noopener">PDF</a></td>
+      <td class="actions"><% if (filters.recordState === 'CANCELLED') { %><span class="pill danger">Cancelled</span><% } else { %><a class="button ghost small" href="/sales/<%= sale.id %>">Open</a><a class="button ghost small" href="/sales/<%= sale.id %>/invoice.pdf" target="_blank" rel="noopener">PDF</a><% } %></td>
     </tr><% }) %>
   </tbody></table></div><%- include('../_pagination', { pagination }) %>
   <% } else { %><div class="empty-state compact"><span>▤</span><h3>No sales match this filter</h3><p>Change the item, customer, date or payment filter.</p></div><% } %>

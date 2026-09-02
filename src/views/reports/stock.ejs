@@ -1,5 +1,5 @@
 <header class="page-header">
-  <div><p class="eyebrow">Current inventory</p><h1>Stock report</h1><p class="muted">Only available barcode items are shown.</p></div>
+  <div><p class="eyebrow">Current inventory</p><h1>Stock report</h1></div>
   <a class="button ghost" href="/reports">← All reports</a>
 </header>
 
@@ -7,7 +7,9 @@
   <form class="report-filter-form" method="get">
     <label>From<input type="date" name="from" value="<%= filters.from || '' %>"></label>
     <label>To<input type="date" name="to" value="<%= filters.to || '' %>"></label>
-    <label>Search item / barcode<input name="q" value="<%= filters.q || '' %>" placeholder="Ring, G 00001, Payal…"></label>
+    <label>Item name<input name="itemName" value="<%= filters.itemName || '' %>" placeholder="Ring, chain, payal…"></label>
+    <label>Weight (g)<input name="weight" type="number" min="0" step="0.001" value="<%= filters.weight || '' %>" placeholder="18.250"></label>
+    <label>Barcode<input name="barcode" value="<%= filters.barcode || '' %>" placeholder="G 00001"></label>
     <label>Metal<select name="metal"><option value="">All metals</option><% ['GOLD','SILVER','PLATINUM','DIAMOND','OTHER'].forEach((value) => { %><option value="<%= value %>" <%= filters.metal === value ? 'selected' : '' %>><%= value %></option><% }) %></select></label>
     <label>Category<input name="category" value="<%= filters.category || '' %>" placeholder="Ring, Chain…"></label>
     <label>Location / tray<input name="location" value="<%= filters.location || '' %>" placeholder="Tray 1…"></label>

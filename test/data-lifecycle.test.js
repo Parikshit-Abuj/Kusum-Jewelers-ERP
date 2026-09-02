@@ -108,3 +108,18 @@ test('cashbook export retains a URD excess as a method-specific money-out entry'
   assert.match(cashbook.rows[0].description, /URD refund/);
   assert.equal(upi.rows[0].moneyOut, 50);
 });
+
+test('URD Excel export preserves a manually entered Silver purity', async () => {
+  const db = {
+    urdPurchase: {
+      findMany: async () => [{
+        purchaseDate: new Date(2026, 8, 2, 10, 0), purchaseNumber: 'URD-SILVER-MANUAL', metal: 'SILVER', purity: '999 Fine Silver',
+        grossWeight: 20, netWeight: 20, ratePerGram: 100, totalAmount: 2000, saleOffset: 0, paid: 2000,
+        paymentMethod: 'CASH', description: '', notes: '', customer: { name: 'Asha', phone: '9999999999' }, sale: null
+      }]
+    }
+  };
+  const payload = await getExportPayload(db, 'urd', { from: '2026-09-02', to: '2026-09-02' });
+  assert.equal(payload.rows[0].purity, '999 Fine Silver');
+  assert.equal(payload.columns.find((column) => column.key === 'purity').type, 'text');
+});

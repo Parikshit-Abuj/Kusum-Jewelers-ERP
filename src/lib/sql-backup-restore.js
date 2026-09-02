@@ -58,11 +58,11 @@ const ERP_SCHEMA_COLUMNS = {
   DocumentSequence: ['key', 'lastNumber', 'updatedAt'],
   ItemName: ['id', 'name', 'category', 'createdAt'],
   Product: ['id', 'barcode', 'sku', 'name', 'category', 'metal', 'purity', 'grossWeight', 'stoneWeight', 'netWeight', 'quantity', 'reorderLevel', 'purchasePrice', 'sellingPrice', 'makingChargePerGram', 'makingChargeType', 'makingChargeValue', 'location', 'batchDocNo', 'notes', 'status', 'createdAt', 'updatedAt'],
-  Sale: ['id', 'invoiceNumber', 'customerId', 'customerPan', 'saleDate', 'subtotal', 'discount', 'gstRate', 'gstAmount', 'total', 'urdOffset', 'paid', 'cashPaid', 'upiPaid', 'cardPaid', 'bankPaid', 'balance', 'paymentMethod', 'notes', 'createdAt', 'updatedAt'],
+  Sale: ['id', 'invoiceNumber', 'customerId', 'customerPan', 'saleDate', 'subtotal', 'discount', 'gstRate', 'gstAmount', 'total', 'urdOffset', 'paid', 'cashPaid', 'upiPaid', 'cardPaid', 'bankPaid', 'balance', 'paymentMethod', 'notes', 'cancelledAt', 'createdAt', 'updatedAt'],
   SaleItem: ['id', 'saleId', 'productId', 'productBarcode', 'productSku', 'productName', 'productMetal', 'productPurity', 'grossWeight', 'quantity', 'weight', 'unitPrice', 'metalRate', 'metalAmount', 'makingCharge', 'makingChargeType', 'makingChargeValue', 'taxableAmount', 'lineTotal', 'hsnCode', 'huidCode'],
   StockMovement: ['id', 'productId', 'productBarcode', 'productSku', 'productName', 'productMetal', 'productPurity', 'netWeight', 'type', 'quantity', 'note', 'createdAt'],
   SyncRevision: ['id', 'revision', 'updatedAt'],
-  UrdPurchase: ['id', 'purchaseNumber', 'customerId', 'purchaseDate', 'metal', 'purity', 'grossWeight', 'netWeight', 'ratePerGram', 'totalAmount', 'saleOffset', 'paid', 'paymentMethod', 'description', 'notes', 'saleId', 'createdAt', 'updatedAt']
+  UrdPurchase: ['id', 'purchaseNumber', 'customerId', 'purchaseDate', 'metal', 'purity', 'grossWeight', 'netWeight', 'ratePerGram', 'totalAmount', 'saleOffset', 'paid', 'paymentMethod', 'description', 'notes', 'saleId', 'cancelledAt', 'createdAt', 'updatedAt']
 };
 
 function windowsTimestamp(value = new Date()) {
