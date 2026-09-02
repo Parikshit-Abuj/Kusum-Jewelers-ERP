@@ -30,9 +30,11 @@
   <% } %>
 
   <% if (sales.length) { %>
-    <div class="table-wrap"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Date</th><th>Items</th><th>Payment</th><th class="right">Invoice total</th><th class="right">Net payable</th><th></th></tr></thead><tbody>
+    <div class="table-wrap"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Date</th><th>Items</th><th>Payment</th><th class="right">Invoice total</th><th class="right">Net settlement</th><th></th></tr></thead><tbody>
       <% sales.forEach((sale) => { 
-          const netPayable = Number(sale.total) - Number(sale.urdOffset);
+          const netDifference = Number(sale.total) - Number(sale.urdOffset);
+          const isRefundable = netDifference < 0;
+          const netSettlement = Math.abs(netDifference);
           const rawPhone = (sale.customer?.phone || '').replace(/\D/g, '');
           const waPhone = rawPhone.length === 10 ? '91' + rawPhone : rawPhone;
           const grandTotalFmt = Number(sale.total).toLocaleString('en-IN', { minimumFractionDigits: 2 });
@@ -46,9 +48,9 @@
           </td>
           <td><%= formatDateDisplay(sale.saleDate) %></td>
           <td><%= sale._count.items %></td>
-          <td><span class="pill neutral"><%= sale.paymentMethod.replace('_', ' ') %></span><% if (Number(sale.urdOffset) > 0) { %><small>URD adjusted <%= money(sale.urdOffset) %></small><% } %><% if (Number(sale.balance) > 0) { %><small class="danger-text">Due <%= money(sale.balance) %></small><% } %></td>
+          <td><span class="pill neutral"><%= sale.paymentMethod.replace('_', ' ') %></span><% if (Number(sale.urdOffset) > 0) { %><small>URD valued <%= money(sale.urdOffset) %></small><% } %><% if (isRefundable && Number(sale.urdPurchase?.paid) > 0) { %><small>Refunded by <%= sale.urdPurchase.paymentMethod.replace('_', ' ') %></small><% } %><% if (Number(sale.balance) > 0) { %><small class="danger-text">Due <%= money(sale.balance) %></small><% } %></td>
           <td class="right"><strong><%= money(sale.total) %></strong></td>
-          <td class="right"><strong><%= money(netPayable) %></strong></td>
+          <td class="right"><strong><%= money(netSettlement) %></strong><% if (Number(sale.urdOffset) > 0) { %><small><%= isRefundable ? 'Net refundable' : 'Net payable' %></small><% } %></td>
           <td class="actions">
             <a class="button ghost small" href="/sales/<%= sale.id %>/invoice.pdf" target="_blank" rel="noopener" title="Print / save PDF">PDF</a>
             <% if (waPhone) { %>

@@ -515,9 +515,14 @@ document.querySelectorAll('.flash').forEach((el) => {
   const urdAmount = form.querySelector('[data-urd-amount]');
   const urdOffsetRow = form.querySelector('[data-urd-offset-row]');
   const urdOffsetEl = form.querySelector('[data-urd-offset]');
+  const netPayableLabel = form.querySelector('[data-net-payable-label]');
   const netPayableEl = form.querySelector('[data-net-payable]');
+  const urdRefundMethodWrap = form.querySelector('[data-urd-refund-method]');
+  const urdRefundMethodInput = form.querySelector('select[data-urd-refund-method]');
+  const urdRefundNote = form.querySelector('[data-urd-refund-note]');
 
   let rowCount = 0;
+  let isUrdRefundable = false;
 
   /* ── Add a new barcode row ───────────────────────────────── */
   function addRow() {
@@ -753,6 +758,15 @@ document.querySelectorAll('.flash').forEach((el) => {
     const roundOff = roundMoney(total - beforeRoundOff);
     const urdAdjustment = urdEnabled?.checked ? Math.max(0, n(urdAmount?.value)) : 0;
     const netPayable = Math.max(0, total - urdAdjustment);
+    const netRefundable = Math.max(0, urdAdjustment - total);
+    const nextIsUrdRefundable = netRefundable > 0.005;
+    if (nextIsUrdRefundable) {
+      if (paidInput) paidInput.value = '';
+      if (cashPaidInput) cashPaidInput.value = '';
+      if (upiPaidInput) upiPaidInput.value = '';
+      if (cardPaidInput) cardPaidInput.value = '';
+      if (bankPaidInput) bankPaidInput.value = '';
+    }
     let paid = 0;
     if (paymentMethodInput?.value === 'MIXED') {
       const c = n(cashPaidInput?.value);
@@ -774,11 +788,16 @@ document.querySelectorAll('.flash').forEach((el) => {
     if (totalEl) totalEl.textContent = fmt(total);
     if (urdOffsetRow) urdOffsetRow.hidden = urdAdjustment <= 0;
     if (urdOffsetEl) urdOffsetEl.textContent = fmt(urdAdjustment);
-    if (netPayableEl) netPayableEl.textContent = fmt(netPayable);
+    if (netPayableLabel) netPayableLabel.textContent = nextIsUrdRefundable ? 'Net Refundable' : 'Net Payable';
+    if (netPayableEl) netPayableEl.textContent = fmt(nextIsUrdRefundable ? netRefundable : netPayable);
     if (balanceEl) {
       balanceEl.textContent = fmt(balance);
       const dueRow = balanceEl.closest('.summary-row');
       if (dueRow) dueRow.classList.toggle('has-balance', balance > 0.01);
+    }
+    if (nextIsUrdRefundable !== isUrdRefundable) {
+      isUrdRefundable = nextIsUrdRefundable;
+      updatePaymentMethodState();
     }
   }
 
@@ -790,7 +809,7 @@ document.querySelectorAll('.flash').forEach((el) => {
   if (bankPaidInput) bankPaidInput.addEventListener('input', updateFormTotals);
   function updatePaymentMethodState() {
     if (!paymentMethodInput) return;
-    const mixed = paymentMethodInput.value === 'MIXED';
+    const mixed = !isUrdRefundable && paymentMethodInput.value === 'MIXED';
     if (splitPayment) {
       splitPayment.hidden = !mixed;
       splitPayment.style.display = mixed ? 'grid' : 'none';
@@ -800,16 +819,22 @@ document.querySelectorAll('.flash').forEach((el) => {
     if (cardPaidInput) cardPaidInput.disabled = !mixed;
     if (bankPaidInput) bankPaidInput.disabled = !mixed;
     if (paidInput) {
-      paidInput.disabled = mixed;
-      if (!mixed && (paidInput.value === '0.00' || paidInput.value === '0')) {
+      paidInput.disabled = mixed || isUrdRefundable;
+      if (!mixed && !isUrdRefundable && (paidInput.value === '0.00' || paidInput.value === '0')) {
         paidInput.value = '';
       }
     }
-    updateFormTotals();
+    paymentMethodInput.disabled = isUrdRefundable;
+    if (urdRefundMethodWrap) urdRefundMethodWrap.hidden = !isUrdRefundable;
+    if (urdRefundMethodInput) urdRefundMethodInput.disabled = !isUrdRefundable;
+    if (urdRefundNote) urdRefundNote.hidden = !isUrdRefundable;
   }
 
   if (paymentMethodInput) {
-    paymentMethodInput.addEventListener('change', updatePaymentMethodState);
+    paymentMethodInput.addEventListener('change', () => {
+      updatePaymentMethodState();
+      updateFormTotals();
+    });
     updatePaymentMethodState();
   }
 

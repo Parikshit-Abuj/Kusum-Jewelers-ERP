@@ -28,7 +28,8 @@
       <td><strong><%= sale.invoiceNumber %></strong></td><td><%= sale.saleDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) %></td>
       <td><strong><%= sale.customer?.name || 'Walk-in customer' %></strong><small><%= sale.customer?.phone || '' %></small></td>
       <td><% sale.items.forEach((item) => { %><small><%= item.productName || item.productBarcode || 'Jewellery item' %><%= item.productPurity ? ` · ${item.productPurity}` : '' %></small><% }) %><% if (sale._count.items > sale.items.length) { %><small>+ <%= sale._count.items - sale.items.length %> more</small><% } %></td>
-      <td><span class="pill neutral"><%= sale.paymentMethod.replace('_', ' ') %></span></td><td class="right"><strong><%= money(sale.total) %></strong></td><td class="right"><%= money(sale.paid) %></td><td class="right"><strong class="<%= Number(sale.balance) > 0 ? 'credit-amount' : 'paid-amount' %>"><%= money(sale.balance) %></strong></td>
+      <% const netDifference = Number(sale.total) - Number(sale.urdOffset); const refundable = netDifference < 0; %>
+      <td><span class="pill neutral"><%= refundable ? 'URD REFUND' : sale.paymentMethod.replace('_', ' ') %></span><% if (refundable) { %><small>Net refundable <%= money(Math.abs(netDifference)) %><%= Number(sale.urdPurchase?.paid) > 0 ? ` · ${sale.urdPurchase.paymentMethod.replace('_', ' ')}` : '' %></small><% } %></td><td class="right"><strong><%= money(sale.total) %></strong></td><td class="right"><%= money(sale.paid) %></td><td class="right"><strong class="<%= Number(sale.balance) > 0 ? 'credit-amount' : 'paid-amount' %>"><%= money(sale.balance) %></strong></td>
       <td class="actions"><a class="button ghost small" href="/sales/<%= sale.id %>">Open</a><a class="button ghost small" href="/sales/<%= sale.id %>/invoice.pdf" target="_blank" rel="noopener">PDF</a></td>
     </tr><% }) %>
   </tbody></table></div><%- include('../_pagination', { pagination }) %>

@@ -36,17 +36,11 @@
   <!-- Section 1: Identity -->
   <section class="form-section">
     <h2>Item identity</h2>
-    <div class="form-grid three">
+    <div class="form-grid <%= product ? 'three' : 'two' %>">
       <% if (product) { %>
       <label>Barcode number
         <input value="<%= product.barcode || 'Legacy item' %>" readonly style="font-family:'Courier New',monospace;letter-spacing:.08em;font-size:15px;font-weight:800;">
       </label>
-      <% } else { %>
-      <div class="barcode-preview">
-        <span>Barcode number</span>
-        <strong data-barcode-preview>G 00001</strong>
-        <small>Generated automatically when you save</small>
-      </div>
       <% } %>
       <label>Item name *
         <div class="autocomplete-wrap">

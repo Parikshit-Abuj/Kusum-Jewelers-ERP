@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { invoiceQrPayload, positiveInvoicePayments } = require('../src/lib/sale-invoice-pdf');
+const { invoiceQrPayload, positiveInvoicePayments, urdRefundDetails } = require('../src/lib/sale-invoice-pdf');
 
 test('invoice QR payload includes customer, every sold item, paid amount and credit', () => {
   const payload = invoiceQrPayload({
@@ -44,4 +44,16 @@ test('invoice payment lines omit zero-value Cash and UPI methods', () => {
     positiveInvoicePayments({ paid: 100, cashPaid: 0, upiPaid: 100, cardPaid: 0, bankPaid: 0 }),
     [['UPI', 100]]
   );
+});
+
+test('invoice QR details retain the URD excess refund and its method', () => {
+  const sale = {
+    invoiceNumber: 'INV-URD-REFUND', total: 100, urdOffset: 150, paid: 0, balance: 0,
+    customer: { name: 'Asha' }, items: [{ productName: 'Gold Ring', weight: 2 }],
+    urdPurchase: { paid: 50, paymentMethod: 'UPI' }
+  };
+  const payload = invoiceQrPayload(sale);
+  assert.match(payload, /Net refundable: Rs\. 50\.00/);
+  assert.match(payload, /Refunded by UPI: Rs\. 50\.00/);
+  assert.deepEqual(urdRefundDetails(sale), { amount: 50, recorded: true, method: 'UPI' });
 });

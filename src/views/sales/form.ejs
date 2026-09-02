@@ -906,10 +906,21 @@
         <span>URD Buyback</span>
         <strong>− <span data-urd-offset>₹0.00</span></strong>
       </div>
+      <p class="muted" data-urd-refund-note hidden>Any URD value above the bill is refunded using the method selected below.</p>
 
       <div class="net-payable-box">
-        <span>Net Payable</span>
+        <span data-net-payable-label>Net Payable</span>
         <strong data-net-payable>₹0.00</strong>
+      </div>
+
+      <div class="summary-input-wrap" data-urd-refund-method hidden>
+        <label>Refund Method</label>
+        <select name="urdRefundMethod" data-urd-refund-method disabled>
+          <option value="CASH">Cash</option>
+          <option value="UPI">UPI / QR</option>
+          <option value="CARD">Card</option>
+          <option value="BANK_TRANSFER">Bank Transfer</option>
+        </select>
       </div>
 
       <div class="summary-input-wrap">

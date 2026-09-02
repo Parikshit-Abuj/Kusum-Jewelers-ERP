@@ -25,6 +25,7 @@ const { provisionShopDatabase, enableNetworkSharing, updatePrinterConfiguration,
 const { buildExcelExport } = require('./lib/excel-export');
 const { RESOURCE_LIST, resourceFor, parseDateRange, getExportPayload, archiveData } = require('./lib/data-lifecycle');
 const { paymentMethodFromComponents, reverseAndDeleteCashbookEntry, deleteSettledUrdPurchase } = require('./lib/accounting-reversal');
+const { urdSettlement } = require('./lib/urd-settlement');
 const { number, roundToNearestRupee, asArray, dateInput, startOfToday, dateTimeFromInput, localDateTimeRange, money, grams, formatDateDisplay, nextDocumentNumber, nextBatchDocumentNumber, metalRateFromDailyRate, makingAmount, titleCase } = require('./lib/helpers');
 const { nextBarcode } = require('./lib/barcode-sequence');
 const { upsertItemName } = require('./lib/item-names');
@@ -1554,7 +1555,7 @@ app.get('/sales', async (req, res, next) => {
     const pagination = paginationFor(req, totalItems, req.query.page, 100);
     const sales = await prisma.sale.findMany({
       where,
-      include: { customer: true, _count: { select: { items: true } } },
+      include: { customer: true, urdPurchase: true, _count: { select: { items: true } } },
       orderBy: { saleDate: 'desc' },
       skip: (pagination.page - 1) * pagination.pageSize,
       take: pagination.pageSize
@@ -1715,14 +1716,19 @@ app.post('/sales', async (req, res, next) => {
       const customerId = customer.id;
       const customerPan = String(req.body.customerPan || req.body.existingCustomerPan || customer.panNumber || '').trim().toUpperCase() || null;
       const urdAmount = includeUrdPurchase ? Math.max(0, roundedMoney(number(req.body.urdTotalAmount))) : 0;
+      const settlement = urdSettlement(total, urdAmount);
+      let refundMethod = null;
       if (includeUrdPurchase) {
         if (!customerId) throw new Error('Select the customer before settling their URD purchase against this bill.');
         if (number(req.body.urdNetWeight) <= 0 || number(req.body.urdRatePerGram) <= 0 || urdAmount <= 0) {
           throw new Error('Enter valid URD net weight, rate and purchase amount.');
         }
-        if (urdAmount > total) throw new Error('URD value is higher than this sale total. Record it as a separate URD purchase so the balance can be paid to the customer.');
+        if (settlement.hasRefund) refundMethod = receiptPaymentMethod(req.body.urdRefundMethod);
       }
-      const netPayable = roundedMoney(Math.max(0, total - urdAmount));
+      if (settlement.hasRefund && payment.paid > 0) {
+        throw new Error('Do not enter a sale payment when URD value is higher than the bill. Select the refund method instead.');
+      }
+      const netPayable = settlement.netPayable;
       if (payment.paid > netPayable) throw new Error(`Payment is greater than the net payable amount of ${money(netPayable)}.`);
       const acceptedPaid = payment.paid;
       const balance = roundedMoney(Math.max(0, netPayable - acceptedPaid));
@@ -1746,14 +1752,22 @@ app.post('/sales', async (req, res, next) => {
         data: { customerId, saleId: sale.id, type: 'SALE_CREDIT', amount: balance, reference: sale.invoiceNumber, note: `Credit balance from ${sale.invoiceNumber}` }
       });
       if (includeUrdPurchase) {
-        await tx.urdPurchase.create({ data: {
+        const urdPurchase = await tx.urdPurchase.create({ data: {
           purchaseNumber: await nextDocumentNumber(tx, 'URD', saleDate), customerId, purchaseDate: saleDate,
           metal: req.body.urdMetal || 'GOLD', purity: req.body.urdPurity || null,
           grossWeight: number(req.body.urdGrossWeight), netWeight: number(req.body.urdNetWeight),
-          ratePerGram: number(req.body.urdRatePerGram), totalAmount: urdAmount, saleOffset: urdAmount,
-          paid: 0, paymentMethod: 'MIXED', description: req.body.urdDescription || 'URD purchase settled against sale',
+          ratePerGram: number(req.body.urdRatePerGram), totalAmount: urdAmount, saleOffset: settlement.saleAdjustment,
+          paid: settlement.netRefundable, paymentMethod: refundMethod || 'MIXED', description: req.body.urdDescription || 'URD purchase settled against sale',
           notes: `Settled against sale ${sale.invoiceNumber}`, saleId: sale.id
         } });
+        if (settlement.hasRefund) {
+          await tx.cashbookEntry.create({ data: {
+            entryDate: dateInput(saleDate), type: 'OUT', paymentMethod: refundMethod, amount: settlement.netRefundable,
+            description: `URD refund — ${sale.invoiceNumber}`, reference: sale.invoiceNumber, customerId,
+            urdPurchaseId: urdPurchase.id, syncLedger: false,
+            notes: `URD excess refunded for sale ${sale.invoiceNumber}`
+          } });
+        }
       }
       if (acceptedPaid > 0) {
         for (const recordedPayment of payment.cashbookPayments) {
@@ -1784,14 +1798,14 @@ app.post('/sales', async (req, res, next) => {
 
 app.get('/sales/:id', async (req, res, next) => {
   try {
-    const sale = await prisma.sale.findUniqueOrThrow({ where: { id: Number(req.params.id) }, include: { customer: true, items: { include: { product: true } } } });
+    const sale = await prisma.sale.findUniqueOrThrow({ where: { id: Number(req.params.id) }, include: { customer: true, urdPurchase: true, items: { include: { product: true } } } });
     res.render('sales/invoice', { title: sale.invoiceNumber, sale });
   } catch (error) { next(error); }
 });
 
 app.get('/sales/:id/invoice.pdf', async (req, res, next) => {
   try {
-    const sale = await prisma.sale.findUnique({ where: { id: Number(req.params.id) }, include: { customer: true, items: { include: { product: true } } } });
+    const sale = await prisma.sale.findUnique({ where: { id: Number(req.params.id) }, include: { customer: true, urdPurchase: true, items: { include: { product: true } } } });
     if (!sale) return res.status(404).render('not-found', { title: 'Invoice not found' });
     await writeSaleInvoice(res, sale);
   } catch (error) { next(error); }
@@ -2233,6 +2247,7 @@ app.get('/reports/sales-register', async (req, res, next) => {
         where: saleWhere,
         include: {
           customer: true,
+          urdPurchase: true,
           _count: { select: { items: true } },
           items: { select: { productName: true, productBarcode: true, productPurity: true }, take: 3 }
         },

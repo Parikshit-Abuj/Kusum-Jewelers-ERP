@@ -1,3 +1,4 @@
+<% const urdValuation = Number(sale.urdOffset || 0); const netDifference = Number(sale.total || 0) - urdValuation; const isRefundable = netDifference < 0; const netSettlement = Math.abs(netDifference); const refundRecorded = Number(sale.urdPurchase?.paid || 0) > 0; %>
 <header class="page-header no-print">
   <div>
     <p class="eyebrow">Saved invoice</p>
@@ -45,13 +46,18 @@
     </div>
     <div>
       <small>PAYMENT DETAILS</small>
-      <strong><%= sale.paymentMethod.replace('_', ' ') %></strong>
-      <% if (Number(sale.urdOffset) > 0) { %><span>URD adjusted: <%- money(sale.urdOffset) %></span><% } %>
+      <strong><%= isRefundable ? 'URD Refund' : sale.paymentMethod.replace('_', ' ') %></strong>
+      <% if (urdValuation > 0) { %><span>URD valuation: <%- money(urdValuation) %></span><% } %>
+      <% if (isRefundable) { %>
+        <span style="color:#1f7651;font-weight:700;">Net refundable: <%- money(netSettlement) %></span>
+        <span><%= refundRecorded ? `Refunded by ${sale.urdPurchase.paymentMethod.replace('_', ' ')}` : 'Refund pending' %></span>
+      <% } else { %>
       <span>Paid: <%- money(sale.paid) %></span>
       <% if (Number(sale.balance) > 0) { %>
         <span style="color:#b47a21;font-weight:700;">Balance due: <%- money(sale.balance) %></span>
       <% } else { %>
         <span style="color:#1f7651;">Fully paid ✓</span>
+      <% } %>
       <% } %>
     </div>
   </div>
@@ -113,8 +119,8 @@
       <div><span>GST (<%= sale.gstRate %>%)</span><strong><%- money(sale.gstAmount) %></strong></div>
       <div class="grand"><span>Grand total</span><strong><%- money(sale.total) %></strong></div>
       <% if (Number(sale.urdOffset) > 0) { %>
-      <div><span>URD purchase adjustment</span><strong>− <%- money(sale.urdOffset) %></strong></div>
-      <div style="font-size:12px;font-weight:700;"><span>Net payable</span><span><%- money(Number(sale.total) - Number(sale.urdOffset)) %></span></div>
+      <div><span>URD valuation</span><strong>− <%- money(sale.urdOffset) %></strong></div>
+      <div style="font-size:12px;font-weight:700;"><span><%= isRefundable ? 'Net refundable' : 'Net payable' %></span><span><%- money(netSettlement) %></span></div>
       <% } %>
       <div style="margin-top:8px;font-size:11px;color:#756f69;"><span>Amount paid</span><span><%- money(sale.paid) %></span></div>
       <% if (Number(sale.balance) > 0) { %>

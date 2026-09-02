@@ -2,6 +2,7 @@ const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
 const QRCode = require('qrcode');
+const { urdSettlement } = require('./urd-settlement');
 
 // The shop uses pre-printed A4 sheets. Keep the letterhead area clear and
 // print the ruled invoice body in the same structure as the supplied invoice.
@@ -46,6 +47,17 @@ function positiveInvoicePayments(sale) {
     ['BANK TRANSFER', bankPaid],
     ['OTHER', otherPaid]
   ].filter(([, value]) => value > 0);
+}
+
+function urdRefundDetails(sale) {
+  const settlement = urdSettlement(sale.total, sale.urdOffset);
+  if (!settlement.hasRefund) return null;
+  const recordedAmount = Math.max(0, Number(sale.urdPurchase?.paid || 0));
+  return {
+    amount: recordedAmount > 0 ? recordedAmount : settlement.netRefundable,
+    recorded: recordedAmount > 0,
+    method: String(sale.urdPurchase?.paymentMethod || 'CASH').replaceAll('_', ' ')
+  };
 }
 
 function line(doc, x1, y1, x2, y2, width = 0.5) {
@@ -169,6 +181,8 @@ function invoiceQrPayload(sale) {
     return `${index + 1}. ${itemName} - Net wt: ${weight(netWeight)} g`;
   });
   const balance = Number(sale.balance || 0);
+  const settlement = urdSettlement(sale.total, sale.urdOffset);
+  const refund = urdRefundDetails(sale);
   return [
     'KUSUM JEWELLERS - SALES INVOICE',
     `Invoice: ${qrText(sale.invoiceNumber, '—')}`,
@@ -176,7 +190,9 @@ function invoiceQrPayload(sale) {
     'Items:',
     ...items,
     `Paid amount: Rs. ${amount(sale.paid)}`,
-    ...(balance > 0 ? [`Balance / credit: Rs. ${amount(balance)}`] : [])
+    ...(balance > 0 ? [`Balance / credit: Rs. ${amount(balance)}`] : []),
+    ...(settlement.hasRefund ? [`Net refundable: Rs. ${amount(settlement.netRefundable)}`] : []),
+    ...(refund?.recorded ? [`Refunded by ${refund.method}: Rs. ${amount(refund.amount)}`] : [])
   ].join('\n');
 }
 
@@ -194,12 +210,16 @@ function compactInvoiceQrPayload(sale) {
     return `${index + 1}:${compactQrText(item.productName || product.name)} (${weight(item.weight || product.netWeight)}g)`;
   });
   const balance = Number(sale.balance || 0);
+  const settlement = urdSettlement(sale.total, sale.urdOffset);
+  const refund = urdRefundDetails(sale);
   return [
     `KUSUM|INV:${qrText(sale.invoiceNumber, '—')}`,
     `CUSTOMER:${compactQrText(sale.customer?.name || 'Walk-in customer', 72)}`,
     `ITEMS:${items.join('; ')}`,
     `PAID:Rs.${amount(sale.paid)}`,
-    ...(balance > 0 ? [`BALANCE:Rs.${amount(balance)}`] : [])
+    ...(balance > 0 ? [`BALANCE:Rs.${amount(balance)}`] : []),
+    ...(settlement.hasRefund ? [`REFUNDABLE:Rs.${amount(settlement.netRefundable)}`] : []),
+    ...(refund?.recorded ? [`REFUND:${refund.method}:Rs.${amount(refund.amount)}`] : [])
   ].join('\n');
 }
 
@@ -287,9 +307,12 @@ function footerTotals(doc, sale, y) {
   const sgst = Math.round((gst - cgst) * 100) / 100;
   const taxRate = Number(sale.gstRate || 0) / 2;
   const urd = Number(sale.urdOffset || 0);
-  const netPayable = Math.max(0, Number(sale.total || 0) - urd);
-  const calculatedNet = Math.max(0, gross - discount) + gst - urd;
-  const roundOff = Math.round((netPayable - calculatedNet) * 100) / 100;
+  const settlement = urdSettlement(sale.total, urd);
+  const netPayable = settlement.netPayable;
+  const netRefundable = settlement.netRefundable;
+  const calculatedInvoiceTotal = Math.max(0, gross - discount) + gst;
+  const roundOff = Math.round((Number(sale.total || 0) - calculatedInvoiceTotal) * 100) / 100;
+  const refund = urdRefundDetails(sale);
   const totalX = 414;
   const footerHeight = 140;
   const rows = [
@@ -300,13 +323,16 @@ function footerTotals(doc, sale, y) {
     ['Less URD', amount(urd)],
     ['Less Disc.', amount(discount)],
     ['Round Off', amount(roundOff)],
-    ['Net Payable', amount(netPayable)]
+    [settlement.hasRefund ? 'Net Refundable' : 'Net Payable', amount(settlement.hasRefund ? netRefundable : netPayable)]
   ];
 
   box(doc, page.left, y, page.right - page.left, footerHeight);
   line(doc, totalX, y, totalX, y + footerHeight, 0.45);
   doc.fillColor('#111').font('Helvetica-Bold').fontSize(8.5).text('Invoice Value [ In Words ] :', 27, y + 8);
-  doc.font('Helvetica').fontSize(8.4).text(`Rs. : ${amountInWords(netPayable)}`, 160, y + 8, { width: totalX - 174, ellipsis: true });
+  doc.font('Helvetica').fontSize(8.4).text(
+    settlement.hasRefund ? `Refundable: Rs. ${amountInWords(netRefundable)}` : `Rs. : ${amountInWords(netPayable)}`,
+    160, y + 8, { width: totalX - 174, ellipsis: true }
+  );
   line(doc, page.left, y + 31, totalX, y + 31, 0.45);
   doc.font('Helvetica-Bold').fontSize(8.4).text('Narration :', 27, y + 38);
   doc.font('Helvetica').fontSize(8.2).text(sale.notes || '', 85, y + 38, { width: totalX - 99, height: 17, ellipsis: true });
@@ -319,7 +345,10 @@ function footerTotals(doc, sale, y) {
 
   // Preserve the established Cash/UPI payment box. Blank zero-amount methods
   // are omitted; borders, columns, fonts and the PDF page format do not move.
-  if (cardPaid <= 0 && bankPaid <= 0 && (cashPaid > 0 || upiPaid > 0)) {
+  if (refund) {
+    doc.font('Helvetica-Bold').fontSize(8.2).text(refund.recorded ? `Refunded by ${refund.method}` : 'Refund Due', 50, y + 70, { width: 180 });
+    doc.text(amount(refund.amount), 50, y + 84, { width: 155 });
+  } else if (cardPaid <= 0 && bankPaid <= 0 && (cashPaid > 0 || upiPaid > 0)) {
     const cashAndUpi = detailedPayments.filter(([method]) => method === 'CASH' || method === 'UPI');
     cashAndUpi.forEach(([method, value], index) => {
       doc.font('Helvetica-Bold').fontSize(8.2).text(`By ${method}`, 50, y + 68 + index * 27, { width: 155 });
@@ -340,7 +369,7 @@ function footerTotals(doc, sale, y) {
 
   rows.forEach(([label, value], index) => {
     const rowY = y + 7 + index * 16;
-    const emphasis = label === 'Net Payable';
+    const emphasis = label === 'Net Payable' || label === 'Net Refundable';
     if (emphasis) line(doc, totalX, rowY - 3, page.right, rowY - 3, 0.45);
     doc.fillColor('#111').font(emphasis ? 'Helvetica-Bold' : 'Helvetica').fontSize(emphasis ? 9.3 : 8.8).text(label, totalX + 9, rowY, { width: 90 });
     doc.font(emphasis ? 'Helvetica-Bold' : 'Helvetica').fontSize(emphasis ? 9.3 : 8.8).text(value, 510, rowY, { width: 54, align: 'right' });
@@ -383,4 +412,4 @@ async function writeSaleInvoice(res, sale) {
   doc.end();
 }
 
-module.exports = { writeSaleInvoice, makingDisplay, amountInWords, invoiceQrPayload, positiveInvoicePayments };
+module.exports = { writeSaleInvoice, makingDisplay, amountInWords, invoiceQrPayload, positiveInvoicePayments, urdRefundDetails };

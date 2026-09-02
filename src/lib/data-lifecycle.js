@@ -1,5 +1,6 @@
 const { dateInput, localDateTimeRange, localTimeZoneName } = require('./helpers');
 const { reverseAndDeleteCashbookEntry, deleteSettledUrdPurchase } = require('./accounting-reversal');
+const { urdSettlement } = require('./urd-settlement');
 
 const RESOURCE_LIST = [
   { key: 'sales', label: 'Sales invoices', dateLabel: 'Invoice date', archiveNote: 'Only invoices with no credit balance due can be removed. URD settlements do not block deletion.' },
@@ -230,13 +231,16 @@ async function getExportPayload(db, key, range) {
       const sales = await db.sale.findMany({
         where: { saleDate: dateTimeRange(range) },
         orderBy: [{ saleDate: 'asc' }, { id: 'asc' }],
-        include: { customer: true, items: { include: { product: true } } },
+        include: { customer: true, urdPurchase: true, items: { include: { product: true } } },
         take: MAX_SOURCE_ROWS + 1
       });
       assertExportRows(sales, 'Sales register');
 
       // Line-item rows (one per sold piece)
-      const lineRows = sales.flatMap((s) => s.items.map((item) => ({
+      const lineRows = sales.flatMap((s) => {
+        const settlement = urdSettlement(s.total, s.urdOffset);
+        const refunded = settlement.hasRefund ? num(s.urdPurchase?.paid) : 0;
+        return s.items.map((item) => ({
         saleDate: exportDate(s.saleDate),
         invoiceNumber: s.invoiceNumber,
         customerPhone: s.customer?.phone || '',
@@ -259,7 +263,12 @@ async function getExportPayload(db, key, range) {
         taxableAmount: num(item.taxableAmount),
         gstRate: num(s.gstRate),
         invoiceTotal: num(s.total),
-        urdOffset: num(s.urdOffset),
+        urdValuation: num(s.urdOffset),
+        urdSaleAdjustment: settlement.saleAdjustment,
+        netPayable: settlement.netPayable,
+        netRefundable: settlement.netRefundable,
+        refundedAmount: refunded,
+        refundMethod: refunded > 0 ? paymentLabel(s.urdPurchase?.paymentMethod) : '',
         paid: num(s.paid),
         cashPaid: num(s.cashPaid),
         upiPaid: num(s.upiPaid),
@@ -269,7 +278,8 @@ async function getExportPayload(db, key, range) {
         balance: num(s.balance),
         paymentMethod: paymentLabel(s.paymentMethod),
         notes: str(s.notes)
-      })));
+        }));
+      });
       assertExportRows(lineRows, 'Sales item-wise register');
 
       const allLineColumns = [
@@ -295,7 +305,12 @@ async function getExportPayload(db, key, range) {
         col.currency('taxableAmount', 'Taxable amount'),
         col.number('gstRate', 'GST rate (%)'),
         col.currency('invoiceTotal', 'Invoice total'),
-        col.currency('urdOffset', 'URD adjustment'),
+        col.currency('urdValuation', 'URD valuation'),
+        col.currency('urdSaleAdjustment', 'URD sale adjustment'),
+        col.currency('netPayable', 'Net payable'),
+        col.currency('netRefundable', 'Net refundable'),
+        col.currency('refundedAmount', 'Refunded amount'),
+        col.text('refundMethod', 'Refund method', 16),
         col.currency('paid', 'Total paid'),
         col.currency('cashPaid', 'Cash paid'),
         col.currency('upiPaid', 'UPI paid'),
@@ -309,7 +324,10 @@ async function getExportPayload(db, key, range) {
       const lineColumns = pruneEmptyColumns(allLineColumns, lineRows);
 
       // Invoice summary rows (one per invoice)
-      const invoiceRows = sales.map((s) => ({
+      const invoiceRows = sales.map((s) => {
+        const settlement = urdSettlement(s.total, s.urdOffset);
+        const refunded = settlement.hasRefund ? num(s.urdPurchase?.paid) : 0;
+        return {
         saleDate: exportDate(s.saleDate),
         invoiceNumber: s.invoiceNumber,
         customerPhone: s.customer?.phone || '',
@@ -325,8 +343,12 @@ async function getExportPayload(db, key, range) {
         sgstRate: num(s.gstRate) / 2,
         sgstAmount: num(s.gstAmount) - Math.round((num(s.gstAmount) / 2) * 100) / 100,
         total: num(s.total),
-        urdOffset: num(s.urdOffset),
-        netPayable: Math.max(0, num(s.total) - num(s.urdOffset)),
+        urdValuation: num(s.urdOffset),
+        urdSaleAdjustment: settlement.saleAdjustment,
+        netPayable: settlement.netPayable,
+        netRefundable: settlement.netRefundable,
+        refundedAmount: refunded,
+        refundMethod: refunded > 0 ? paymentLabel(s.urdPurchase?.paymentMethod) : '',
         paid: num(s.paid),
         cashPaid: num(s.cashPaid),
         upiPaid: num(s.upiPaid),
@@ -336,7 +358,8 @@ async function getExportPayload(db, key, range) {
         balance: num(s.balance),
         paymentMethod: paymentLabel(s.paymentMethod),
         notes: str(s.notes)
-      }));
+        };
+      });
 
       const allInvColumns = [
         col.date('saleDate', 'Invoice date'),
@@ -354,8 +377,12 @@ async function getExportPayload(db, key, range) {
         col.number('sgstRate', 'SGST (%)'),
         col.currency('sgstAmount', 'SGST amount'),
         col.currency('total', 'Invoice total'),
-        col.currency('urdOffset', 'URD adjustment'),
+        col.currency('urdValuation', 'URD valuation'),
+        col.currency('urdSaleAdjustment', 'URD sale adjustment'),
         col.currency('netPayable', 'Net payable'),
+        col.currency('netRefundable', 'Net refundable'),
+        col.currency('refundedAmount', 'Refunded amount'),
+        col.text('refundMethod', 'Refund method', 16),
         col.currency('paid', 'Total paid'),
         col.currency('cashPaid', 'Cash paid'),
         col.currency('upiPaid', 'UPI paid'),
@@ -371,6 +398,8 @@ async function getExportPayload(db, key, range) {
       const totalSales = sales.reduce((s, sl) => s + num(sl.total), 0);
       const totalPaid = sales.reduce((s, sl) => s + num(sl.paid), 0);
       const totalDue = sales.reduce((s, sl) => s + num(sl.balance), 0);
+      const totalRefundable = sales.reduce((sum, sale) => sum + urdSettlement(sale.total, sale.urdOffset).netRefundable, 0);
+      const totalRefunded = sales.reduce((sum, sale) => sum + Math.max(0, num(sale.urdPurchase?.paid)), 0);
       const totalItemsSold = sales.reduce(
         (total, sale) => total + sale.items.reduce((quantity, item) => quantity + Number(item.quantity || 0), 0),
         0
@@ -387,6 +416,8 @@ async function getExportPayload(db, key, range) {
             { label: 'Total invoices', value: invoiceRows.length, type: 'integer' },
             { label: 'Total sales value', value: totalSales, type: 'currency' },
             { label: 'Total received', value: totalPaid, type: 'currency' },
+            { label: 'Total net refundable for URD excess', value: totalRefundable, type: 'currency' },
+            { label: 'Total refunded for URD excess', value: totalRefunded, type: 'currency' },
             { label: 'Total due balance', value: totalDue, type: 'currency' }
           ]
         },
@@ -450,8 +481,8 @@ async function getExportPayload(db, key, range) {
         col.currency('ratePerGram', 'Rate / g'),
         col.currency('totalAmount', 'Total amount'),
         col.currency('saleOffset', 'Sale adjustment'),
-        col.currency('cashPayable', 'Amount payable'),
-        col.currency('paid', 'Amount paid'),
+        col.currency('cashPayable', 'Cash payout / refund'),
+        col.currency('paid', 'Amount paid / refunded'),
         col.currency('outstanding', 'Outstanding'),
         col.text('paymentMethod', 'Payment method', 16),
         col.identifier('settledSale', 'Settled invoice', 20),
@@ -475,7 +506,7 @@ async function getExportPayload(db, key, range) {
             { label: 'Total purchases', value: rows.length, type: 'integer' },
             { label: 'Total value', value: totalPurchased, type: 'currency' },
             { label: 'Adjusted in sales', value: totalAdjusted, type: 'currency' },
-            { label: 'Total paid', value: totalPaid, type: 'currency' },
+            { label: 'Total paid / refunded', value: totalPaid, type: 'currency' },
             { label: 'Pending', value: totalPending, type: 'currency' }
           ]
         }]
