@@ -134,6 +134,14 @@
 
 <script>
   (function() {
+    // Only a successful new sale clears the recoverable Create Tax Invoice
+    // draft. Viewing or reprinting an old invoice deliberately leaves it alone.
+    try {
+      if (new URLSearchParams(window.location.search).get('newSale') === '1') {
+        sessionStorage.removeItem('kusum-erp-sale-draft-v1');
+      }
+    } catch (_) { /* Browser storage is optional. */ }
+
     const waBtn = document.getElementById('waInvoiceBtn');
     if (waBtn) {
       waBtn.addEventListener('click', function() {

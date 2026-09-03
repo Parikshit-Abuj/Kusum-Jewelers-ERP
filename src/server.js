@@ -1747,7 +1747,10 @@ app.post('/sales', async (req, res, next) => {
       }
       return sale;
     });
-    redirectWith(res, `/sales/${sale.id}`, 'message', 'Sale saved, stock removed and customer credit updated.');
+    // Mark only a newly created sale so the invoice screen can clear the local
+    // in-progress billing draft. Reopening an older invoice must not discard a
+    // cashier's unfinished new bill.
+    redirectWith(res, `/sales/${sale.id}?newSale=1`, 'message', 'Sale saved, stock removed and customer credit updated.');
   } catch (error) { redirectWith(res, '/sales/new', 'error', error.message || 'Could not save sale.'); }
 });
 

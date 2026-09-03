@@ -491,6 +491,11 @@ document.querySelectorAll('.flash').forEach((el) => {
   const rowsContainer = form.querySelector('[data-rows]');
   const template = form.querySelector('[data-line-template]');
   const addRowBtn = form.querySelector('[data-add-row]');
+  const itemCountEl = form.querySelector('[data-item-count]');
+  const lineEditorModal = form.querySelector('#saleLineEditorModal');
+  const lineEditorHost = form.querySelector('[data-line-editor-host]');
+  const lineEditorTitle = form.querySelector('#saleLineEditorTitle');
+  const lineEditorDone = form.querySelector('[data-line-editor-done]');
   const subtotalEl = form.querySelector('[data-subtotal]');
   const discountInput = form.querySelector('[data-discount]');
   const gstEl = form.querySelector('[data-gst]');
@@ -524,20 +529,120 @@ document.querySelectorAll('.flash').forEach((el) => {
 
   let rowCount = 0;
   let isUrdRefundable = false;
+  let editingRow = null;
+  let restoringDraft = false;
+  let draftSaveTimer = null;
+  let discardingDraft = false;
+
+  function editorFor(row) {
+    if (!row) return null;
+    if (editingRow === row) return lineEditorHost?.querySelector('[data-line-editor]') || null;
+    return row.querySelector('[data-line-editor]');
+  }
+
+  function lineField(row, selector) {
+    return editorFor(row)?.querySelector(selector) || null;
+  }
+
+  function updateLineSummary(row) {
+    const barcode = lineField(row, '[data-barcode]')?.value.trim().toUpperCase() || '';
+    const productId = lineField(row, '[data-product-id]')?.value;
+    const name = row.querySelector('[data-line-summary-name]');
+    const meta = row.querySelector('[data-line-summary-meta]');
+    const purity = row.querySelector('[data-line-summary-purity]');
+    const weight = row.querySelector('[data-line-summary-weight]');
+    const rate = row.querySelector('[data-line-summary-rate]');
+    const making = row.querySelector('[data-line-summary-making]');
+    const amount = row.querySelector('[data-line-summary-amount]');
+    const purityValue = lineField(row, '[data-purity]')?.value.trim();
+    const weightValue = n(lineField(row, '[data-weight]')?.value);
+    const rateValue = n(lineField(row, '[data-metal-rate]')?.value);
+    const makingType = lineField(row, '[data-making-type]')?.value || 'PER_GRAM';
+    const makingValue = n(lineField(row, '[data-making-value]')?.value);
+    const amountValue = n(lineField(row, '[data-taxable-amount]')?.value);
+
+    if (name) name.textContent = row.dataset.productName || (barcode ? 'Looking up barcode…' : 'Pending barcode');
+    if (meta) meta.textContent = row.dataset.productMeta || (productId ? barcode : (barcode || 'Click edit to scan'));
+    if (purity) purity.textContent = purityValue || '—';
+    if (weight) weight.textContent = weightValue > 0 ? `${weightValue.toFixed(3)} g` : '—';
+    if (rate) rate.textContent = rateValue > 0 ? fmt(rateValue) : '—';
+    if (making) {
+      const type = makingType === 'PER_GRAM' ? '/g' : makingType === 'PERCENTAGE' ? '%' : 'fixed';
+      making.textContent = makingValue > 0 ? `${fmt(makingValue)} ${type}` : '—';
+    }
+    if (amount) amount.textContent = amountValue > 0 ? fmt(amountValue) : '₹0.00';
+  }
+
+  function updateAllLineSummaries() {
+    rowsContainer.querySelectorAll('[data-line-item]').forEach(updateLineSummary);
+  }
+
+  function returnEditorToRow(row) {
+    const editor = lineEditorHost?.querySelector('[data-line-editor]');
+    const slot = row?.querySelector('[data-line-editor-slot]');
+    if (editor && slot) slot.appendChild(editor);
+  }
+
+  function closeLineEditor({ discardNew = false } = {}) {
+    const row = editingRow;
+    if (!row) return;
+    const wasNew = row.dataset.newLine === 'true';
+    returnEditorToRow(row);
+    editingRow = null;
+    lineEditorModal.style.display = 'none';
+    lineEditorModal.setAttribute('aria-hidden', 'true');
+    if (discardNew && wasNew) {
+      row.remove();
+      renumberRows();
+      updateFormTotals();
+    } else {
+      delete row.dataset.newLine;
+      updateLineSummary(row);
+    }
+    scheduleDraftSave();
+  }
+
+  function openLineEditor(row, { isNew = false } = {}) {
+    if (!lineEditorModal || !lineEditorHost) return;
+    if (editingRow && editingRow !== row) closeLineEditor();
+    const editor = editorFor(row);
+    if (!editor) return;
+    editingRow = row;
+    if (isNew) row.dataset.newLine = 'true';
+    lineEditorHost.appendChild(editor);
+    lineEditorTitle.textContent = lineField(row, '[data-product-id]')?.value ? 'Edit invoice item' : 'Add barcode';
+    lineEditorModal.style.display = 'flex';
+    lineEditorModal.setAttribute('aria-hidden', 'false');
+    setTimeout(() => lineEditorHost.querySelector('[data-barcode]')?.focus(), 0);
+  }
+
+  function removeLine(row) {
+    if (editingRow === row) {
+      lineEditorHost?.querySelector('[data-line-editor]')?.remove();
+      editingRow = null;
+      lineEditorModal.style.display = 'none';
+      lineEditorModal.setAttribute('aria-hidden', 'true');
+    }
+    row.remove();
+    renumberRows();
+    updateFormTotals();
+    scheduleDraftSave();
+  }
 
   /* ── Add a new barcode row ───────────────────────────────── */
-  function addRow() {
+  function addRow({ openEditor = true } = {}) {
     rowCount++;
     const clone = template.content.cloneNode(true);
     const row = clone.querySelector('[data-line-item]');
     row.querySelector('.line-number').textContent = rowCount;
 
     // Wire up this row's interactivity
-    wireRow(row);
+    row._saleLine = wireRow(row);
     rowsContainer.appendChild(row);
-
-    // Focus barcode input
-    row.querySelector('[data-barcode]').focus();
+    updateItemCount();
+    updateLineSummary(row);
+    if (openEditor) openLineEditor(row, { isNew: true });
+    return row;
   }
 
   /* ── Wire a single row ──────────────────────────────────── */
@@ -553,7 +658,8 @@ document.querySelectorAll('.flash').forEach((el) => {
     const makingValueInput = row.querySelector('[data-making-value]');
     const taxableInput = row.querySelector('[data-taxable-amount]');
     const lineHelp = row.querySelector('[data-line-help]');
-    const removeBtn = row.querySelector('[data-remove-row]');
+    const editBtn = row.querySelector('[data-edit-row]');
+    const removeBtn = row.querySelector('[data-remove-summary]');
 
     let lookupTimer = null;
     let productData = null;
@@ -594,6 +700,8 @@ document.querySelectorAll('.flash').forEach((el) => {
       }
 
       updateFormTotals();
+      updateLineSummary(row);
+      scheduleDraftSave();
     }
 
     async function lookupBarcode(barcode) {
@@ -606,6 +714,9 @@ document.querySelectorAll('.flash').forEach((el) => {
       setRowStatus(row, 'loading', 'Looking up barcode…');
       productIdInput.value = '';
       productData = null;
+      delete row.dataset.productName;
+      delete row.dataset.productMeta;
+      updateLineSummary(row);
 
       try {
         const date = getSaleDate();
@@ -621,6 +732,8 @@ document.querySelectorAll('.flash').forEach((el) => {
 
         productData = data.product;
         productIdInput.value = data.product.id;
+        row.dataset.productName = data.product.name;
+        row.dataset.productMeta = `${data.product.barcode} · ${data.product.category}`;
 
         replaceWithTextElements(itemDetails, [
           { tag: 'strong', text: data.product.name },
@@ -641,6 +754,14 @@ document.querySelectorAll('.flash').forEach((el) => {
 
         taxableInput.dataset.manualOverride = '';
         recalcRow();
+        updateLineSummary(row);
+        scheduleDraftSave();
+
+        // A scanner normally finishes by sending Enter. Once its lookup has
+        // completed, continue directly to the editable weight field.
+        if (editingRow === row && document.activeElement === barcodeInput) {
+          weightInput.focus();
+        }
 
         // Show warnings
         if (data.rateWarning) {
@@ -665,6 +786,8 @@ document.querySelectorAll('.flash').forEach((el) => {
       if (lookupController) lookupController.abort();
       productIdInput.value = '';
       productData = null;
+      delete row.dataset.productName;
+      delete row.dataset.productMeta;
       if (purityInput) purityInput.value = '';
       replaceWithTextElements(itemDetails, [
         { tag: 'strong', text: 'Waiting for barcode…' },
@@ -676,6 +799,8 @@ document.querySelectorAll('.flash').forEach((el) => {
       } else {
         setRowStatus(row, '', '');
       }
+      updateLineSummary(row);
+      scheduleDraftSave();
     });
 
     barcodeInput.addEventListener('keydown', (e) => {
@@ -696,6 +821,10 @@ document.querySelectorAll('.flash').forEach((el) => {
     // Making charge changes
     if (makingTypeSelect) makingTypeSelect.addEventListener('change', recalcRow);
     if (makingValueInput) makingValueInput.addEventListener('input', recalcRow);
+    if (purityInput) purityInput.addEventListener('input', () => {
+      updateLineSummary(row);
+      scheduleDraftSave();
+    });
 
     // HUID code: auto-convert to UPPERCASE in real time
     const huidInput = row.querySelector('[data-huid-code]');
@@ -714,23 +843,51 @@ document.querySelectorAll('.flash').forEach((el) => {
     taxableInput.addEventListener('input', () => {
       taxableInput.dataset.manualOverride = '1';
       updateFormTotals();
+      updateLineSummary(row);
+      scheduleDraftSave();
     });
+
+    if (editBtn) editBtn.addEventListener('click', () => openLineEditor(row));
 
     // Remove row
     if (removeBtn) {
-      removeBtn.addEventListener('click', () => {
-        row.remove();
-        renumberRows();
-        updateFormTotals();
-      });
+      removeBtn.addEventListener('click', () => removeLine(row));
     }
+
+    return {
+      async restore(values) {
+        barcodeInput.value = values.barcode || '';
+        if (values.barcode) await lookupBarcode(values.barcode);
+        weightInput.value = values.weight || '';
+        if (purityInput) purityInput.value = values.purity || '';
+        metalRateInput.value = values.metalRate || '';
+        makingTypeSelect.value = values.makingChargeType || 'PER_GRAM';
+        makingValueInput.value = values.makingChargeValue || '';
+        taxableInput.value = values.taxableAmount || '';
+        taxableInput.dataset.manualOverride = values.taxableManual ? '1' : '';
+        qtyInput.value = '1';
+        const hsn = row.querySelector('[data-hsn-code]');
+        const huid = row.querySelector('[data-huid-code]');
+        if (hsn) hsn.value = values.hsnCode || '';
+        if (huid) huid.value = values.huidCode || '';
+        if (values.productName) row.dataset.productName = values.productName;
+        if (values.productMeta) row.dataset.productMeta = values.productMeta;
+        recalcRow();
+        updateLineSummary(row);
+      }
+    };
   }
 
   function setRowStatus(row, type, message) {
-    const help = row.querySelector('[data-line-help]');
-    if (!help) return;
-    help.className = `line-help ${type}`;
-    help.textContent = message;
+    const help = lineField(row, '[data-line-help]');
+    if (help) {
+      help.className = `line-help ${type}`;
+      help.textContent = message;
+    }
+    if (type === 'error') {
+      const meta = row.querySelector('[data-line-summary-meta]');
+      if (meta) meta.textContent = message;
+    }
   }
 
   function renumberRows() {
@@ -739,13 +896,22 @@ document.querySelectorAll('.flash').forEach((el) => {
       if (num) num.textContent = i + 1;
     });
     rowCount = rowsContainer.querySelectorAll('[data-line-item]').length;
+    updateItemCount();
+  }
+
+  function updateItemCount() {
+    if (!itemCountEl) return;
+    const count = rowsContainer.querySelectorAll('[data-line-item]').length;
+    itemCountEl.textContent = `${count} item${count === 1 ? '' : 's'}`;
   }
 
   /* ── Live totals ─────────────────────────────────────────── */
   function updateFormTotals() {
     let subtotal = 0;
-    rowsContainer.querySelectorAll('[data-taxable-amount]').forEach((input) => {
-      subtotal += n(input.value);
+    // The row currently being edited is temporarily mounted inside the modal,
+    // so calculate through each logical row rather than only descendant inputs.
+    rowsContainer.querySelectorAll('[data-line-item]').forEach((row) => {
+      subtotal += n(lineField(row, '[data-taxable-amount]')?.value);
     });
 
     subtotal = roundMoney(subtotal);
@@ -886,27 +1052,151 @@ document.querySelectorAll('.flash').forEach((el) => {
   if (urdRate) urdRate.addEventListener('input', recalcUrdAmount);
   if (urdAmount) urdAmount.addEventListener('input', updateFormTotals);
 
+  if (lineEditorDone) {
+    lineEditorDone.addEventListener('click', () => {
+      const row = editingRow;
+      if (!row) return;
+      if (!lineField(row, '[data-product-id]')?.value) {
+        setRowStatus(row, 'error', 'Scan a valid barcode before adding this item to the bill.');
+        lineEditorHost?.querySelector('[data-barcode]')?.focus();
+        return;
+      }
+      closeLineEditor();
+    });
+  }
+  lineEditorModal?.querySelectorAll('[data-line-editor-cancel]').forEach((button) => {
+    button.addEventListener('click', () => closeLineEditor({ discardNew: true }));
+  });
+  lineEditorModal?.addEventListener('click', (event) => {
+    if (event.target === lineEditorModal) closeLineEditor({ discardNew: true });
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && lineEditorModal?.style.display === 'flex') closeLineEditor({ discardNew: true });
+  });
+
+  const saleDraftKey = 'kusum-erp-sale-draft-v1';
+
+  function nonLineDraftControls() {
+    return Array.from(form.querySelectorAll('input, select, textarea')).filter((control) => (
+      control.name &&
+      control.name !== 'invoiceNumber' &&
+      control.name !== 'gstRate' &&
+      !control.closest('[data-line-item]') &&
+      !control.closest('[data-line-editor]')
+    ));
+  }
+
+  function snapshotLine(row) {
+    const value = (selector) => lineField(row, selector)?.value || '';
+    return {
+      barcode: value('[data-barcode]'), productId: value('[data-product-id]'),
+      weight: value('[data-weight]'), purity: value('[data-purity]'), metalRate: value('[data-metal-rate]'),
+      makingChargeType: value('[data-making-type]'), makingChargeValue: value('[data-making-value]'),
+      taxableAmount: value('[data-taxable-amount]'), taxableManual: Boolean(lineField(row, '[data-taxable-amount]')?.dataset.manualOverride),
+      hsnCode: value('[data-hsn-code]'), huidCode: value('[data-huid-code]'),
+      productName: row.dataset.productName || '', productMeta: row.dataset.productMeta || ''
+    };
+  }
+
+  function saveSaleDraft() {
+    if (restoringDraft || discardingDraft) return;
+    try {
+      const controls = nonLineDraftControls().map((control) => ({
+        value: control.value,
+        checked: control.type === 'checkbox' ? control.checked : undefined
+      }));
+      const lines = Array.from(rowsContainer.querySelectorAll('[data-line-item]')).map(snapshotLine);
+      sessionStorage.setItem(saleDraftKey, JSON.stringify({ savedAt: Date.now(), controls, lines }));
+    } catch (_) {
+      // Draft recovery is a convenience only; billing remains fully usable if
+      // browser storage is unavailable.
+    }
+  }
+
+  function scheduleDraftSave() {
+    if (restoringDraft) return;
+    clearTimeout(draftSaveTimer);
+    draftSaveTimer = setTimeout(saveSaleDraft, 180);
+  }
+
+  async function restoreSaleDraft() {
+    let draft;
+    try {
+      draft = JSON.parse(sessionStorage.getItem(saleDraftKey) || 'null');
+      if (!draft || Date.now() - Number(draft.savedAt || 0) > 24 * 60 * 60 * 1000) {
+        sessionStorage.removeItem(saleDraftKey);
+        return;
+      }
+    } catch (_) {
+      return;
+    }
+
+    restoringDraft = true;
+    const restoreControls = () => {
+      const controls = nonLineDraftControls();
+      draft.controls?.forEach((saved, index) => {
+        const control = controls[index];
+        if (!control) return;
+        if (control.type === 'checkbox') control.checked = Boolean(saved.checked);
+        else control.value = saved.value || '';
+      });
+    };
+    restoreControls();
+    toggleUrdFields();
+    // Enabling URD chooses the current rate by default. Reapply the saved form
+    // values afterwards so a cashier's manually entered rate is not lost.
+    restoreControls();
+    updatePaymentMethodState();
+
+    for (const savedLine of draft.lines || []) {
+      const row = addRow({ openEditor: false });
+      await row._saleLine?.restore(savedLine);
+    }
+
+    updateAllLineSummaries();
+    updateFormTotals();
+    restoringDraft = false;
+    const restoredPhone = form.querySelector('[data-customer-phone]');
+    if (restoredPhone?.value) restoredPhone.dispatchEvent(new Event('input', { bubbles: true }));
+    scheduleDraftSave();
+  }
+
+  form.addEventListener('input', scheduleDraftSave);
+  form.addEventListener('change', scheduleDraftSave);
+  window.addEventListener('pagehide', saveSaleDraft);
+  document.querySelector('[data-discard-sale-draft]')?.addEventListener('click', () => {
+    discardingDraft = true;
+    try { sessionStorage.removeItem(saleDraftKey); } catch (_) { /* storage unavailable */ }
+  });
+
   if (addRowBtn) {
     addRowBtn.addEventListener('click', addRow);
   }
 
   form.addEventListener('submit', (event) => {
-    const unresolved = Array.from(rowsContainer.querySelectorAll('[data-line-item]')).find((row) => {
-      const barcode = row.querySelector('[data-barcode]')?.value.trim();
-      const productId = row.querySelector('[data-product-id]')?.value;
+    const rows = Array.from(rowsContainer.querySelectorAll('[data-line-item]'));
+    if (!rows.length) {
+      event.preventDefault();
+      const row = addRow();
+      setRowStatus(row, 'error', 'Add at least one barcode before generating the bill.');
+      return;
+    }
+    const unresolved = rows.find((row) => {
+      const barcode = lineField(row, '[data-barcode]')?.value.trim();
+      const productId = lineField(row, '[data-product-id]')?.value;
       return barcode && !productId;
     });
     if (unresolved) {
       event.preventDefault();
       setRowStatus(unresolved, 'error', 'Wait for this barcode to load, or scan it again before saving.');
-      unresolved.querySelector('[data-barcode]')?.focus();
+      lineField(unresolved, '[data-barcode]')?.focus();
     }
   });
 
-  // Add first row automatically
-  addRow();
   toggleUrdFields();
   updateFormTotals();
+  updateItemCount();
+  restoreSaleDraft();
 })();
 
 /* ═══════════════════════════════════════════════════════════════
