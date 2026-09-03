@@ -5,14 +5,14 @@
   "description": "Lightweight jewellery ERP for Kusum Jewelers",
   "main": "electron-main.js",
   "scripts": {
-    "dev": "node --watch src/server.js",
+    "dev": "node --watch-path=src --watch-path=public src/server.js",
     "start": "node src/server.js",
     "desktop": "electron .",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:seed": "prisma db seed",
     "db:backfill": "node prisma/backfill.js",
-    "test": "node --test test/barcode-sequence.test.js test/data-lifecycle.test.js test/excel-export.test.js test/product-search-filters.test.js test/sale-invoice-pdf.test.js test/top-selling-items.test.js test/tspl-labels.test.js test/urd-settlement.test.js"
+    "test": "node --test test/barcode-sequence.test.js test/data-lifecycle.test.js test/excel-export.test.js test/product-search-filters.test.js test/sale-invoice-pdf.test.js test/sales-edit.test.js test/top-selling-items.test.js test/tspl-labels.test.js test/urd-settlement.test.js"
   },
   "prisma": {
     "seed": "node prisma/seed.js"
@@ -26,7 +26,6 @@
     "express-ejs-layouts": "^2.5.1",
     "express-session": "^1.19.0",
     "morgan": "^1.10.0",
-    "multer": "^2.2.0",
     "mysql2": "^3.23.4",
     "pdfkit": "^0.19.1",
     "qrcode": "^1.5.4"

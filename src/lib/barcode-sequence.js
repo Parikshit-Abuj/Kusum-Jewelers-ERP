@@ -1,7 +1,7 @@
 // Five Base-36 characters cover 60,466,175 values from 00001 through ZZZZZ.
 // The visible barcode format is intentionally separate from the sequence key:
-// old labels such as "G22 84" remain valid while new labels start at
-// "G 00001" without any possibility of a duplicate.
+// old labels remain valid while new labels start at "G 00001" without any
+// possibility of a duplicate.
 const BASE36_WIDTH = 5;
 const BASE36_MAX_SERIAL = (36 ** BASE36_WIDTH) - 1;
 
@@ -27,7 +27,7 @@ function formatBarcode(prefix, serial) {
 }
 
 /**
- * Reserve the next Base-36 barcode while holding the caller's database
+ * Reserve the next five-character Base-36 barcode while holding the caller's database
  * transaction. `LAST_INSERT_ID(expr)` is connection-local in MySQL, making
  * the returned value safe even when several shop PCs add the same metal and
  * purity at the exact same time.

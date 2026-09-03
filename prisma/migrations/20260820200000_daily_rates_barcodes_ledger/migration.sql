@@ -1,10 +1,10 @@
 -- Add rate-driven inventory and billing fields.
-ALTER TABLE `product`
+ALTER TABLE `Product`
   ADD COLUMN `barcode` VARCHAR(191) NULL,
   ADD COLUMN `makingChargeType` ENUM('FIXED', 'PER_GRAM', 'PERCENTAGE') NOT NULL DEFAULT 'PER_GRAM',
   ADD COLUMN `makingChargeValue` DECIMAL(12, 2) NOT NULL DEFAULT 0;
 
-ALTER TABLE `saleitem`
+ALTER TABLE `SaleItem`
   ADD COLUMN `makingChargeType` ENUM('FIXED', 'PER_GRAM', 'PERCENTAGE') NOT NULL DEFAULT 'PER_GRAM',
   ADD COLUMN `makingChargeValue` DECIMAL(12, 2) NOT NULL DEFAULT 0,
   ADD COLUMN `metalAmount` DECIMAL(12, 2) NOT NULL DEFAULT 0,

@@ -5,6 +5,24 @@ const mysql = require('mysql2/promise');
 const mysqlCore = require('mysql2');
 const { hashPassword, hasConfiguredPassword, requiredPassword } = require('./auth-security');
 
+// A few very early migrations used lower-case table references. They work on
+// the case-insensitive Windows MySQL installations used by the shop, but not
+// on case-sensitive MySQL servers. Their corrected SQL must remain compatible
+// with databases installed by an earlier release, whose migration history
+// naturally contains the original file checksums.
+const LEGACY_MIGRATION_CHECKSUMS = Object.freeze({
+  '20260820200000_daily_rates_barcodes_ledger': new Set(['30659da325d2d6ddb6bd2afc79500d2ce5d98b0e0c7452aaeb35c2945ae22ff1']),
+  '20260821031245_add_urd_purchase_and_cashbook_sync': new Set(['62a6e77ccf86f6bae7aaf74073ab5c651606d9dd1c800e43cc97a6241c0b7bfc']),
+  '20260821090000_sale_urd_settlement_and_cash_sync': new Set(['9498636353ef73e3420f77ce6e02942a88572483d048e97c9fe9ef03738448d7']),
+  '20260823093000_add_sale_split_payments': new Set(['78b39e4f0f03d2a676072fd9a39ec5a1fd8a2eada4dafea489dfc1bf7fcbd368'])
+});
+
+function migrationChecksumMatches(migrationName, installedChecksum, bundledChecksum) {
+  const installed = String(installedChecksum || '').toLowerCase();
+  const bundled = String(bundledChecksum || '').toLowerCase();
+  return installed === bundled || LEGACY_MIGRATION_CHECKSUMS[migrationName]?.has(installed) === true;
+}
+
 function input(value) {
   return String(value || '').trim();
 }
@@ -294,7 +312,7 @@ async function runBundledMigrations(appRoot, databaseUrl) {
       );
       const completed = applied.find((row) => row.finished_at && !row.rolled_back_at);
       if (completed) {
-        if (String(completed.checksum || '').toLowerCase() !== checksum.toLowerCase()) {
+        if (!migrationChecksumMatches(migrationName, completed.checksum, checksum)) {
           throw new Error(`Bundled migration ${migrationName} was changed after it was installed. Use an intact ERP release before opening the shop database.`);
         }
         continue;
@@ -395,6 +413,11 @@ async function verifyClientConnection(databaseUrl, appRoot) {
       const migrationsPath = path.join(appRoot, 'prisma', 'migrations');
       const bundled = fs.readdirSync(migrationsPath, { withFileTypes: true })
         .filter((entry) => entry.isDirectory())
+        // A Prisma migration is its migration.sql file. Ignore an empty
+        // directory left behind by an abandoned local experiment; the main
+        // migration runner uses the same definition so server and client
+        // validation cannot disagree.
+        .filter((entry) => fs.existsSync(path.join(migrationsPath, entry.name, 'migration.sql')))
         .map((entry) => {
           const sql = fs.readFileSync(path.join(migrationsPath, entry.name, 'migration.sql'), 'utf8');
           return { name: entry.name, checksum: crypto.createHash('sha256').update(sql).digest('hex') };
@@ -552,4 +575,4 @@ function updateLoginConfiguration({ configPath, currentEnv, username, password }
   return config;
 }
 
-module.exports = { provisionShopDatabase, enableNetworkSharing, updatePrinterConfiguration, updateLoginConfiguration, parseDatabaseConnection, isLocalHost, runBundledMigrations, verifyClientConnection };
+module.exports = { provisionShopDatabase, enableNetworkSharing, updatePrinterConfiguration, updateLoginConfiguration, parseDatabaseConnection, isLocalHost, runBundledMigrations, verifyClientConnection, migrationChecksumMatches };

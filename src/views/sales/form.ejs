@@ -1,3 +1,4 @@
+<% const editingSale = typeof editSale !== 'undefined' && Boolean(editSale); const editSaleJson = editingSale ? JSON.stringify(editSale).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026') : 'null'; %>
 <style>
   /* ── Ultra Clean Professional POS Billing Desk ─────────────────── */
   .billing-wrapper {
@@ -749,8 +750,8 @@
     <div class="billing-title-area">
       <div class="billing-badge-icon">KJ</div>
       <div class="billing-title-text">
-        <h1>Create Tax Invoice</h1>
-        <p>Customer → scan items → payment</p>
+        <h1><%= editingSale ? `Edit ${editSale.invoiceNumber}` : 'Create Tax Invoice' %></h1>
+        <p><%= editingSale ? 'Update invoice details → save revised bill' : 'Customer → scan items → payment' %></p>
       </div>
     </div>
 
@@ -771,12 +772,15 @@
         </span>
         <a class="button ghost small" href="/rates" style="border-radius:20px; font-size:11px; padding:3px 8px;">Update →</a>
       <% } %>
-      <a class="button ghost small" href="/sales" data-discard-sale-draft style="border-radius:20px; font-size:11px; padding:3px 8px;">Cancel</a>
+      <a class="button ghost small" href="<%= editingSale ? `/sales/${editSale.id}` : '/sales' %>" data-discard-sale-draft style="border-radius:20px; font-size:11px; padding:3px 8px;">Cancel</a>
+    </div>
+  </header>
+
     </div>
   </header>
 
   <!-- POS Form -->
-  <form class="transaction-layout barcode-sale" method="post" action="/sales" data-barcode-sale>
+  <form class="transaction-layout barcode-sale" method="post" action="<%= editingSale ? `/sales/${editSale.id}/edit` : '/sales' %>" data-barcode-sale data-edit-sale="<%= editingSale ? 'true' : 'false' %>">
 
     <!-- Left Main Area -->
     <section class="transaction-main">
@@ -793,14 +797,34 @@
           </div>
           <div class="pos-field">
             <label>Billing Date</label>
-            <input name="saleDate" type="date" value="<%= dateInput() %>" data-sale-date required>
+            <input name="saleDate" type="date" value="<%= editingSale ? editSale.saleDate : dateInput() %>" data-sale-date required>
           </div>
           <div class="pos-field">
             <label>Customer Mobile Number *</label>
-            <input name="customerPhone" inputmode="numeric" autocomplete="tel" maxlength="15" required placeholder="Type 10-digit mobile number" data-customer-phone autofocus>
+            <input name="customerPhone" inputmode="numeric" autocomplete="tel" maxlength="15" required placeholder="Type 10-digit mobile number" data-customer-phone autofocus value="<%= editingSale?.customer?.phone || '' %>">
           </div>
         </div>
 
+        <% if (editingSale) { %>
+        <div class="cust-new-grid" data-edit-sale-customer style="margin-top: 10px;">
+          <div class="pos-field">
+            <label>Customer Name *</label>
+            <input name="customerName" required data-title-case data-edit-customer-name value="<%= editSale.customer?.name || '' %>" placeholder="Customer full name">
+          </div>
+          <div class="pos-field">
+            <label>PAN No. (optional)</label>
+            <input name="customerPan" data-edit-customer-pan maxlength="10" autocomplete="off" value="<%= editSale.customer?.panNumber || '' %>" style="text-transform:uppercase;">
+          </div>
+          <div class="pos-field">
+            <label>Email (optional)</label>
+            <input name="customerEmail" type="email" data-edit-customer-email value="<%= editSale.customer?.email || '' %>" placeholder="customer@gmail.com">
+          </div>
+          <div class="pos-field">
+            <label>City / Address</label>
+            <input name="customerAddress" data-title-case data-edit-customer-address value="<%= editSale.customer?.address || '' %>" placeholder="City / Area">
+          </div>
+        </div>
+        <% } else { %>
         <!-- Customer Lookup Component -->
         <section class="customer-lookup" data-customer-lookup>
           <input type="hidden" name="customerId" data-customer-id>
@@ -843,6 +867,7 @@
             </div>
           </div>
         </section>
+        <% } %>
       </div>
 
       <!-- 2. Scanned Jewellery Items -->
@@ -863,7 +888,7 @@
         <!-- 3. URD Buyback / Old Gold Exchange Settlement Card -->
         <section class="urd-settlement" data-sale-urd>
           <label class="urd-toggle">
-            <input type="checkbox" name="includeUrdPurchase" data-urd-enabled>
+            <input type="checkbox" name="includeUrdPurchase" data-urd-enabled <%= editingSale?.urd ? 'checked' : '' %>>
             <span>
               <strong>Adjust Old Gold / Silver (URD Buyback) against this bill</strong>
               <small>Deduct scrap jewellery exchange value directly from this bill's net payable.</small>
@@ -874,32 +899,32 @@
             <div class="urd-grid">
               <div class="pos-field">
                 <label>Metal</label>
-                <select name="urdMetal" data-urd-metal><option value="GOLD">Gold</option><option value="SILVER">Silver</option></select>
+                <select name="urdMetal" data-urd-metal><option value="GOLD" <%= editingSale?.urd?.metal === 'GOLD' ? 'selected' : '' %>>Gold</option><option value="SILVER" <%= editingSale?.urd?.metal === 'SILVER' ? 'selected' : '' %>>Silver</option></select>
               </div>
               <div class="pos-field">
                 <label>Purity</label>
-                <select name="urdPurity" data-urd-purity-select><option value="22K">22K</option><option value="24K">24K</option></select>
-                <input name="urdPurity" data-urd-purity-manual hidden disabled maxlength="50" placeholder="Enter silver purity">
+                <select name="urdPurity" data-urd-purity-select><option value="22K" <%= editingSale?.urd?.purity === '22K' ? 'selected' : '' %>>22K</option><option value="24K" <%= editingSale?.urd?.purity === '24K' ? 'selected' : '' %>>24K</option></select>
+                <input name="urdPurity" data-urd-purity-manual hidden disabled maxlength="50" placeholder="Enter silver purity" value="<%= editingSale?.urd?.metal === 'SILVER' ? editSale.urd.purity : '' %>">
               </div>
               <div class="pos-field">
                 <label>Gross Wt. (g)</label>
-                <input name="urdGrossWeight" type="number" min="0" step="0.001" value="0" data-urd-gross-weight>
+                <input name="urdGrossWeight" type="number" min="0" step="0.001" value="<%= editingSale?.urd ? editSale.urd.grossWeight : 0 %>" data-urd-gross-weight>
               </div>
               <div class="pos-field">
                 <label>Net Wt. (g)</label>
-                <input name="urdNetWeight" type="number" min="0" step="0.001" value="0" data-urd-net-weight>
+                <input name="urdNetWeight" type="number" min="0" step="0.001" value="<%= editingSale?.urd ? editSale.urd.netWeight : 0 %>" data-urd-net-weight>
               </div>
               <div class="pos-field">
                 <label>Rate / g (₹)</label>
-                <input name="urdRatePerGram" type="number" min="0" step="0.01" value="0" data-urd-rate data-rate-22="<%= rateInfo.rate ? Number(rateInfo.rate.gold22k) : 0 %>" data-rate-24="<%= rateInfo.rate ? Number(rateInfo.rate.gold24k) : 0 %>" data-rate-silver="<%= rateInfo.rate ? Number(rateInfo.rate.silver) : 0 %>">
+                <input name="urdRatePerGram" type="number" min="0" step="0.01" value="<%= editingSale?.urd ? editSale.urd.ratePerGram : 0 %>" data-urd-rate data-rate-22="<%= rateInfo.rate ? Number(rateInfo.rate.gold22k) : 0 %>" data-rate-24="<%= rateInfo.rate ? Number(rateInfo.rate.gold24k) : 0 %>" data-rate-silver="<%= rateInfo.rate ? Number(rateInfo.rate.silver) : 0 %>">
               </div>
               <div class="pos-field">
                 <label>URD Total (₹)</label>
-                <input name="urdTotalAmount" type="number" min="0" step="0.01" value="0" data-urd-amount>
+                <input name="urdTotalAmount" type="number" min="0" step="0.01" value="<%= editingSale?.urd ? editSale.urd.totalAmount : 0 %>" data-urd-amount>
               </div>
               <div class="pos-field" style="grid-column: span 2;">
                 <label>Description</label>
-                <input name="urdDescription" placeholder="Old melted gold chain, broken ring, etc.">
+                <input name="urdDescription" placeholder="Old melted gold chain, broken ring, etc." value="<%= editingSale?.urd?.description || '' %>">
               </div>
             </div>
           </div>
@@ -924,9 +949,10 @@
                 <div class="line-header-row">
                   <div class="barcode-field-wrap">
                     <label>Scan / Type Barcode</label>
-                    <input name="barcode" autocomplete="off" placeholder="e.g. G 00001" data-barcode required>
+                  <input name="barcode" autocomplete="off" placeholder="e.g. G 00001" data-barcode required>
                   </div>
                   <input type="hidden" name="productId" data-product-id>
+                  <input type="hidden" name="saleItemId" data-sale-item-id>
                   <div class="scanned-item" data-item-details>
                     <strong>Waiting for barcode…</strong>
                     <small>Item details will appear automatically</small>
@@ -957,9 +983,9 @@
           </div>
         </template>
 
-        <details class="billing-optional">
+        <details class="billing-optional" <%= editingSale ? 'open' : '' %>>
           <summary>Invoice notes / reference</summary>
-          <textarea name="notes" rows="2" placeholder="Bargaining note, hallmark reference, etc." style="width:100%; border:1.5px solid #ded5c5; border-radius:8px; padding:8px 10px; font-family:inherit; box-sizing:border-box;"></textarea>
+          <textarea name="notes" rows="2" placeholder="Bargaining note, hallmark reference, etc." style="width:100%; border:1.5px solid #ded5c5; border-radius:8px; padding:8px 10px; font-family:inherit; box-sizing:border-box;"><%= editingSale?.notes || '' %></textarea>
         </details>
       </div>
     </section>
@@ -975,7 +1001,7 @@
 
       <div class="summary-input-wrap">
         <label>Discount / Concession (₹)</label>
-        <input name="discount" type="number" min="0" step="0.01" placeholder="0.00" data-discount>
+        <input name="discount" type="number" min="0" step="0.01" placeholder="0.00" data-discount value="<%= editingSale ? editSale.discount : '' %>">
       </div>
 
       <div class="summary-row">
@@ -1009,16 +1035,16 @@
       <div class="summary-input-wrap" data-urd-refund-method hidden>
         <label>Refund Method</label>
         <select name="urdRefundMethod" data-urd-refund-method disabled>
-          <option value="CASH">Cash</option>
-          <option value="UPI">UPI / QR</option>
-          <option value="CARD">Card</option>
-          <option value="BANK_TRANSFER">Bank Transfer</option>
+          <option value="CASH" <%= editingSale?.urd?.paymentMethod === 'CASH' ? 'selected' : '' %>>Cash</option>
+          <option value="UPI" <%= editingSale?.urd?.paymentMethod === 'UPI' ? 'selected' : '' %>>UPI / QR</option>
+          <option value="CARD" <%= editingSale?.urd?.paymentMethod === 'CARD' ? 'selected' : '' %>>Card</option>
+          <option value="BANK_TRANSFER" <%= editingSale?.urd?.paymentMethod === 'BANK_TRANSFER' ? 'selected' : '' %>>Bank Transfer</option>
         </select>
       </div>
 
       <div class="summary-input-wrap">
         <label>Amount Received Now (₹)</label>
-        <input name="paid" type="number" min="0" step="0.01" placeholder="0.00" data-paid style="font-size:14.5px; border-color:#c9a044;">
+        <input name="paid" type="number" min="0" step="0.01" placeholder="0.00" data-paid value="<%= editingSale?.initialPayment?.paid || '' %>" style="font-size:14.5px; border-color:#c9a044;">
       </div>
 
       <div class="due-pill" data-balance-row>
@@ -1029,8 +1055,8 @@
       <div class="summary-input-wrap">
         <label>Payment Method</label>
         <select name="paymentMethod" data-payment-method>
-          <% ['CASH','UPI','CARD','BANK_TRANSFER','MIXED'].forEach((method) => { %>
-          <option value="<%= method %>"><%= method === 'CASH' ? 'Cash' : (method === 'UPI' ? 'UPI / QR' : (method === 'CARD' ? 'Card' : (method === 'BANK_TRANSFER' ? 'Bank Transfer' : 'Mixed Split Payment'))) %></option>
+          <% ['CASH','UPI','CARD','BANK_TRANSFER','CREDIT','MIXED'].forEach((method) => { %>
+          <option value="<%= method %>" <%= editingSale && editSale.initialPayment.paymentMethod === method ? 'selected' : '' %>><%= method === 'CASH' ? 'Cash' : (method === 'UPI' ? 'UPI / QR' : (method === 'CARD' ? 'Card' : (method === 'BANK_TRANSFER' ? 'Bank Transfer' : (method === 'CREDIT' ? 'Credit (Pay Later)' : 'Mixed Split Payment')))) %></option>
           <% }) %>
         </select>
       </div>
@@ -1038,24 +1064,24 @@
       <div class="form-grid two compact-fields" data-split-payment hidden style="display:none; background:#faf7f2; padding:10px; border-radius:8px; margin-bottom:10px; gap:8px;">
         <div class="pos-field">
           <label>Cash (₹)</label>
-          <input name="cashPaid" type="number" min="0" step="0.01" value="" placeholder="0.00" data-cash-paid disabled>
+          <input name="cashPaid" type="number" min="0" step="0.01" value="<%= editingSale?.initialPayment?.cashPaid || '' %>" placeholder="0.00" data-cash-paid disabled>
         </div>
         <div class="pos-field">
           <label>UPI (₹)</label>
-          <input name="upiPaid" type="number" min="0" step="0.01" value="" placeholder="0.00" data-upi-paid disabled>
+          <input name="upiPaid" type="number" min="0" step="0.01" value="<%= editingSale?.initialPayment?.upiPaid || '' %>" placeholder="0.00" data-upi-paid disabled>
         </div>
         <div class="pos-field">
           <label>Card (₹)</label>
-          <input name="cardPaid" type="number" min="0" step="0.01" value="" placeholder="0.00" data-card-paid disabled>
+          <input name="cardPaid" type="number" min="0" step="0.01" value="<%= editingSale?.initialPayment?.cardPaid || '' %>" placeholder="0.00" data-card-paid disabled>
         </div>
         <div class="pos-field">
           <label>Bank (₹)</label>
-          <input name="bankPaid" type="number" min="0" step="0.01" value="" placeholder="0.00" data-bank-paid disabled>
+          <input name="bankPaid" type="number" min="0" step="0.01" value="<%= editingSale?.initialPayment?.bankPaid || '' %>" placeholder="0.00" data-bank-paid disabled>
         </div>
       </div>
 
       <button class="btn-submit-bill" type="submit">
-        Generate & Print Bill →
+        <%= editingSale ? 'Save Invoice Changes →' : 'Generate & Print Bill →' %>
       </button>
     </aside>
 
@@ -1075,6 +1101,8 @@
 
   </form>
 </div>
+
+<script type="application/json" id="kusumSaleEditData"><%- editSaleJson %></script>
 
 <!-- Customer Outstanding Balance Alert Pop-up -->
 <div class="modal-overlay" id="customerBalanceAlertModal" style="display:none; z-index:9999;" aria-hidden="true">

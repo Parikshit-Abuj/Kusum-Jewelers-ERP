@@ -139,7 +139,6 @@ async function nextDocumentNumber(db, prefix, value = new Date()) {
 
 async function reserveBatchNumber(tx, value = new Date()) {
   const day = dateInput(value).replaceAll('-', '');
-  const prefix = `BATCH-${day}`;
   const key = `BATCH-${day}`;
   // Legacy batch counters are initialized once by a migration. Every normal
   // reservation below is a single atomic database statement, even when two
@@ -154,7 +153,10 @@ async function reserveBatchNumber(tx, value = new Date()) {
   const rows = await tx.$queryRaw`SELECT LAST_INSERT_ID() AS lastNumber`;
   const serial = Number(rows?.[0]?.lastNumber);
   if (!Number.isInteger(serial) || serial < 1) throw new Error('Could not reserve a unique batch document number.');
-  return `${prefix}-${String(serial).padStart(2, '0')}`;
+  // The calendar date keeps batch documents concise for counter use. The
+  // atomic daily serial prevents two batches made on the same day, including
+  // on different PCs, from ever receiving the same document number.
+  return `${day}-${String(serial).padStart(2, '0')}`;
 }
 
 async function nextBatchDocumentNumber(db, value = new Date()) {

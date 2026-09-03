@@ -487,6 +487,18 @@ document.querySelectorAll('.flash').forEach((el) => {
 (function initBarcodeSale() {
   const form = document.querySelector('[data-barcode-sale]');
   if (!form) return;
+  const editScript = document.getElementById('kusumSaleEditData');
+  let parsedEditSale = null;
+  if (editScript && editScript.textContent.trim()) {
+    try {
+      parsedEditSale = JSON.parse(editScript.textContent);
+    } catch (_) {}
+  }
+  const editSale = (parsedEditSale && typeof parsedEditSale === 'object')
+    ? parsedEditSale
+    : (window.kusumSaleEdit && typeof window.kusumSaleEdit === 'object' ? window.kusumSaleEdit : null);
+  window.kusumSaleEdit = editSale;
+  const isEditingSale = form.dataset.editSale === 'true' && Boolean(editSale);
 
   const rowsContainer = form.querySelector('[data-rows]');
   const template = form.querySelector('[data-line-template]');
@@ -533,6 +545,7 @@ document.querySelectorAll('.flash').forEach((el) => {
   let restoringDraft = false;
   let draftSaveTimer = null;
   let discardingDraft = false;
+  let preservingInitialEditUrd = isEditingSale;
 
   function editorFor(row) {
     if (!row) return null;
@@ -598,6 +611,7 @@ document.querySelectorAll('.flash').forEach((el) => {
     } else {
       delete row.dataset.newLine;
       updateLineSummary(row);
+      updateFormTotals();
     }
     scheduleDraftSave();
   }
@@ -610,7 +624,7 @@ document.querySelectorAll('.flash').forEach((el) => {
     editingRow = row;
     if (isNew) row.dataset.newLine = 'true';
     lineEditorHost.appendChild(editor);
-    lineEditorTitle.textContent = lineField(row, '[data-product-id]')?.value ? 'Edit invoice item' : 'Add barcode';
+    lineEditorTitle.textContent = (lineField(row, '[data-product-id]')?.value || lineField(row, '[data-sale-item-id]')?.value) ? 'Edit invoice item' : 'Add barcode';
     lineEditorModal.style.display = 'flex';
     lineEditorModal.setAttribute('aria-hidden', 'false');
     setTimeout(() => lineEditorHost.querySelector('[data-barcode]')?.focus(), 0);
@@ -649,6 +663,7 @@ document.querySelectorAll('.flash').forEach((el) => {
   function wireRow(row) {
     const barcodeInput = row.querySelector('[data-barcode]');
     const productIdInput = row.querySelector('[data-product-id]');
+    const saleItemIdInput = row.querySelector('[data-sale-item-id]');
     const itemDetails = row.querySelector('[data-item-details]');
     const qtyInput = row.querySelector('[data-quantity]');
     const weightInput = row.querySelector('[data-weight]');
@@ -813,14 +828,18 @@ document.querySelectorAll('.flash').forEach((el) => {
 
     // Quantity is intentionally fixed to one because each scanned barcode is
     // one physical jewellery piece. Billing weight remains negotiable/editable.
-    weightInput.addEventListener('input', recalcRow);
+    function onPricingComponentChange() {
+      delete taxableInput.dataset.manualOverride;
+      recalcRow();
+    }
+    weightInput.addEventListener('input', onPricingComponentChange);
 
-    // Rate change (manual override)
-    metalRateInput.addEventListener('input', recalcRow);
+    // Rate change (recalculates line price)
+    metalRateInput.addEventListener('input', onPricingComponentChange);
 
     // Making charge changes
-    if (makingTypeSelect) makingTypeSelect.addEventListener('change', recalcRow);
-    if (makingValueInput) makingValueInput.addEventListener('input', recalcRow);
+    if (makingTypeSelect) makingTypeSelect.addEventListener('change', onPricingComponentChange);
+    if (makingValueInput) makingValueInput.addEventListener('input', onPricingComponentChange);
     if (purityInput) purityInput.addEventListener('input', () => {
       updateLineSummary(row);
       scheduleDraftSave();
@@ -856,15 +875,42 @@ document.querySelectorAll('.flash').forEach((el) => {
 
     return {
       async restore(values) {
-        barcodeInput.value = values.barcode || '';
-        if (values.barcode) await lookupBarcode(values.barcode);
+        const existingSaleItemId = Number(values.saleItemId || values.existingSaleItemId || 0);
+        if (existingSaleItemId > 0) {
+          saleItemIdInput.value = String(existingSaleItemId);
+          barcodeInput.value = values.barcode || '';
+          barcodeInput.readOnly = true;
+          productIdInput.value = '';
+          productData = {
+            id: null,
+            barcode: values.barcode || '',
+            sku: values.sku || '',
+            name: values.name || values.productName || 'Jewellery item',
+            category: values.category || '',
+            metal: values.metal || 'OTHER',
+            purity: values.purity || '',
+            grossWeight: values.grossWeight || 0,
+            netWeight: values.weight || 0,
+            makingChargeType: values.makingChargeType || 'PER_GRAM',
+            makingChargeValue: values.makingChargeValue || 0
+          };
+          row.dataset.productName = productData.name;
+          row.dataset.productMeta = `${productData.barcode || 'Billed item'} · ${productData.metal || ''}`;
+          replaceWithTextElements(itemDetails, [
+            { tag: 'strong', text: productData.name },
+            { tag: 'small', text: `${productData.barcode || 'Billed item'} · Already sold; barcode remains unavailable` }
+          ]);
+        } else {
+          barcodeInput.value = values.barcode || '';
+          if (values.barcode) await lookupBarcode(values.barcode);
+        }
         weightInput.value = values.weight || '';
         if (purityInput) purityInput.value = values.purity || '';
         metalRateInput.value = values.metalRate || '';
         makingTypeSelect.value = values.makingChargeType || 'PER_GRAM';
         makingValueInput.value = values.makingChargeValue || '';
         taxableInput.value = values.taxableAmount || '';
-        taxableInput.dataset.manualOverride = values.taxableManual ? '1' : '';
+        taxableInput.dataset.manualOverride = values.taxableManual || existingSaleItemId > 0 ? '1' : '';
         qtyInput.value = '1';
         const hsn = row.querySelector('[data-hsn-code]');
         const huid = row.querySelector('[data-huid-code]');
@@ -977,6 +1023,7 @@ document.querySelectorAll('.flash').forEach((el) => {
   function updatePaymentMethodState() {
     if (!paymentMethodInput) return;
     const mixed = !isUrdRefundable && paymentMethodInput.value === 'MIXED';
+    const isCredit = !isUrdRefundable && paymentMethodInput.value === 'CREDIT';
     if (splitPayment) {
       splitPayment.hidden = !mixed;
       splitPayment.style.display = mixed ? 'grid' : 'none';
@@ -986,8 +1033,10 @@ document.querySelectorAll('.flash').forEach((el) => {
     if (cardPaidInput) cardPaidInput.disabled = !mixed;
     if (bankPaidInput) bankPaidInput.disabled = !mixed;
     if (paidInput) {
-      paidInput.disabled = mixed || isUrdRefundable;
-      if (!mixed && !isUrdRefundable && (paidInput.value === '0.00' || paidInput.value === '0')) {
+      paidInput.disabled = mixed || isUrdRefundable || isCredit;
+      if (isCredit) {
+        paidInput.value = '0.00';
+      } else if (!mixed && !isUrdRefundable && (paidInput.value === '0.00' || paidInput.value === '0')) {
         paidInput.value = '';
       }
     }
@@ -1036,7 +1085,10 @@ document.querySelectorAll('.flash').forEach((el) => {
     urdFields.hidden = !enabled;
     urdFields.querySelectorAll('input, select, textarea').forEach((input) => { input.disabled = !enabled; });
     syncUrdPurityControl();
-    if (enabled) { updateUrdRate(); recalcUrdAmount(); }
+    // Existing invoices must retain their recorded URD rate and valuation
+    // when the edit form first opens. New invoices and cashier changes still
+    // calculate from the current selected rate exactly as before.
+    if (enabled && !(isEditingSale && preservingInitialEditUrd)) { updateUrdRate(); recalcUrdAmount(); }
     updateFormTotals();
   }
 
@@ -1056,7 +1108,7 @@ document.querySelectorAll('.flash').forEach((el) => {
     lineEditorDone.addEventListener('click', () => {
       const row = editingRow;
       if (!row) return;
-      if (!lineField(row, '[data-product-id]')?.value) {
+      if (!lineField(row, '[data-product-id]')?.value && !lineField(row, '[data-sale-item-id]')?.value) {
         setRowStatus(row, 'error', 'Scan a valid barcode before adding this item to the bill.');
         lineEditorHost?.querySelector('[data-barcode]')?.focus();
         return;
@@ -1089,7 +1141,7 @@ document.querySelectorAll('.flash').forEach((el) => {
   function snapshotLine(row) {
     const value = (selector) => lineField(row, selector)?.value || '';
     return {
-      barcode: value('[data-barcode]'), productId: value('[data-product-id]'),
+      barcode: value('[data-barcode]'), productId: value('[data-product-id]'), saleItemId: value('[data-sale-item-id]'),
       weight: value('[data-weight]'), purity: value('[data-purity]'), metalRate: value('[data-metal-rate]'),
       makingChargeType: value('[data-making-type]'), makingChargeValue: value('[data-making-value]'),
       taxableAmount: value('[data-taxable-amount]'), taxableManual: Boolean(lineField(row, '[data-taxable-amount]')?.dataset.manualOverride),
@@ -1099,7 +1151,7 @@ document.querySelectorAll('.flash').forEach((el) => {
   }
 
   function saveSaleDraft() {
-    if (restoringDraft || discardingDraft) return;
+    if (isEditingSale || restoringDraft || discardingDraft) return;
     try {
       const controls = nonLineDraftControls().map((control) => ({
         value: control.value,
@@ -1120,6 +1172,7 @@ document.querySelectorAll('.flash').forEach((el) => {
   }
 
   async function restoreSaleDraft() {
+    if (isEditingSale) return;
     let draft;
     try {
       draft = JSON.parse(sessionStorage.getItem(saleDraftKey) || 'null');
@@ -1184,7 +1237,8 @@ document.querySelectorAll('.flash').forEach((el) => {
     const unresolved = rows.find((row) => {
       const barcode = lineField(row, '[data-barcode]')?.value.trim();
       const productId = lineField(row, '[data-product-id]')?.value;
-      return barcode && !productId;
+      const saleItemId = lineField(row, '[data-sale-item-id]')?.value;
+      return barcode && !productId && !saleItemId;
     });
     if (unresolved) {
       event.preventDefault();
@@ -1193,10 +1247,63 @@ document.querySelectorAll('.flash').forEach((el) => {
     }
   });
 
+  async function restoreExistingSale() {
+    if (!editSale) return;
+    restoringDraft = true;
+    for (const savedLine of editSale.items || []) {
+      const row = addRow({ openEditor: false });
+      await row._saleLine?.restore({ ...savedLine, taxableManual: true });
+    }
+    updateAllLineSummaries();
+    updateFormTotals();
+    updateItemCount();
+    restoringDraft = false;
+  }
+
+  if (isEditingSale) {
+    const editPhoneInput = form.querySelector('[data-customer-phone]');
+    const editNameInput = form.querySelector('[data-edit-customer-name]');
+    const editPanInput = form.querySelector('[data-edit-customer-pan]');
+    const editEmailInput = form.querySelector('[data-edit-customer-email]');
+    const editAddressInput = form.querySelector('[data-edit-customer-address]');
+
+    if (editPanInput) {
+      editPanInput.addEventListener('input', () => {
+        const upper = String(editPanInput.value || '').toUpperCase();
+        if (editPanInput.value !== upper) editPanInput.value = upper;
+      });
+    }
+
+    let editPhoneLookupTimer = null;
+    if (editPhoneInput) {
+      editPhoneInput.addEventListener('input', () => {
+        clearTimeout(editPhoneLookupTimer);
+        const digits = (editPhoneInput.value || '').replace(/\D/g, '');
+        if (digits.length >= 10 && digits.length <= 15) {
+          editPhoneLookupTimer = setTimeout(async () => {
+            try {
+              const resp = await fetch(`/api/customers/phone/${encodeURIComponent(digits)}`);
+              if (!resp.ok) return;
+              const data = await resp.json();
+              if (data.found && data.customer) {
+                if (editNameInput && !editNameInput.value) editNameInput.value = data.customer.name || '';
+                if (editPanInput && !editPanInput.value) editPanInput.value = data.customer.panNumber || '';
+                if (editEmailInput && !editEmailInput.value) editEmailInput.value = data.customer.email || '';
+                if (editAddressInput && !editAddressInput.value) editAddressInput.value = data.customer.address || '';
+              }
+            } catch (_) {}
+          }, 350);
+        }
+      });
+    }
+  }
+
   toggleUrdFields();
+  preservingInitialEditUrd = false;
   updateFormTotals();
   updateItemCount();
-  restoreSaleDraft();
+  if (isEditingSale) restoreExistingSale();
+  else restoreSaleDraft();
 })();
 
 /* ═══════════════════════════════════════════════════════════════
@@ -2180,7 +2287,7 @@ function updateInventoryLabelBatchState() {
     const refBtns = [document.getElementById('batchRefreshBtn'), document.getElementById('batchRefreshBtnFooter')].filter(Boolean);
     refBtns.forEach((b) => { b.disabled = true; b.textContent = 'Refreshing...'; });
     try {
-      if (docNo && docNo.startsWith('BATCH-')) {
+      if (docNo) {
         await loadBatchDocument(docNo, false);
       } else {
         await fetchLiveRates();

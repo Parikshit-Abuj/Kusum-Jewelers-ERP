@@ -142,6 +142,7 @@ function labelRequests(body) {
 
 function saleRows(body) {
   const productIds = asArray(body.productId);
+  const saleItemIds = asArray(body.saleItemId);
   const barcodes = asArray(body.barcode);
   const weights = asArray(body.weight);
   const metalRates = asArray(body.metalRate);
@@ -151,22 +152,31 @@ function saleRows(body) {
   const purities = asArray(body.purity);
   const hsnCodes = asArray(body.hsnCode);
   const huidCodes = asArray(body.huidCode);
-  return productIds.map((productId, index) => ({
-    productId: Number(productId),
-    barcode: String(barcodes[index] || '').trim().toUpperCase(),
-    // Each inventory row is one physical jewellery piece and therefore one
-    // barcode. Quantity is deliberately fixed at one server-side; a modified
-    // browser form must never turn a single barcode into several sold pieces.
-    quantity: 1,
-    weight: weights[index] === undefined || weights[index] === '' ? null : number(weights[index]),
-    metalRate: number(metalRates[index]),
-    makingChargeType: ['FIXED', 'PER_GRAM', 'PERCENTAGE'].includes(makingTypes[index]) ? makingTypes[index] : null,
-    makingChargeValue: makingValues[index] === undefined || makingValues[index] === '' ? null : number(makingValues[index]),
-    taxableAmount: taxableAmounts[index] === '' || taxableAmounts[index] === undefined ? null : Math.max(0, number(taxableAmounts[index])),
-    purity: purities[index] === undefined ? null : String(purities[index] || '').trim().toUpperCase() || null,
-    hsnCode: (hsnCodes[index] || '').trim() || null,
-    huidCode: (huidCodes[index] || '').trim() || null
-  })).filter((item) => item.productId > 0);
+  const count = Math.max(productIds.length, saleItemIds.length, barcodes.length);
+  const rows = [];
+  for (let index = 0; index < count; index++) {
+    const productId = Number(productIds[index]) || null;
+    const saleItemId = Number(saleItemIds[index]) || null;
+    if (!productId && !saleItemId) continue;
+    rows.push({
+      productId: productId > 0 ? productId : null,
+      saleItemId: saleItemId > 0 ? saleItemId : null,
+      barcode: String(barcodes[index] || '').trim().toUpperCase(),
+      // Each inventory row is one physical jewellery piece and therefore one
+      // barcode. Quantity is deliberately fixed at one server-side; a modified
+      // browser form must never turn a single barcode into several sold pieces.
+      quantity: 1,
+      weight: weights[index] === undefined || weights[index] === '' ? null : number(weights[index]),
+      metalRate: number(metalRates[index]),
+      makingChargeType: ['FIXED', 'PER_GRAM', 'PERCENTAGE'].includes(makingTypes[index]) ? makingTypes[index] : null,
+      makingChargeValue: makingValues[index] === undefined || makingValues[index] === '' ? null : number(makingValues[index]),
+      taxableAmount: taxableAmounts[index] === '' || taxableAmounts[index] === undefined ? null : Math.max(0, number(taxableAmounts[index])),
+      purity: purities[index] === undefined ? null : String(purities[index] || '').trim().toUpperCase() || null,
+      hsnCode: (hsnCodes[index] || '').trim() || null,
+      huidCode: (huidCodes[index] || '').trim() || null
+    });
+  }
+  return rows;
 }
 
 async function getRateForDate(db, rateDate = dateInput()) {
@@ -1758,30 +1768,473 @@ app.get('/sales/:id/edit', async (req, res, next) => {
   try {
     const sale = await prisma.sale.findFirstOrThrow({
       where: { id: Number(req.params.id), cancelledAt: null },
-      include: { customer: true, items: true }
+      include: {
+        customer: true,
+        items: { orderBy: { id: 'asc' } },
+        urdPurchase: true,
+        ledgerEntries: {
+          where: { type: 'PAYMENT_RECEIVED' },
+          select: { amount: true, paymentMethod: true }
+        }
+      }
     });
-    res.render('sales/edit', { title: `Edit ${sale.invoiceNumber}`, sale });
+    const laterComponents = { CASH: 0, UPI: 0, CARD: 0, BANK_TRANSFER: 0 };
+    for (const entry of sale.ledgerEntries) {
+      if (entry.paymentMethod in laterComponents) {
+        laterComponents[entry.paymentMethod] = roundedMoney(laterComponents[entry.paymentMethod] + Math.abs(Number(entry.amount || 0)));
+      }
+    }
+    const initialComponents = {
+      CASH: Math.max(0, roundedMoney(Number(sale.cashPaid || 0) - laterComponents.CASH)),
+      UPI: Math.max(0, roundedMoney(Number(sale.upiPaid || 0) - laterComponents.UPI)),
+      CARD: Math.max(0, roundedMoney(Number(sale.cardPaid || 0) - laterComponents.CARD)),
+      BANK_TRANSFER: Math.max(0, roundedMoney(Number(sale.bankPaid || 0) - laterComponents.BANK_TRANSFER))
+    };
+    const initialPaid = roundedMoney(Object.values(initialComponents).reduce((sum, amount) => sum + amount, 0));
+    const rateInfo = await getRateForDate(prisma, dateInput(sale.saleDate));
+    const editSale = {
+      id: sale.id,
+      invoiceNumber: sale.invoiceNumber,
+      saleDate: dateInput(sale.saleDate),
+      customer: sale.customer ? {
+        name: sale.customer.name || '',
+        phone: sale.customer.phone || '',
+        email: sale.customer.email || '',
+        address: sale.customer.address || '',
+        panNumber: sale.customer.panNumber || sale.customerPan || ''
+      } : {
+        name: '',
+        phone: '',
+        email: '',
+        address: '',
+        panNumber: sale.customerPan || ''
+      },
+      discount: Number(sale.discount || 0),
+      notes: sale.notes || '',
+      initialPayment: {
+        paid: initialPaid,
+        cashPaid: initialComponents.CASH,
+        upiPaid: initialComponents.UPI,
+        cardPaid: initialComponents.CARD,
+        bankPaid: initialComponents.BANK_TRANSFER,
+        paymentMethod: initialPaid === 0 ? 'CREDIT' : paymentMethodFromComponents(initialComponents, initialPaid)
+      },
+      items: sale.items.map((item) => {
+        const grossWeight = Number(item.grossWeight || 0);
+        const weight = Number(item.weight || 0) > 0 ? Number(item.weight) : grossWeight;
+        const metalRate = Number(item.metalRate || 0) > 0 ? Number(item.metalRate) : Number(item.unitPrice || 0);
+        const taxableAmount = Number(item.taxableAmount || 0) > 0 ? Number(item.taxableAmount) : Number(item.lineTotal || 0);
+        return {
+          saleItemId: item.id,
+          barcode: item.productBarcode || '',
+          sku: item.productSku || '',
+          name: item.productName || 'Jewellery item',
+          category: '',
+          metal: item.productMetal || 'OTHER',
+          purity: item.productPurity || '',
+          grossWeight: Math.max(grossWeight, weight),
+          weight,
+          metalRate,
+          makingChargeType: item.makingChargeType || 'PER_GRAM',
+          makingChargeValue: Number(item.makingChargeValue || 0),
+          taxableAmount,
+          hsnCode: item.hsnCode || '',
+          huidCode: item.huidCode || ''
+        };
+      }),
+      urd: sale.urdPurchase ? {
+        metal: sale.urdPurchase.metal,
+        purity: sale.urdPurchase.purity || '',
+        grossWeight: Number(sale.urdPurchase.grossWeight || 0),
+        netWeight: Number(sale.urdPurchase.netWeight || 0),
+        ratePerGram: Number(sale.urdPurchase.ratePerGram || 0),
+        totalAmount: Number(sale.urdPurchase.totalAmount || 0),
+        description: sale.urdPurchase.description || '',
+        paymentMethod: sale.urdPurchase.paymentMethod || 'CASH'
+      } : null
+    };
+    res.render('sales/form', { title: `Edit ${sale.invoiceNumber}`, invoiceNumber: sale.invoiceNumber, rateInfo, editSale });
   } catch (error) { next(error); }
 });
 
 app.post('/sales/:id/edit', async (req, res, next) => {
   const saleId = Number(req.params.id);
   try {
+    const rows = saleRows(req.body);
+    if (!rows.length) throw new Error('Keep at least one item on the invoice. A sold barcode is never restored to inventory.');
+    const allBarcodes = rows.map((row) => row.barcode).filter(Boolean);
+    if (new Set(allBarcodes).size !== allBarcodes.length) {
+      throw new Error('The same barcode was entered more than once on this invoice.');
+    }
+    const newProductIds = rows.filter((row) => !row.saleItemId).map((row) => row.productId);
+    if (newProductIds.some((id) => !Number.isInteger(id) || id <= 0) || new Set(newProductIds).size !== newProductIds.length) {
+      throw new Error('Each newly added barcode must be a different available inventory item.');
+    }
+    const discount = Math.max(0, number(req.body.discount));
+    const payment = salePaymentBreakdown(req.body);
+    const saleDate = dateTimeFromInput(req.body.saleDate);
+    const includeUrdPurchase = req.body.includeUrdPurchase === 'on';
+
     await prisma.$transaction(async (tx) => {
-      const sale = await tx.sale.findFirstOrThrow({ where: { id: saleId, cancelledAt: null }, include: { customer: true } });
-      if (!sale.customerId || !sale.customer) throw new Error('This invoice has no customer record to edit.');
+      const sale = await tx.sale.findFirstOrThrow({
+        where: { id: saleId, cancelledAt: null },
+        include: { customer: true, items: true, urdPurchase: true }
+      });
+
       const name = titleCase(req.body.customerName);
       const phone = normalizePhone(req.body.customerPhone);
       if (!name) throw new Error('Enter the customer name.');
       if (!validCustomerPhone(phone)) throw new Error('Enter a valid customer mobile number (10 to 15 digits).');
       const panNumber = String(req.body.customerPan || '').trim().toUpperCase() || null;
-      await tx.customer.update({ where: { id: sale.customerId }, data: {
-        name, phone, email: String(req.body.customerEmail || '').trim() || null,
-        address: titleCase(req.body.customerAddress) || null, panNumber
-      } });
-      await tx.sale.update({ where: { id: sale.id }, data: { customerPan: panNumber, notes: String(req.body.notes || '').trim() || null } });
+      const email = String(req.body.customerEmail || '').trim() || null;
+      const address = titleCase(req.body.customerAddress) || null;
+
+      // Resolve customer by phone to avoid P2002 conflict and support reassigning/assigning customer
+      let finalCustomerId = sale.customerId;
+      const existingCustomerWithPhone = await tx.customer.findUnique({ where: { phone } });
+      if (existingCustomerWithPhone) {
+        finalCustomerId = existingCustomerWithPhone.id;
+        await tx.customer.update({
+          where: { id: existingCustomerWithPhone.id },
+          data: {
+            name,
+            email: email || existingCustomerWithPhone.email,
+            address: address || existingCustomerWithPhone.address,
+            panNumber: panNumber || existingCustomerWithPhone.panNumber
+          }
+        });
+      } else if (sale.customerId && sale.customer) {
+        await tx.customer.update({
+          where: { id: sale.customerId },
+          data: { name, phone, email, address, panNumber }
+        });
+      } else {
+        const newCustomer = await tx.customer.create({
+          data: { name, phone, email, address, panNumber }
+        });
+        finalCustomerId = newCustomer.id;
+      }
+
+      if (sale.customerId && finalCustomerId !== sale.customerId) {
+        await tx.customerLedger.updateMany({ where: { saleId: sale.id }, data: { customerId: finalCustomerId } });
+        await tx.cashbookEntry.updateMany({ where: { saleId: sale.id }, data: { customerId: finalCustomerId } });
+        if (sale.urdPurchase) {
+          await tx.urdPurchase.updateMany({ where: { saleId: sale.id }, data: { customerId: finalCustomerId } });
+        }
+      }
+
+      const existingItems = new Map(sale.items.map((item) => [item.id, item]));
+      const submittedExistingIds = new Set();
+      for (const row of rows.filter((item) => item.saleItemId)) {
+        if (row.productId > 0 || !existingItems.has(row.saleItemId) || submittedExistingIds.has(row.saleItemId)) {
+          throw new Error('An invoice item changed unexpectedly. Refresh this invoice before saving changes.');
+        }
+        const existing = existingItems.get(row.saleItemId);
+        const expectedBarcode = String(existing.productBarcode || '').trim().toUpperCase();
+        if (row.barcode && row.barcode !== expectedBarcode) {
+          throw new Error('A previously billed barcode cannot be replaced. Remove the line and add a new available barcode instead.');
+        }
+        submittedExistingIds.add(row.saleItemId);
+      }
+
+      for (const productId of [...newProductIds].sort((left, right) => left - right)) {
+        await tx.$queryRaw`SELECT id FROM \`Product\` WHERE id = ${productId} FOR UPDATE`;
+      }
+      const [newProducts, rateInfo] = await Promise.all([
+        newProductIds.length ? tx.product.findMany({ where: { id: { in: newProductIds } } }) : [],
+        getRateForDate(tx, dateInput(saleDate))
+      ]);
+      if (newProducts.length !== newProductIds.length) throw new Error('One or more newly added barcodes no longer exist. Scan them again.');
+      for (const product of newProducts) {
+        if (product.status !== 'AVAILABLE' || Number(product.quantity) !== 1) {
+          throw new Error(`${product.barcode} is no longer available for billing.`);
+        }
+      }
+
+      const pricedRows = rows.map((row) => {
+        const existing = row.saleItemId ? existingItems.get(row.saleItemId) : null;
+        const product = existing ? {
+          id: null,
+          barcode: existing.productBarcode || '',
+          sku: existing.productSku || '',
+          name: existing.productName || 'Jewellery item',
+          metal: existing.productMetal || 'OTHER',
+          purity: existing.productPurity || null,
+          grossWeight: existing.grossWeight,
+          netWeight: existing.weight,
+          makingChargeType: existing.makingChargeType,
+          makingChargeValue: existing.makingChargeValue
+        } : newProducts.find((item) => item.id === row.productId);
+        if (!product) throw new Error('An invoice item could not be found. Refresh this invoice before saving.');
+        const weight = row.weight === null ? Number(existing?.weight ?? product.netWeight) : row.weight;
+        if (!Number.isFinite(weight) || weight <= 0) throw new Error(`Enter a valid billing weight for ${product.barcode || product.name}.`);
+        const savedRate = Number(existing?.metalRate || existing?.unitPrice || 0);
+        const metalRate = row.metalRate > 0 ? row.metalRate : (savedRate || metalRateFromDailyRate(product, rateInfo.rate));
+        if (!metalRate) throw new Error(`Set a daily rate before billing ${product.barcode || product.name}.`);
+        const makingChargeType = row.makingChargeType || existing?.makingChargeType || product.makingChargeType || 'PER_GRAM';
+        const makingChargeValue = row.makingChargeValue === null ? Number(existing?.makingChargeValue ?? product.makingChargeValue ?? 0) : row.makingChargeValue;
+        const metalAmount = roundedMoney(metalRate * weight);
+        const makingCharge = roundedMoney(makingAmount(makingChargeType, makingChargeValue, metalAmount, weight, 1));
+        const calculatedTaxable = roundedMoney(metalAmount + makingCharge);
+        return {
+          ...row,
+          existing,
+          product,
+          weight,
+          metalRate,
+          metalAmount,
+          makingChargeType,
+          makingChargeValue,
+          makingCharge,
+          taxableAmount: row.taxableAmount === null ? calculatedTaxable : roundedMoney(row.taxableAmount),
+          purity: row.purity || existing?.productPurity || product.purity || null
+        };
+      });
+
+      const subtotal = roundedMoney(pricedRows.reduce((sum, row) => sum + row.taxableAmount, 0));
+      const appliedDiscount = roundedMoney(Math.min(discount, subtotal));
+      const taxable = roundedMoney(Math.max(0, subtotal - appliedDiscount));
+      const gstRate = 3;
+      const gstAmount = roundedMoney(taxable * gstRate / 100);
+      const total = roundToNearestRupee(roundedMoney(taxable + gstAmount));
+      const urdAmount = includeUrdPurchase ? Math.max(0, roundedMoney(number(req.body.urdTotalAmount))) : 0;
+      const settlement = urdSettlement(total, urdAmount);
+      let refundMethod = null;
+      if (includeUrdPurchase) {
+        if (number(req.body.urdNetWeight) <= 0 || number(req.body.urdRatePerGram) <= 0 || urdAmount <= 0) {
+          throw new Error('Enter valid URD net weight, rate and purchase amount.');
+        }
+        if (settlement.hasRefund) refundMethod = receiptPaymentMethod(req.body.urdRefundMethod);
+      }
+      if (settlement.hasRefund && payment.paid > 0) {
+        throw new Error('Do not enter a sale payment when URD value is higher than the bill. Select the refund method instead.');
+      }
+
+      const laterPaymentLedger = await tx.customerLedger.findMany({
+        where: { saleId: sale.id, type: 'PAYMENT_RECEIVED' },
+        select: { amount: true, paymentMethod: true }
+      });
+      const laterComponents = { CASH: 0, UPI: 0, CARD: 0, BANK_TRANSFER: 0 };
+      for (const entry of laterPaymentLedger) {
+        if (entry.paymentMethod in laterComponents) {
+          laterComponents[entry.paymentMethod] = roundedMoney(laterComponents[entry.paymentMethod] + Math.abs(Number(entry.amount || 0)));
+        }
+      }
+      const laterPaid = roundedMoney(Object.values(laterComponents).reduce((sum, amount) => sum + amount, 0));
+      const netPayable = settlement.netPayable;
+      if (payment.paid + laterPaid > netPayable) {
+        throw new Error('This edit would make recorded payments greater than the revised net payable amount. Cancel or correct the later receipt first.');
+      }
+      const totalPaid = roundedMoney(payment.paid + laterPaid);
+      const balance = roundedMoney(Math.max(0, netPayable - totalPaid));
+      const paymentComponents = {
+        CASH: roundedMoney(payment.cashPaid + laterComponents.CASH),
+        UPI: roundedMoney(payment.upiPaid + laterComponents.UPI),
+        CARD: roundedMoney(payment.cardPaid + laterComponents.CARD),
+        BANK_TRANSFER: roundedMoney(payment.bankPaid + laterComponents.BANK_TRANSFER)
+      };
+      const notes = String(req.body.notes || '').trim() || null;
+
+      if (sale.urdPurchase) {
+        const urdEntries = await tx.cashbookEntry.findMany({ where: { urdPurchaseId: sale.urdPurchase.id }, select: { description: true } });
+        const expectedRefundDescription = `URD refund — ${sale.invoiceNumber}`;
+        if (urdEntries.some((entry) => entry.description !== expectedRefundDescription)) {
+          throw new Error('This linked URD purchase has a later payout. Cancel that payout before editing this invoice.');
+        }
+        await tx.cashbookEntry.deleteMany({ where: { urdPurchaseId: sale.urdPurchase.id } });
+      }
+
+      await tx.cashbookEntry.deleteMany({ where: { saleId: sale.id } });
+      await tx.customerLedger.deleteMany({ where: { saleId: sale.id, type: 'SALE_CREDIT' } });
+
+      let urdPurchase = sale.urdPurchase;
+      if (!includeUrdPurchase && urdPurchase) {
+        await tx.urdPurchase.delete({ where: { id: urdPurchase.id } });
+        urdPurchase = null;
+      } else if (includeUrdPurchase && urdPurchase) {
+        urdPurchase = await tx.urdPurchase.update({
+          where: { id: urdPurchase.id },
+          data: {
+            customerId: finalCustomerId,
+            purchaseDate: saleDate,
+            metal: req.body.urdMetal || 'GOLD',
+            purity: req.body.urdPurity || null,
+            grossWeight: number(req.body.urdGrossWeight),
+            netWeight: number(req.body.urdNetWeight),
+            ratePerGram: number(req.body.urdRatePerGram),
+            totalAmount: urdAmount,
+            saleOffset: settlement.saleAdjustment,
+            paid: settlement.netRefundable,
+            paymentMethod: refundMethod || 'MIXED',
+            description: req.body.urdDescription || 'URD purchase settled against sale',
+            notes: `Settled against sale ${sale.invoiceNumber}`
+          }
+        });
+      } else if (includeUrdPurchase) {
+        urdPurchase = await tx.urdPurchase.create({
+          data: {
+            purchaseNumber: await nextDocumentNumber(tx, 'URD', saleDate),
+            customerId: finalCustomerId,
+            purchaseDate: saleDate,
+            metal: req.body.urdMetal || 'GOLD',
+            purity: req.body.urdPurity || null,
+            grossWeight: number(req.body.urdGrossWeight),
+            netWeight: number(req.body.urdNetWeight),
+            ratePerGram: number(req.body.urdRatePerGram),
+            totalAmount: urdAmount,
+            saleOffset: settlement.saleAdjustment,
+            paid: settlement.netRefundable,
+            paymentMethod: refundMethod || 'MIXED',
+            description: req.body.urdDescription || 'URD purchase settled against sale',
+            notes: `Settled against sale ${sale.invoiceNumber}`,
+            saleId: sale.id
+          }
+        });
+      }
+
+      await tx.sale.update({
+        where: { id: sale.id },
+        data: {
+          customerId: finalCustomerId,
+          customerPan: panNumber,
+          saleDate,
+          subtotal,
+          discount: appliedDiscount,
+          gstRate,
+          gstAmount,
+          total,
+          urdOffset: urdAmount,
+          paid: totalPaid,
+          cashPaid: paymentComponents.CASH,
+          upiPaid: paymentComponents.UPI,
+          cardPaid: paymentComponents.CARD,
+          bankPaid: paymentComponents.BANK_TRANSFER,
+          balance,
+          paymentMethod: totalPaid === 0 ? 'CREDIT' : paymentMethodFromComponents(paymentComponents, totalPaid),
+          notes
+        }
+      });
+
+      const originalCredit = roundedMoney(Math.max(0, netPayable - payment.paid));
+      if (originalCredit > 0) {
+        await tx.customerLedger.create({
+          data: {
+            customerId: finalCustomerId,
+            saleId: sale.id,
+            type: 'SALE_CREDIT',
+            amount: originalCredit,
+            reference: sale.invoiceNumber,
+            note: `Credit balance from ${sale.invoiceNumber}`
+          }
+        });
+      }
+      for (const recordedPayment of payment.cashbookPayments) {
+        await tx.cashbookEntry.create({
+          data: {
+            entryDate: dateInput(saleDate),
+            type: 'IN',
+            paymentMethod: recordedPayment.method,
+            amount: recordedPayment.amount,
+            description: 'Sale payment',
+            reference: sale.invoiceNumber,
+            customerId: finalCustomerId,
+            saleId: sale.id,
+            syncLedger: true,
+            notes
+          }
+        });
+      }
+      if (urdPurchase && settlement.hasRefund) {
+        await tx.cashbookEntry.create({
+          data: {
+            entryDate: dateInput(saleDate),
+            type: 'OUT',
+            paymentMethod: refundMethod,
+            amount: settlement.netRefundable,
+            description: `URD refund — ${sale.invoiceNumber}`,
+            reference: sale.invoiceNumber,
+            customerId: finalCustomerId,
+            urdPurchaseId: urdPurchase.id,
+            syncLedger: false,
+            notes: `URD excess refunded for sale ${sale.invoiceNumber}`
+          }
+        });
+      }
+
+      const removedItems = sale.items.filter((item) => !submittedExistingIds.has(item.id));
+      if (removedItems.length) {
+        await tx.saleItem.deleteMany({ where: { id: { in: removedItems.map((item) => item.id) } } });
+        for (const item of removedItems) {
+          await tx.stockMovement.updateMany({
+            where: { type: 'SALE', note: `Sold via ${sale.invoiceNumber}`, productBarcode: item.productBarcode || null },
+            data: { type: 'ADJUSTMENT_OUT', note: `Removed from edited ${sale.invoiceNumber}; barcode remains unavailable`, createdAt: saleDate }
+          });
+        }
+      }
+      for (const row of pricedRows.filter((item) => item.existing)) {
+        const itemGrossWeight = Math.max(Number(row.product.grossWeight || 0), row.weight);
+        await tx.saleItem.update({
+          where: { id: row.saleItemId },
+          data: {
+            productBarcode: row.product.barcode || null,
+            productSku: row.product.sku || '',
+            productName: row.product.name || 'Jewellery item',
+            productMetal: row.product.metal || null,
+            productPurity: row.purity,
+            grossWeight: itemGrossWeight,
+            quantity: 1,
+            weight: row.weight,
+            unitPrice: row.metalRate,
+            metalRate: row.metalRate,
+            metalAmount: row.metalAmount,
+            makingCharge: row.makingCharge,
+            makingChargeType: row.makingChargeType,
+            makingChargeValue: row.makingChargeValue,
+            taxableAmount: row.taxableAmount,
+            lineTotal: row.taxableAmount,
+            hsnCode: row.hsnCode || null,
+            huidCode: row.huidCode || null
+          }
+        });
+        await tx.stockMovement.updateMany({
+          where: { type: 'SALE', note: `Sold via ${sale.invoiceNumber}`, productBarcode: row.product.barcode || null },
+          data: { productName: row.product.name || '', productMetal: row.product.metal || null, productPurity: row.purity, netWeight: row.weight, createdAt: saleDate }
+        });
+      }
+      for (const row of pricedRows.filter((item) => !item.existing)) {
+        const itemGrossWeight = Math.max(Number(row.product.grossWeight || 0), row.weight);
+        await tx.saleItem.create({
+          data: {
+            saleId: sale.id,
+            productId: row.product.id,
+            productBarcode: row.product.barcode,
+            productSku: row.product.sku,
+            productName: row.product.name,
+            productMetal: row.product.metal,
+            productPurity: row.purity,
+            grossWeight: itemGrossWeight,
+            quantity: 1,
+            weight: row.weight,
+            unitPrice: row.metalRate,
+            metalRate: row.metalRate,
+            metalAmount: row.metalAmount,
+            makingCharge: row.makingCharge,
+            makingChargeType: row.makingChargeType,
+            makingChargeValue: row.makingChargeValue,
+            taxableAmount: row.taxableAmount,
+            lineTotal: row.taxableAmount,
+            hsnCode: row.hsnCode || null,
+            huidCode: row.huidCode || null
+          }
+        });
+        await tx.stockMovement.create({
+          data: { ...stockMovementSnapshot(row.product, 'SALE', -1, `Sold via ${sale.invoiceNumber}`, { netWeight: row.weight }), createdAt: saleDate }
+        });
+        await tx.product.delete({ where: { id: row.product.id } });
+      }
     });
-    redirectWith(res, `/sales/${saleId}`, 'message', 'Invoice and customer details updated. The PDF and QR code now use the updated details.');
+
+    redirectWith(res, `/sales/${saleId}`, 'message', 'Invoice updated. Its PDF, QR code, registers, ledger, cashbook and URD settlement now use the revised details.');
   } catch (error) {
     if (error.code === 'P2002') return redirectWith(res, `/sales/${saleId}/edit`, 'error', 'That mobile number already belongs to another customer.');
     redirectWith(res, `/sales/${saleId}/edit`, 'error', error.message || 'Could not update this invoice.');

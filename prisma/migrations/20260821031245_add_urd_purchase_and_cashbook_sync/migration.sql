@@ -1,5 +1,5 @@
 -- AlterTable
-ALTER TABLE `cashbookentry` ADD COLUMN `customerId` INTEGER NULL,
+ALTER TABLE `CashbookEntry` ADD COLUMN `customerId` INTEGER NULL,
     ADD COLUMN `syncLedger` BOOLEAN NOT NULL DEFAULT false;
 
 -- CreateTable
