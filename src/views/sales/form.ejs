@@ -672,10 +672,11 @@
   .sale-cart-columns,
   .sale-cart-row {
     display: grid;
-    grid-template-columns: 32px minmax(190px, 1.7fr) 72px 82px 104px 122px 118px 68px;
+    grid-template-columns: 24px minmax(110px, 1.8fr) 48px 68px minmax(72px, 0.9fr) minmax(58px, 0.8fr) minmax(80px, 1fr) 58px;
     align-items: center;
-    column-gap: 10px;
-    min-width: 910px;
+    column-gap: 8px;
+    width: 100%;
+    box-sizing: border-box;
   }
   .sale-cart-columns {
     position: sticky;
@@ -690,25 +691,42 @@
     letter-spacing: .035em;
     text-transform: uppercase;
   }
+  .sale-cart-columns > span:last-child {
+    position: sticky;
+    right: 0;
+    background: #fff;
+    z-index: 3;
+  }
   .barcode-sale .barcode-line { padding: 0 !important; margin-bottom: 7px !important; border: 0 !important; background: transparent !important; box-shadow: none !important; }
   .sale-cart-row {
-    min-height: 54px;
-    padding: 7px 10px;
+    min-height: 50px;
+    padding: 6px 10px;
     border: 1px solid #e6ddd0;
     border-radius: 8px;
     background: #fff;
     color: #392f25;
     font-size: 12px;
+    position: relative;
   }
   .sale-cart-row:hover { border-color: #d7bc83; background: #fffdf9; }
+  .sale-cart-row:hover .cart-row-actions { background: #fffdf9; }
   .sale-cart-row .line-number { width: 22px !important; height: 22px !important; font-size: 10px !important; }
   .cart-item-cell { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
   .cart-item-cell strong,
   .cart-item-cell small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .cart-item-cell strong { color: #2b2319; font-size: 12.5px; }
   .cart-item-cell small { color: #837665; font-size: 10.5px; }
-  .cart-row-actions { display: flex; justify-content: flex-end; gap: 4px; }
-  .cart-row-actions .icon-button { width: 26px; height: 26px; padding: 0; }
+  .cart-row-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 4px;
+    position: sticky;
+    right: 0;
+    background: #fff;
+    z-index: 1;
+    padding-left: 4px;
+  }
+  .cart-row-actions .icon-button { width: 26px; height: 26px; padding: 0; flex-shrink: 0; }
   .sale-line-editor-modal { z-index: 10010; }
   .sale-line-editor-modal-card { max-width: 860px !important; }
   .sale-line-editor-body { padding: 20px 24px !important; }
