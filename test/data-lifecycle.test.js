@@ -123,6 +123,31 @@ test('URD Excel export preserves a manually entered Silver purity', async () => 
   assert.equal(payload.sheets[0].layout, 'ca-register');
 });
 
+test('customer ledger export is a compact CA register with phone and running due', async () => {
+  const customer = { name: 'Ram Sharma', phone: '9876543210' };
+  const db = {
+    customerLedger: {
+      findMany: async () => [
+        { id: 1, customerId: 7, createdAt: new Date(2026, 8, 2, 10, 0), amount: 100, customer },
+        { id: 2, customerId: 7, createdAt: new Date(2026, 8, 2, 11, 0), amount: -25, customer }
+      ],
+      groupBy: async () => [{ customerId: 7, _sum: { amount: 50 } }]
+    }
+  };
+
+  const payload = await getExportPayload(db, 'customer-ledger', { from: '2026-09-02', to: '2026-09-02' });
+  const sheet = payload.sheets[0];
+
+  assert.equal(sheet.layout, 'ca-register');
+  assert.equal(sheet.title, 'Customer Ledger Register');
+  assert.equal(sheet.subtitle, 'From    02/09/2026   To   02/09/2026');
+  assert.deepEqual(sheet.columns.map((column) => column.label), ['Sr No.', 'Date', 'Customer name', 'Phone no.', 'Due']);
+  assert.deepEqual(sheet.rows.map((row) => [row.srNo, row.customerName, row.customerPhone, row.due]), [
+    [1, 'Ram Sharma', '9876543210', 150],
+    [2, 'Ram Sharma', '9876543210', 125]
+  ]);
+});
+
 test('scheme export keeps enrollment and installment cashbook information in separate sheets', async () => {
   const enrollment = {
     id: 1,

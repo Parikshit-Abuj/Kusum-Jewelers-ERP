@@ -77,13 +77,5 @@ test('accepts the known installed checksum for a corrected case-sensitive migrat
     ),
     true
   );
-  assert.equal(
-    migrationChecksumMatches(
-      '20260903120000_six_character_barcode_sequences',
-      '6a983cebd4ee313fb763a10b1290efcaac36627c56f425343eaafb5580d82b6e',
-      'a2ec4b57ed324b2f08b34cc54450ba43290f46135f8da1664a52e77ba9a4ad7e'
-    ),
-    true
-  );
   assert.equal(migrationChecksumMatches('unknown', 'old', 'new'), false);
 });

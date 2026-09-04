@@ -1171,7 +1171,7 @@ app.delete('/api/inventory/batch-piece/:id', async (req, res, next) => {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid piece ID.' });
     let batchDocNo = null;
-    await prisma.$transaction(async (tx) => {
+    const enrolledPlan = await prisma.$transaction(async (tx) => {
       const prod = await tx.product.findUnique({ where: { id }, select: { batchDocNo: true } });
       batchDocNo = prod?.batchDocNo || null;
       await tx.stockMovement.deleteMany({ where: { productId: id } });
@@ -2971,9 +2971,10 @@ app.post('/schemes/:planId/enroll', async (req, res, next) => {
           status: 'PENDING'
         }))
       });
+      return plan;
     });
 
-    redirectWith(res, `/schemes/plans/${planId}`, 'message', `Customer "${name}" enrolled in ${plan.name} successfully.`);
+    redirectWith(res, `/schemes/plans/${planId}`, 'message', `Customer "${name}" enrolled in ${enrolledPlan.name} successfully.`);
   } catch (error) {
     const errTarget = req.headers.referer?.includes('/plans/') ? req.headers.referer : `/schemes/plans/${req.params.planId || ''}`;
     redirectWith(res, errTarget, 'error', error.message || 'Could not enroll customer.');

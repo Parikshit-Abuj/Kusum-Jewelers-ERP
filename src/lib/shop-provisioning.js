@@ -14,12 +14,7 @@ const LEGACY_MIGRATION_CHECKSUMS = Object.freeze({
   '20260820200000_daily_rates_barcodes_ledger': new Set(['30659da325d2d6ddb6bd2afc79500d2ce5d98b0e0c7452aaeb35c2945ae22ff1']),
   '20260821031245_add_urd_purchase_and_cashbook_sync': new Set(['62a6e77ccf86f6bae7aaf74073ab5c651606d9dd1c800e43cc97a6241c0b7bfc']),
   '20260821090000_sale_urd_settlement_and_cash_sync': new Set(['9498636353ef73e3420f77ce6e02942a88572483d048e97c9fe9ef03738448d7']),
-  '20260823093000_add_sale_split_payments': new Set(['78b39e4f0f03d2a676072fd9a39ec5a1fd8a2eada4dafea489dfc1bf7fcbd368']),
-  // The six-character barcode experiment was applied to a few development
-  // databases, then intentionally retired in favour of the supported
-  // five-character Base-36 series. Its no-op successor is safe because the
-  // original change only widened BarcodeSequence.prefix.
-  '20260903120000_six_character_barcode_sequences': new Set(['6a983cebd4ee313fb763a10b1290efcaac36627c56f425343eaafb5580d82b6e'])
+  '20260823093000_add_sale_split_payments': new Set(['78b39e4f0f03d2a676072fd9a39ec5a1fd8a2eada4dafea489dfc1bf7fcbd368'])
 });
 
 function migrationChecksumMatches(migrationName, installedChecksum, bundledChecksum) {

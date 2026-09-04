@@ -114,3 +114,34 @@ test('writes a plain CA register without colours or filter arrows, with working 
   assert.equal(sheet.getCell('D5').numFmt, '#,##0.00;[Red]-#,##0.00');
   assert.equal(sheet.getCell('A4').fill.fgColor?.argb, undefined);
 });
+
+test('renders the compact customer ledger register without filters or unnecessary columns', async () => {
+  const workbookBytes = await buildExcelExport({
+    title: 'Kusum ERP - Customer ledger validation',
+    columns: [], rows: [],
+    sheets: [{
+      name: 'Customer ledger',
+      title: 'Customer Ledger Register',
+      subtitle: 'From    01/09/2026   To   30/09/2026',
+      layout: 'ca-register',
+      columns: [
+        { key: 'srNo', label: 'Sr No.', type: 'integer', width: 9 },
+        { key: 'date', label: 'Date', type: 'date', width: 14 },
+        { key: 'customerName', label: 'Customer name', type: 'text', width: 26 },
+        { key: 'customerPhone', label: 'Phone no.', type: 'identifier', width: 16 },
+        { key: 'due', label: 'Due', type: 'currency', width: 16 }
+      ],
+      rows: [{ srNo: 1, date: '2026-09-01', customerName: 'Ram Sharma', customerPhone: '9876543210', due: 125 }]
+    }]
+  });
+
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(workbookBytes);
+  const sheet = workbook.getWorksheet('Customer ledger');
+  assert.equal(sheet.autoFilter, undefined);
+  assert.equal(sheet.getCell('A1').value, 'KUSUM JEWELLERS');
+  assert.equal(sheet.getCell('A3').value, 'From    01/09/2026   To   30/09/2026');
+  assert.deepEqual(['A4', 'B4', 'C4', 'D4', 'E4'].map((cell) => sheet.getCell(cell).value), ['SR NO.', 'DATE', 'CUSTOMER NAME', 'PHONE NO.', 'DUE']);
+  assert.equal(sheet.getCell('D5').text, '9876543210');
+  assert.equal(sheet.getCell('E5').numFmt, '#,##0.00;[Red]-#,##0.00');
+});

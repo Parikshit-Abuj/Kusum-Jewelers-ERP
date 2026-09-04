@@ -152,7 +152,7 @@ async function openErpWindow() {
     writeStartupLog(error);
     dialog.showErrorBox(
       'Kusum ERP could not start',
-      `${error.message}\n\nCheck that no other program is using port 3000, then run the ERP again.`
+      `${error.message}\n\nCheck the MySQL connection and ERP setup, then run the ERP again. Technical details are saved in the desktop-shell log.`
     );
     app.quit();
   }

@@ -356,7 +356,7 @@ async function getExportPayload(db, key, range, options = {}) {
       const purchases = await db.urdPurchase.findMany({
         where: { purchaseDate: dateTimeRange(range), cancelledAt: null },
         orderBy: [{ purchaseDate: 'asc' }, { id: 'asc' }],
-        include: { customer: true, sale: true },
+        include: { customer: true },
         take: MAX_SOURCE_ROWS + 1
       });
       assertExportRows(purchases, 'URD purchase register');
@@ -891,63 +891,36 @@ async function getExportPayload(db, key, range, options = {}) {
       }) : [];
       const openingBalances = new Map(openingRows.map((row) => [row.customerId, num(row._sum.amount)]));
       const customerBalances = new Map();
-      const rows = entries.map((e) => {
+      const rows = entries.map((e, index) => {
         const amount = num(e.amount);
         const openingBalance = openingBalances.get(e.customerId) || 0;
         const runningBalance = (customerBalances.has(e.customerId) ? customerBalances.get(e.customerId) : openingBalance) + amount;
         customerBalances.set(e.customerId, runningBalance);
         return {
-          createdAt: exportDate(e.createdAt),
-          customerPhone: e.customer.phone || '',
-          customerName: e.customer.name,
-          type: e.type === 'SALE_CREDIT' ? 'Sale credit (due)' : e.type === 'PAYMENT_RECEIVED' ? 'Payment received' : 'Adjustment',
-          invoiceNumber: e.sale?.invoiceNumber || '',
-          dueIncrease: amount > 0 ? amount : 0,
-          paymentReceived: amount < 0 ? Math.abs(amount) : 0,
-          ledgerChange: amount,
-          openingBalance,
-          runningBalance,
-          paymentMethod: paymentLabel(e.paymentMethod),
-          reference: e.reference || '',
-          note: str(e.note)
+          srNo: index + 1,
+          date: exportDate(e.createdAt),
+          customerName: e.customer?.name || 'Unknown customer',
+          customerPhone: e.customer?.phone || '',
+          due: runningBalance
         };
       });
 
-      const allColumns = [
-        col.date('createdAt', 'Ledger date'),
-        col.identifier('customerPhone', 'Phone / ID', 18),
-        col.text('customerName', 'Customer', 24),
-        col.text('type', 'Entry type', 22),
-        col.identifier('invoiceNumber', 'Invoice no.', 20),
-        col.currency('dueIncrease', 'Due / debit'),
-        col.currency('paymentReceived', 'Payment / credit'),
-        col.currency('ledgerChange', 'Ledger change'),
-        col.currency('openingBalance', 'Opening due'),
-        col.currency('runningBalance', 'Running due'),
-        col.text('paymentMethod', 'Payment method', 16),
-        col.identifier('reference', 'Reference', 18),
-        col.text('note', 'Note', 34)
+      const columns = [
+        col.integer('srNo', 'Sr No.', 9),
+        col.date('date', 'Date', 14),
+        col.text('customerName', 'Customer name', 26),
+        col.identifier('customerPhone', 'Phone no.', 16),
+        col.currency('due', 'Due', 16)
       ];
-      const columns = pruneEmptyColumns(allColumns, rows);
-      const totalCredit = rows.reduce((sum, row) => sum + row.dueIncrease, 0);
-      const totalPayments = rows.reduce((sum, row) => sum + row.paymentReceived, 0);
-      const totalOpening = [...openingBalances.values()].reduce((sum, amount) => sum + amount, 0);
-      const totalClosing = [...customerBalances.values()].reduce((sum, amount) => sum + amount, 0);
 
       return exportEnvelope(resource, range, columns, rows, {
         sheets: [{
           name: 'Customer ledger',
-          title: `Customer Ledger`,
-          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | ${rows.length} entr${rows.length === 1 ? 'y' : 'ies'}`,
+          title: 'Customer Ledger Register',
+          subtitle: registerPeriod(range),
           columns,
           rows,
-          infoRows: [
-            { label: 'Opening due', value: totalOpening, type: 'currency' },
-            { label: 'Due added', value: totalCredit, type: 'currency' },
-            { label: 'Payments received', value: totalPayments, type: 'currency' },
-            { label: 'Closing due', value: totalClosing, type: 'currency' },
-            { label: 'Ledger entries', value: rows.length, type: 'integer' }
-          ]
+          layout: 'ca-register'
         }]
       });
     }
