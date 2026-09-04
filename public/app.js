@@ -27,35 +27,56 @@ function escapeHtml(value) {
   })[character]);
 }
 
-function titleCaseValue(value) {
-  return String(value ?? '')
-    .toLowerCase()
-    .replace(/(^|[^A-Za-z])([A-Za-z])/g, (_, prefix, letter) => `${prefix}${letter.toUpperCase()}`);
+function shouldUppercaseInput(input) {
+  if (!input || !input.matches) return false;
+  if (input.matches('input[type="password"], input[type="email"], input[type="number"], input[type="date"], input[type="file"], input[type="checkbox"], input[type="radio"], input[type="hidden"]')) {
+    return false;
+  }
+  if (input.matches('[data-no-uppercase], [data-no-uppercase] *, .preserve-case, .preserve-case *')) {
+    return false;
+  }
+  if (input.matches('[name="username"], [name="password"], [name="currentPassword"], [name="newPassword"], [name="confirmPassword"], [name="appUsername"], [name="appPassword"], [name="mysqlUser"], [name="mysqlPassword"], [name="databaseUser"], [name="databasePassword"], [name="mysqlHost"], [name="databaseName"], [name="printerHost"], [name="printerPort"], [name="printerName"]')) {
+    return false;
+  }
+  if (input.closest('.login-page, .login-card, .login-form-panel, form[action="/login"], form[action="/change-password"], .setup-body, .setup-container, .setup-card, #setup-form, form[action="/setup"], form[action="/connection-repair"], form[action="/network-setup"], #printer-setup-form, [data-preserve-case]')) {
+    return false;
+  }
+  return input.matches('input[type="text"], input[type="search"], input:not([type]), textarea, [data-uppercase], [data-title-case], [data-huid-code], [name="huidCode"]');
 }
 
-// Keep the form readable as the cashier types. Server routes apply the same
-// title-case rule before saving, including batch/API submissions.
-document.addEventListener('input', (event) => {
-  const input = event.target;
-  if (!input?.matches?.('[data-title-case]')) return;
-  const formatted = titleCaseValue(input.value);
-  if (input.value !== formatted) input.value = formatted;
-});
-
-// Convert HUID, PAN, and explicit uppercase inputs to UPPERCASE in real time as the user types
-document.addEventListener('input', (event) => {
-  const input = event.target;
-  if (!input?.matches?.('[data-huid-code], [data-uppercase], [name="huidCode"]')) return;
+function convertInputToUppercase(input) {
+  if (!shouldUppercaseInput(input)) return;
   const start = input.selectionStart;
   const end = input.selectionEnd;
   const upper = String(input.value || '').toUpperCase();
   if (input.value !== upper) {
     input.value = upper;
-    if (start !== null && end !== null) {
-      input.setSelectionRange(start, end);
+    if (start !== null && end !== null && typeof input.setSelectionRange === 'function') {
+      try {
+        input.setSelectionRange(start, end);
+      } catch (_) {}
     }
   }
+}
+
+// Convert all ERP data-entry text inputs to UPPERCASE in real time as the user types
+document.addEventListener('input', (event) => {
+  convertInputToUppercase(event.target);
 });
+
+document.addEventListener('change', (event) => {
+  convertInputToUppercase(event.target);
+});
+
+document.addEventListener('submit', (event) => {
+  const form = event.target;
+  if (!form || !form.querySelectorAll) return;
+  if (form.closest('.login-page, .login-card, .login-form-panel, form[action="/login"], form[action="/change-password"], .setup-body, .setup-container, .setup-card, #setup-form, form[action="/setup"], form[action="/connection-repair"], form[action="/network-setup"], #printer-setup-form')) {
+    return;
+  }
+  form.querySelectorAll('input[type="text"], input[type="search"], input:not([type]), textarea, [data-uppercase], [data-title-case]').forEach(convertInputToUppercase);
+});
+
 
 /* ── Form Enter navigation ───────────────────────────────────
    Cashiers enter a large amount of data from the keyboard. Enter moves to
@@ -373,10 +394,10 @@ document.querySelectorAll('.flash').forEach((el) => {
     newFields.hidden = true;
     [nameInput, panInput, emailInput, addressInput].filter(Boolean).forEach((input) => { input.disabled = true; });
     nameInput.required = false;
-    existingName.textContent = customer.name;
-    const contact = [customer.phone, customer.email, customer.address].filter(Boolean).join(' · ');
+    existingName.textContent = String(customer.name || '').toUpperCase();
+    const contact = [customer.phone, customer.email, customer.address ? String(customer.address).toUpperCase() : ''].filter(Boolean).join(' · ');
     existingDetails.textContent = `${contact || 'Customer details loaded'} · Outstanding: ${fmt(customer.outstanding)}`;
-    if (existingPanInput) existingPanInput.value = customer.panNumber || '';
+    if (existingPanInput) existingPanInput.value = String(customer.panNumber || '').toUpperCase();
     ledgerLink.href = `/customers/${customer.id}`;
     ledgerLink.hidden = false;
     const outstandingVal = Number(customer.outstanding || 0);
@@ -904,12 +925,12 @@ document.querySelectorAll('.flash').forEach((el) => {
           barcodeInput.value = values.barcode || '';
           if (values.barcode) await lookupBarcode(values.barcode);
         }
-        weightInput.value = values.weight || '';
+        weightInput.value = values.weight !== undefined && values.weight !== null ? values.weight : '';
         if (purityInput) purityInput.value = values.purity || '';
-        metalRateInput.value = values.metalRate || '';
+        metalRateInput.value = values.metalRate !== undefined && values.metalRate !== null ? values.metalRate : '';
         makingTypeSelect.value = values.makingChargeType || 'PER_GRAM';
-        makingValueInput.value = values.makingChargeValue || '';
-        taxableInput.value = values.taxableAmount || '';
+        makingValueInput.value = values.makingChargeValue !== undefined && values.makingChargeValue !== null ? values.makingChargeValue : '0';
+        taxableInput.value = values.taxableAmount !== undefined && values.taxableAmount !== null ? values.taxableAmount : '';
         taxableInput.dataset.manualOverride = values.taxableManual || existingSaleItemId > 0 ? '1' : '';
         qtyInput.value = '1';
         const hsn = row.querySelector('[data-hsn-code]');
@@ -1244,6 +1265,47 @@ document.querySelectorAll('.flash').forEach((el) => {
       event.preventDefault();
       setRowStatus(unresolved, 'error', 'Wait for this barcode to load, or scan it again before saving.');
       lineField(unresolved, '[data-barcode]')?.focus();
+      return;
+    }
+
+    const phoneInput = form.querySelector('[data-customer-phone]');
+    const phoneDigits = (phoneInput?.value || '').replace(/\D/g, '');
+    if (!phoneDigits || phoneDigits.length < 10 || phoneDigits.length > 15) {
+      event.preventDefault();
+      alert('Enter a valid customer mobile number (10 to 15 digits).');
+      phoneInput?.focus();
+      return;
+    }
+
+    const nameInput = form.querySelector('[data-edit-customer-name], [data-customer-name]:not([disabled])');
+    if (nameInput && !nameInput.value.trim()) {
+      event.preventDefault();
+      alert('Enter the customer name.');
+      nameInput.focus();
+      return;
+    }
+
+    const netPayableText = form.querySelector('[data-net-payable]')?.textContent || '0';
+    const netPayableNum = n(netPayableText.replace(/[^0-9.-]+/g, ''));
+    let totalPaidVal = 0;
+    if (paymentMethodInput?.value === 'MIXED') {
+      const c = n(cashPaidInput?.value);
+      const u = n(upiPaidInput?.value);
+      const cd = n(cardPaidInput?.value);
+      const b = n(bankPaidInput?.value);
+      totalPaidVal = c + u + cd + b;
+    } else {
+      totalPaidVal = n(paidInput ? paidInput.value : 0);
+    }
+    if (!isUrdRefundable && netPayableNum > 0 && totalPaidVal > netPayableNum + 0.5) {
+      event.preventDefault();
+      alert(`Amount received (₹${totalPaidVal.toFixed(2)}) cannot be greater than the net payable amount (₹${netPayableNum.toFixed(2)}).`);
+      if (paymentMethodInput?.value === 'MIXED') {
+        cashPaidInput?.focus();
+      } else {
+        paidInput?.focus();
+      }
+      return;
     }
   });
 
@@ -1255,6 +1317,7 @@ document.querySelectorAll('.flash').forEach((el) => {
       await row._saleLine?.restore({ ...savedLine, taxableManual: true });
     }
     updateAllLineSummaries();
+    updatePaymentMethodState();
     updateFormTotals();
     updateItemCount();
     restoringDraft = false;
@@ -1286,10 +1349,10 @@ document.querySelectorAll('.flash').forEach((el) => {
               if (!resp.ok) return;
               const data = await resp.json();
               if (data.found && data.customer) {
-                if (editNameInput && !editNameInput.value) editNameInput.value = data.customer.name || '';
-                if (editPanInput && !editPanInput.value) editPanInput.value = data.customer.panNumber || '';
+                if (editNameInput && !editNameInput.value) editNameInput.value = String(data.customer.name || '').toUpperCase();
+                if (editPanInput && !editPanInput.value) editPanInput.value = String(data.customer.panNumber || '').toUpperCase();
                 if (editEmailInput && !editEmailInput.value) editEmailInput.value = data.customer.email || '';
-                if (editAddressInput && !editAddressInput.value) editAddressInput.value = data.customer.address || '';
+                if (editAddressInput && !editAddressInput.value) editAddressInput.value = String(data.customer.address || '').toUpperCase();
               }
             } catch (_) {}
           }, 350);

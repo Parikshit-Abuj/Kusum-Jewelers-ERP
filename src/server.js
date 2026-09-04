@@ -31,6 +31,7 @@ const { normalizeTopSellingFilters, countTopSellingItems, listTopSellingItems, s
 const { number, roundToNearestRupee, asArray, dateInput, startOfToday, dateTimeFromInput, localDateTimeRange, money, grams, formatDateDisplay, nextDocumentNumber, nextBatchDocumentNumber, metalRateFromDailyRate, makingAmount, titleCase } = require('./lib/helpers');
 const { nextBarcode } = require('./lib/barcode-sequence');
 const { upsertItemName } = require('./lib/item-names');
+const { createInstallmentSchedule, schemeEndDate, isFullInstallmentPayment } = require('./lib/scheme-schedule');
 const { hasConfiguredPassword, passwordMatchesEnvironment, secureTextMatch, usesKnownDefaultPassword } = require('./lib/auth-security');
 const { PrismaSessionStore } = require('./lib/mysql-session-store');
 let prisma = createPrisma();
@@ -537,7 +538,12 @@ app.get('/login', async (req, res) => {
 app.post('/login', async (req, res) => {
   if (shopSetupRequired()) return res.redirect('/setup');
   if (await databaseConnectionError(true)) return redirectWith(res, '/connection-repair', 'error', 'The saved database connection is unavailable. Enter the current database details below.');
-  const usernameOk = secureTextMatch(req.body.username, process.env.AUTH_USERNAME);
+  const enteredUsername = String(req.body.username || '').trim();
+  const configuredUsername = String(process.env.AUTH_USERNAME || '').trim();
+  const usernameOk = Boolean(enteredUsername) && Boolean(configuredUsername) && (
+    secureTextMatch(enteredUsername, configuredUsername) ||
+    secureTextMatch(enteredUsername.toLowerCase(), configuredUsername.toLowerCase())
+  );
   const passwordOk = passwordMatchesEnvironment(req.body.password, process.env);
   if (!usernameOk || !passwordOk) return redirectWith(res, '/login', 'error', 'Incorrect username or password.');
 
@@ -594,7 +600,8 @@ app.post('/change-password', async (req, res) => {
     const confirmation = String(req.body.confirmPassword || '');
     if (!newPassword) throw new Error('Choose a new ERP password.');
     if (newPassword !== confirmation) throw new Error('New password and confirmation do not match.');
-    if (secureTextMatch(process.env.AUTH_USERNAME, 'kusum') && secureTextMatch(newPassword, 'kusum@123')) {
+    const configuredUser = String(process.env.AUTH_USERNAME || '').trim().toLowerCase();
+    if (configuredUser === 'kusum' && secureTextMatch(newPassword, 'kusum@123')) {
       throw new Error('Choose your own password instead of the old default password.');
     }
     const updated = updateLoginConfiguration({
@@ -835,8 +842,8 @@ app.post('/rates', async (req, res, next) => {
     const silver = number(req.body.silver);
     await prisma.dailyRate.upsert({
       where: { rateDate },
-      create: { rateDate, gold22k, gold24k, silver, note: req.body.note || null },
-      update: { gold22k, gold24k, silver, note: req.body.note || null }
+      create: { rateDate, gold22k, gold24k, silver, note: req.body.note ? String(req.body.note).trim().toUpperCase() : null },
+      update: { gold22k, gold24k, silver, note: req.body.note ? String(req.body.note).trim().toUpperCase() : null }
     });
     redirectWith(res, `/rates?date=${rateDate}`, 'message', `Rates saved for ${rateDate}.`);
   } catch (error) { next(error); }
@@ -1028,9 +1035,9 @@ app.post('/api/inventory/batch-piece', express.json(), async (req, res, next) =>
     const netWeight = number(req.body.netWeight) > 0 ? number(req.body.netWeight) : Math.max(0, grossWeight - stoneWeight);
     const makingChargeType = ['FIXED', 'PER_GRAM', 'PERCENTAGE'].includes(req.body.makingChargeType) ? req.body.makingChargeType : 'PER_GRAM';
     const makingChargeValue = number(req.body.makingChargeValue);
-    const location = req.body.location ? String(req.body.location).trim() : null;
+    const location = req.body.location ? String(req.body.location).trim().toUpperCase() : null;
     const requestedBatchDocNo = req.body.batchDocNo ? String(req.body.batchDocNo).trim() : null;
-    const notes = req.body.notes ? String(req.body.notes).trim() : null;
+    const notes = req.body.notes ? String(req.body.notes).trim().toUpperCase() : null;
 
     if (!name) return res.status(400).json({ error: 'Item name is required.' });
     if (!category) return res.status(400).json({ error: 'Category is required.' });
@@ -1122,7 +1129,7 @@ app.put('/api/inventory/batch-piece/:id', express.json(), async (req, res, next)
       const category = req.body.category ? titleCase(req.body.category) : existing.category;
       const makingChargeType = ['FIXED', 'PER_GRAM', 'PERCENTAGE'].includes(req.body.makingChargeType) ? req.body.makingChargeType : existing.makingChargeType;
       const makingChargeValue = req.body.makingChargeValue !== undefined ? number(req.body.makingChargeValue) : Number(existing.makingChargeValue);
-      const location = req.body.location !== undefined ? (req.body.location ? String(req.body.location).trim() : null) : existing.location;
+      const location = req.body.location !== undefined ? (req.body.location ? String(req.body.location).trim().toUpperCase() : null) : existing.location;
 
       const metalAmount = metalRateFromDailyRate({ metal, purity }, rateInfo.rate) * netWeight;
       const suggestedPrice = metalAmount + makingAmount(makingChargeType, makingChargeValue, metalAmount, netWeight);
@@ -1213,8 +1220,8 @@ app.post('/inventory', async (req, res, next) => {
           quantity: 1, reorderLevel,
           purchasePrice: number(req.body.purchasePrice), sellingPrice: suggestedPrice,
           makingChargePerGram: makingChargeType === 'PER_GRAM' ? makingChargeValue : 0,
-          makingChargeType, makingChargeValue, location: req.body.location || null,
-          notes: req.body.notes || null, status: 'AVAILABLE'
+          makingChargeType, makingChargeValue, location: req.body.location ? String(req.body.location).trim().toUpperCase() : null,
+          notes: req.body.notes ? String(req.body.notes).trim().toUpperCase() : null, status: 'AVAILABLE'
         }
       });
       await tx.stockMovement.create({ data: stockMovementSnapshot(product, 'OPENING', 1, `Opening stock · ${barcode}`) });
@@ -1266,7 +1273,7 @@ app.post('/inventory/:id', async (req, res, next) => {
         purity, grossWeight: number(req.body.grossWeight), stoneWeight: number(req.body.stoneWeight), netWeight,
         reorderLevel, purchasePrice: number(req.body.purchasePrice), sellingPrice: suggestedPrice,
         makingChargePerGram: makingChargeType === 'PER_GRAM' ? makingChargeValue : 0,
-        makingChargeType, makingChargeValue, location: req.body.location || null, notes: req.body.notes || null, status: 'AVAILABLE'
+        makingChargeType, makingChargeValue, location: req.body.location ? String(req.body.location).trim().toUpperCase() : null, notes: req.body.notes ? String(req.body.notes).trim().toUpperCase() : null, status: 'AVAILABLE'
       } });
       await upsertItemName(tx, itemName, category, { updateCategory: false });
     });
@@ -1367,7 +1374,14 @@ app.get('/customers/:id', async (req, res, next) => {
     const [customer, ledgerCount, ledgerTotal, unpaidSalesCount] = await Promise.all([
       prisma.customer.findUniqueOrThrow({
         where: { id: customerId },
-        include: { sales: { where: { cancelledAt: null }, orderBy: { saleDate: 'desc' }, take: 10 } }
+        include: {
+          sales: { where: { cancelledAt: null }, orderBy: { saleDate: 'desc' }, take: 10 },
+          schemeEnrollments: {
+            include: { schemePlan: true },
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            take: 20
+          }
+        }
       }),
       prisma.customerLedger.count({ where: { customerId } }),
       prisma.customerLedger.aggregate({ where: { customerId }, _sum: { amount: true } }),
@@ -1701,16 +1715,16 @@ app.post('/sales', async (req, res, next) => {
         invoiceNumber: await nextDocumentNumber(tx, 'INV', saleDate), customerId, customerPan, saleDate,
         subtotal, discount: appliedDiscount, gstRate, gstAmount, total, urdOffset: urdAmount, paid: acceptedPaid,
         cashPaid: payment.cashPaid, upiPaid: payment.upiPaid, cardPaid: payment.cardPaid, bankPaid: payment.bankPaid, balance,
-        paymentMethod: payment.paymentMethod, notes: req.body.notes || null,
+        paymentMethod: payment.paymentMethod, notes: req.body.notes ? String(req.body.notes).trim().toUpperCase() : null,
         items: { create: pricedRows.map((row) => ({
           productId: row.productId, productBarcode: row.product.barcode, productSku: row.product.sku,
-          productName: row.product.name, productMetal: row.product.metal, productPurity: row.purity || row.product.purity || null,
+          productName: row.product.name, productMetal: row.product.metal, productPurity: row.purity ? String(row.purity).trim().toUpperCase() : (row.product.purity ? String(row.product.purity).trim().toUpperCase() : null),
           grossWeight: row.product.grossWeight, quantity: row.quantity, weight: row.weight, unitPrice: row.metalRate,
           metalRate: row.metalRate, metalAmount: row.metalAmount, makingCharge: row.makingCharge,
           makingChargeType: row.makingChargeType, makingChargeValue: row.makingChargeValue,
           taxableAmount: row.taxableAmount, lineTotal: row.taxableAmount,
-          hsnCode: row.hsnCode || null,
-          huidCode: row.huidCode || null
+          hsnCode: row.hsnCode ? String(row.hsnCode).trim().toUpperCase() : null,
+          huidCode: row.huidCode ? String(row.huidCode).trim().toUpperCase() : null
         })) }
       } });
       if (balance > 0) await tx.customerLedger.create({
@@ -1719,10 +1733,10 @@ app.post('/sales', async (req, res, next) => {
       if (includeUrdPurchase) {
         const urdPurchase = await tx.urdPurchase.create({ data: {
           purchaseNumber: await nextDocumentNumber(tx, 'URD', saleDate), customerId, purchaseDate: saleDate,
-          metal: req.body.urdMetal || 'GOLD', purity: req.body.urdPurity || null,
+          metal: req.body.urdMetal || 'GOLD', purity: req.body.urdPurity ? String(req.body.urdPurity).trim().toUpperCase() : null,
           grossWeight: number(req.body.urdGrossWeight), netWeight: number(req.body.urdNetWeight),
           ratePerGram: number(req.body.urdRatePerGram), totalAmount: urdAmount, saleOffset: settlement.saleAdjustment,
-          paid: settlement.netRefundable, paymentMethod: refundMethod || 'MIXED', description: req.body.urdDescription || 'URD purchase settled against sale',
+          paid: settlement.netRefundable, paymentMethod: refundMethod || 'MIXED', description: req.body.urdDescription ? String(req.body.urdDescription).trim().toUpperCase() : 'URD PURCHASE SETTLED AGAINST SALE',
           notes: `Settled against sale ${sale.invoiceNumber}`, saleId: sale.id
         } });
         if (settlement.hasRefund) {
@@ -2033,7 +2047,7 @@ app.post('/sales/:id/edit', async (req, res, next) => {
         CARD: roundedMoney(payment.cardPaid + laterComponents.CARD),
         BANK_TRANSFER: roundedMoney(payment.bankPaid + laterComponents.BANK_TRANSFER)
       };
-      const notes = String(req.body.notes || '').trim() || null;
+      const notes = req.body.notes ? String(req.body.notes).trim().toUpperCase() : null;
 
       if (sale.urdPurchase) {
         const urdEntries = await tx.cashbookEntry.findMany({ where: { urdPurchaseId: sale.urdPurchase.id }, select: { description: true } });
@@ -2066,7 +2080,7 @@ app.post('/sales/:id/edit', async (req, res, next) => {
             saleOffset: settlement.saleAdjustment,
             paid: settlement.netRefundable,
             paymentMethod: refundMethod || 'MIXED',
-            description: req.body.urdDescription || 'URD purchase settled against sale',
+            description: req.body.urdDescription ? String(req.body.urdDescription).trim().toUpperCase() : 'URD purchase settled against sale',
             notes: `Settled against sale ${sale.invoiceNumber}`
           }
         });
@@ -2077,7 +2091,7 @@ app.post('/sales/:id/edit', async (req, res, next) => {
             customerId: finalCustomerId,
             purchaseDate: saleDate,
             metal: req.body.urdMetal || 'GOLD',
-            purity: req.body.urdPurity || null,
+            purity: req.body.urdPurity ? String(req.body.urdPurity).trim().toUpperCase() : null,
             grossWeight: number(req.body.urdGrossWeight),
             netWeight: number(req.body.urdNetWeight),
             ratePerGram: number(req.body.urdRatePerGram),
@@ -2085,7 +2099,7 @@ app.post('/sales/:id/edit', async (req, res, next) => {
             saleOffset: settlement.saleAdjustment,
             paid: settlement.netRefundable,
             paymentMethod: refundMethod || 'MIXED',
-            description: req.body.urdDescription || 'URD purchase settled against sale',
+            description: req.body.urdDescription ? String(req.body.urdDescription).trim().toUpperCase() : 'URD purchase settled against sale',
             notes: `Settled against sale ${sale.invoiceNumber}`,
             saleId: sale.id
           }
@@ -2180,7 +2194,7 @@ app.post('/sales/:id/edit', async (req, res, next) => {
             productSku: row.product.sku || '',
             productName: row.product.name || 'Jewellery item',
             productMetal: row.product.metal || null,
-            productPurity: row.purity,
+            productPurity: row.purity ? String(row.purity).trim().toUpperCase() : null,
             grossWeight: itemGrossWeight,
             quantity: 1,
             weight: row.weight,
@@ -2192,13 +2206,13 @@ app.post('/sales/:id/edit', async (req, res, next) => {
             makingChargeValue: row.makingChargeValue,
             taxableAmount: row.taxableAmount,
             lineTotal: row.taxableAmount,
-            hsnCode: row.hsnCode || null,
-            huidCode: row.huidCode || null
+            hsnCode: row.hsnCode ? String(row.hsnCode).trim().toUpperCase() : null,
+            huidCode: row.huidCode ? String(row.huidCode).trim().toUpperCase() : null
           }
         });
         await tx.stockMovement.updateMany({
           where: { type: 'SALE', note: `Sold via ${sale.invoiceNumber}`, productBarcode: row.product.barcode || null },
-          data: { productName: row.product.name || '', productMetal: row.product.metal || null, productPurity: row.purity, netWeight: row.weight, createdAt: saleDate }
+          data: { productName: row.product.name || '', productMetal: row.product.metal || null, productPurity: row.purity ? String(row.purity).trim().toUpperCase() : null, netWeight: row.weight, createdAt: saleDate }
         });
       }
       for (const row of pricedRows.filter((item) => !item.existing)) {
@@ -2211,7 +2225,7 @@ app.post('/sales/:id/edit', async (req, res, next) => {
             productSku: row.product.sku,
             productName: row.product.name,
             productMetal: row.product.metal,
-            productPurity: row.purity,
+            productPurity: row.purity ? String(row.purity).trim().toUpperCase() : null,
             grossWeight: itemGrossWeight,
             quantity: 1,
             weight: row.weight,
@@ -2223,8 +2237,8 @@ app.post('/sales/:id/edit', async (req, res, next) => {
             makingChargeValue: row.makingChargeValue,
             taxableAmount: row.taxableAmount,
             lineTotal: row.taxableAmount,
-            hsnCode: row.hsnCode || null,
-            huidCode: row.huidCode || null
+            hsnCode: row.hsnCode ? String(row.hsnCode).trim().toUpperCase() : null,
+            huidCode: row.huidCode ? String(row.huidCode).trim().toUpperCase() : null
           }
         });
         await tx.stockMovement.create({
@@ -2311,7 +2325,7 @@ app.post('/cashbook', async (req, res, next) => {
     const entryDate = req.body.entryDate || dateInput();
     const entryType = req.body.type === 'OUT' ? 'OUT' : 'IN';
     const paymentMethod = receiptPaymentMethod(req.body.paymentMethod);
-    const description = String(req.body.description || '').trim();
+    const description = String(req.body.description || '').trim().toUpperCase();
     if (!description) return redirectWith(res, '/cashbook', 'error', 'Enter a description for this entry.');
 
     await prisma.$transaction(async (tx) => {
@@ -2319,7 +2333,7 @@ app.post('/cashbook', async (req, res, next) => {
       const cashbookEntry = await tx.cashbookEntry.create({
         data: {
           entryDate, type: entryType, paymentMethod, description, amount,
-          reference: receipt, notes: req.body.notes || null,
+          reference: receipt, notes: req.body.notes ? String(req.body.notes).trim().toUpperCase() : null,
           customerId, syncLedger: Boolean(syncLedger)
         }
       });
@@ -2426,7 +2440,7 @@ app.post('/urd-purchases', async (req, res, next) => {
           purchaseDate,
           metal: req.body.metal || 'GOLD', purity: req.body.purity || null,
           grossWeight: number(req.body.grossWeight), netWeight, ratePerGram,
-          totalAmount, paid, paymentMethod, description: req.body.description || null, notes: req.body.notes || null
+          totalAmount, paid, paymentMethod, description: req.body.description ? String(req.body.description).trim().toUpperCase() : null, notes: req.body.notes ? String(req.body.notes).trim().toUpperCase() : null
         }
       });
       if (paid > 0) {
@@ -2758,6 +2772,316 @@ app.get('/reports/cashbook-register', async (req, res, next) => {
     const summary = { in: 0, out: 0 }; totals.forEach((row) => { summary[row.type === 'IN' ? 'in' : 'out'] = Number(row._sum.amount || 0); });
     res.render('reports/cashbook-register', { title: 'Cashbook register', entries, summary, pagination, filters: { from: fromKey, to: toKey, paymentMethod, type, q } });
   } catch (error) { next(error); }
+});
+
+// ── Schemes ─────────────────────────────────────────────────
+app.get('/schemes', async (req, res, next) => {
+  try {
+    const [schemePlans, activePlans, totalEnrollments, activeEnrollments, collected] = await Promise.all([
+      prisma.schemePlan.findMany({
+        orderBy: { createdAt: 'desc' },
+        include: { _count: { select: { enrollments: true } } }
+      }),
+      prisma.schemePlan.count({ where: { isActive: true } }),
+      prisma.schemeEnrollment.count(),
+      prisma.schemeEnrollment.count({ where: { status: 'ACTIVE' } }),
+      prisma.schemeEnrollment.aggregate({ _sum: { totalPaid: true } })
+    ]);
+    const schemeStats = {
+      activePlans,
+      totalEnrollments,
+      activeEnrollments,
+      totalCollected: Number(collected._sum.totalPaid || 0)
+    };
+    res.render('schemes/index', { title: 'Schemes', schemePlans, schemeStats });
+  } catch (error) { next(error); }
+});
+
+app.get('/schemes/plans/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    const plan = await prisma.schemePlan.findUnique({
+      where: { id },
+      include: { _count: { select: { enrollments: true } } }
+    });
+    if (!plan) return res.status(404).render('not-found', { title: 'Scheme plan not found' });
+
+    const enrollments = await prisma.schemeEnrollment.findMany({
+      where: { schemePlanId: id },
+      include: {
+        customer: true,
+        schemePlan: true,
+        installments: {
+          orderBy: { installmentNumber: 'asc' },
+          select: { installmentNumber: true, dueDate: true, paidAmount: true, paymentDate: true, paymentMethod: true, status: true }
+        }
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }]
+    });
+
+    const activeEnrollments = enrollments.filter((e) => e.status === 'ACTIVE').length;
+    const completedEnrollments = enrollments.filter((e) => e.status === 'COMPLETED').length;
+    const cancelledEnrollments = enrollments.filter((e) => e.status === 'CANCELLED').length;
+    const totalCollected = enrollments.reduce((sum, e) => sum + Number(e.totalPaid || 0), 0);
+
+    const stats = {
+      totalEnrollments: enrollments.length,
+      activeEnrollments,
+      completedEnrollments,
+      cancelledEnrollments,
+      totalCollected
+    };
+
+    res.render('schemes/plan-detail', {
+      title: `${plan.name} · Scheme`,
+      plan,
+      enrollments,
+      stats
+    });
+  } catch (error) { next(error); }
+});
+
+app.post('/schemes/plans/new', async (req, res, next) => {
+  try {
+    const name = titleCase(req.body.name);
+    const durationMonths = Number(req.body.durationMonths);
+    const monthlyAmount = roundedMoney(number(req.body.monthlyAmount));
+    const maturityAmount = roundedMoney(number(req.body.maturityAmount));
+    if (!name) return redirectWith(res, '/schemes', 'error', 'Enter a scheme name.');
+    if (!Number.isInteger(durationMonths) || durationMonths < 1 || durationMonths > 60) return redirectWith(res, '/schemes', 'error', 'Duration must be between 1 and 60 months.');
+    if (monthlyAmount <= 0) return redirectWith(res, '/schemes', 'error', 'Enter a valid monthly installment amount.');
+    if (maturityAmount <= 0) return redirectWith(res, '/schemes', 'error', 'Enter a valid maturity amount.');
+    await prisma.schemePlan.create({
+      data: {
+        name,
+        durationMonths,
+        monthlyAmount,
+        maturityAmount,
+        description: req.body.description ? titleCase(req.body.description) : null,
+        isActive: true
+      }
+    });
+    redirectWith(res, '/schemes', 'message', `Scheme plan "${name}" created.`);
+  } catch (error) { redirectWith(res, '/schemes', 'error', error.message || 'Could not create scheme plan.'); }
+});
+
+app.post('/schemes/plans/:id/edit', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    const name = titleCase(req.body.name);
+    const durationMonths = Number(req.body.durationMonths);
+    const monthlyAmount = roundedMoney(number(req.body.monthlyAmount));
+    const maturityAmount = roundedMoney(number(req.body.maturityAmount));
+    if (!name) return redirectWith(res, '/schemes', 'error', 'Enter a scheme name.');
+    if (!Number.isInteger(durationMonths) || durationMonths < 1 || durationMonths > 60) return redirectWith(res, '/schemes', 'error', 'Duration must be between 1 and 60 months.');
+    if (monthlyAmount <= 0) return redirectWith(res, '/schemes', 'error', 'Enter a valid monthly installment amount.');
+    if (maturityAmount <= 0) return redirectWith(res, '/schemes', 'error', 'Enter a valid maturity amount.');
+    const plan = await prisma.schemePlan.findUnique({ where: { id }, include: { _count: { select: { enrollments: true } } } });
+    if (!plan) return redirectWith(res, '/schemes', 'error', 'Scheme plan not found.');
+    const hasEnrollments = plan._count.enrollments > 0;
+    const financialTermsChanged = plan.durationMonths !== durationMonths
+      || roundedMoney(plan.monthlyAmount) !== monthlyAmount
+      || roundedMoney(plan.maturityAmount) !== maturityAmount;
+    if (hasEnrollments && financialTermsChanged) {
+      return redirectWith(res, '/schemes', 'error', 'This plan already has enrolled customers, so its duration and amounts are locked. Create a new plan for different terms.');
+    }
+    await prisma.schemePlan.update({
+      where: { id },
+      data: {
+        name,
+        durationMonths,
+        monthlyAmount,
+        maturityAmount,
+        description: req.body.description ? titleCase(req.body.description) : null,
+        isActive: req.body.isActive === 'on'
+      }
+    });
+    const returnTo = req.body.returnTo === 'plan' || req.headers.referer?.includes(`/schemes/plans/${id}`)
+      ? `/schemes/plans/${id}`
+      : '/schemes';
+    redirectWith(res, returnTo, 'message', `Scheme plan "${name}" updated.`);
+  } catch (error) { redirectWith(res, '/schemes', 'error', error.message || 'Could not update scheme plan.'); }
+});
+
+app.post('/schemes/plans/:id/delete', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    const plan = await prisma.schemePlan.findUnique({ where: { id }, include: { _count: { select: { enrollments: true } } } });
+    if (!plan) return redirectWith(res, '/schemes', 'error', 'Scheme plan not found.');
+    if (plan._count.enrollments > 0) return redirectWith(res, '/schemes', 'error', 'Cannot delete a plan that has enrollments. Deactivate it instead.');
+    await prisma.schemePlan.delete({ where: { id } });
+    redirectWith(res, '/schemes', 'message', `Scheme plan "${plan.name}" deleted.`);
+  } catch (error) { redirectWith(res, '/schemes', 'error', error.message || 'Could not delete scheme plan.'); }
+});
+
+app.post('/schemes/:planId/enroll', async (req, res, next) => {
+  try {
+    const planId = Number(req.params.planId);
+    const name = titleCase(req.body.customerName);
+    const phone = normalizePhone(req.body.customerPhone);
+    if (!name) return redirectWith(res, '/schemes', 'error', 'Enter the customer name.');
+    if (!validCustomerPhone(phone)) return redirectWith(res, '/schemes', 'error', 'Enter a valid customer mobile number (10 to 15 digits).');
+    const startDateInput = req.body.startDate || dateInput();
+    const startDate = dateTimeFromInput(startDateInput);
+
+    await prisma.$transaction(async (tx) => {
+      // Lock the plan so a deactivated plan cannot receive a new enrollment
+      // from another counter at the same time.
+      const lockedPlans = await tx.$queryRaw`SELECT id FROM \`SchemePlan\` WHERE id = ${planId} FOR UPDATE`;
+      if (!lockedPlans.length) throw new Error('Scheme plan not found.');
+      const plan = await tx.schemePlan.findUniqueOrThrow({ where: { id: planId } });
+      if (!plan.isActive) throw new Error('This scheme plan is not available for enrollment.');
+
+      // Find or create the one shared customer profile. Do not silently
+      // overwrite established customer details while enrolling a scheme.
+      let customer = await tx.customer.findUnique({ where: { phone } });
+      if (!customer) {
+        customer = await tx.customer.create({ data: { name, phone } });
+      }
+
+      // Reserve a compact, atomic scheme number. Two PCs cannot receive the
+      // same enrollment number, even when they enroll at the same moment.
+      const enrollmentNumber = await nextDocumentNumber(tx, 'SCH', startDate);
+      const schedule = createInstallmentSchedule(startDate, plan.durationMonths);
+
+      const enrollment = await tx.schemeEnrollment.create({
+        data: {
+          enrollmentNumber,
+          schemePlanId: planId,
+          customerId: customer.id,
+          startDate,
+          endDate: schemeEndDate(startDate, plan.durationMonths),
+          status: 'ACTIVE',
+          totalPaid: 0,
+          installmentsPaid: 0,
+          notes: req.body.notes ? titleCase(req.body.notes) : null
+        }
+      });
+
+      await tx.schemeInstallment.createMany({
+        data: schedule.map(({ installmentNumber, dueDate }) => ({
+          enrollmentId: enrollment.id,
+          installmentNumber,
+          dueDate,
+          paidAmount: 0,
+          status: 'PENDING'
+        }))
+      });
+    });
+
+    redirectWith(res, `/schemes/plans/${planId}`, 'message', `Customer "${name}" enrolled in ${plan.name} successfully.`);
+  } catch (error) {
+    const errTarget = req.headers.referer?.includes('/plans/') ? req.headers.referer : `/schemes/plans/${req.params.planId || ''}`;
+    redirectWith(res, errTarget, 'error', error.message || 'Could not enroll customer.');
+  }
+});
+
+app.get('/schemes/enrollments/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    const enrollment = await prisma.schemeEnrollment.findUnique({
+      where: { id },
+      include: {
+        schemePlan: true,
+        customer: true,
+        installments: { orderBy: { installmentNumber: 'asc' } }
+      }
+    });
+    if (!enrollment) return res.status(404).render('not-found', { title: 'Enrollment not found' });
+    res.render('schemes/enrollment-detail', { title: `${enrollment.enrollmentNumber}`, enrollment });
+  } catch (error) { next(error); }
+});
+
+app.post('/schemes/enrollments/:id/pay', async (req, res, next) => {
+  const enrollmentId = Number(req.params.id);
+  try {
+    const installmentId = Number(req.body.installmentId);
+    const paymentMethod = receiptPaymentMethod(req.body.paymentMethod);
+    const amount = roundedMoney(number(req.body.amount));
+    const paymentDate = dateInput(dateTimeFromInput(req.body.paymentDate || dateInput()));
+    if (amount <= 0) return redirectWith(res, `/schemes/enrollments/${enrollmentId}`, 'error', 'Enter a valid payment amount.');
+
+    await prisma.$transaction(async (tx) => {
+      const lockedEnrollments = await tx.$queryRaw`SELECT id FROM \`SchemeEnrollment\` WHERE id = ${enrollmentId} FOR UPDATE`;
+      if (!lockedEnrollments.length) throw new Error('Scheme enrollment not found.');
+      const enrollment = await tx.schemeEnrollment.findUnique({
+        where: { id: enrollmentId },
+        include: { schemePlan: true }
+      });
+      if (!enrollment || enrollment.status !== 'ACTIVE') throw new Error('This enrollment is not active.');
+
+      const lockedInstallments = await tx.$queryRaw`SELECT id FROM \`SchemeInstallment\` WHERE id = ${installmentId} FOR UPDATE`;
+      if (!lockedInstallments.length) throw new Error('Installment not found.');
+      const installment = await tx.schemeInstallment.findUnique({ where: { id: installmentId } });
+      if (!installment || installment.enrollmentId !== enrollmentId) throw new Error('Installment not found.');
+      if (installment.status === 'PAID') throw new Error('This installment has already been paid.');
+      if (!isFullInstallmentPayment(amount, enrollment.schemePlan.monthlyAmount)) {
+        throw new Error(`Enter the exact monthly installment amount of ${money(enrollment.schemePlan.monthlyAmount)}.`);
+      }
+
+      // A scheme payment is a cashbook receipt, but it is not a loan/credit
+      // collection and must not change the customer's sales ledger.
+      const reference = generatedReference('SCH-PAY');
+      const cashbookEntry = await tx.cashbookEntry.create({
+        data: {
+          entryDate: paymentDate,
+          type: 'IN',
+          paymentMethod,
+          amount,
+          description: `Scheme payment — ${enrollment.enrollmentNumber} — Installment ${installment.installmentNumber}`,
+          reference,
+          customerId: enrollment.customerId,
+          notes: `${enrollment.schemePlan.name} · Installment ${installment.installmentNumber} of ${enrollment.schemePlan.durationMonths}`
+        }
+      });
+
+      // Mark installment as paid
+      await tx.schemeInstallment.update({
+        where: { id: installmentId },
+        data: {
+          paidAmount: amount,
+          paymentDate,
+          paymentMethod,
+          cashbookEntryId: cashbookEntry.id,
+          status: 'PAID'
+        }
+      });
+
+      // Derive totals from saved rows rather than incrementing counters. This
+      // remains correct if a cashier deletes a linked cashbook entry later.
+      const [paidAggregate, newInstallmentsPaid] = await Promise.all([
+        tx.schemeInstallment.aggregate({ where: { enrollmentId, status: 'PAID' }, _sum: { paidAmount: true } }),
+        tx.schemeInstallment.count({ where: { enrollmentId, status: 'PAID' } })
+      ]);
+      const newTotalPaid = roundedMoney(paidAggregate._sum.paidAmount || 0);
+      const isCompleted = newInstallmentsPaid >= enrollment.schemePlan.durationMonths;
+
+      await tx.schemeEnrollment.update({
+        where: { id: enrollmentId },
+        data: {
+          totalPaid: newTotalPaid,
+          installmentsPaid: newInstallmentsPaid,
+          status: isCompleted ? 'COMPLETED' : 'ACTIVE'
+        }
+      });
+    });
+
+    redirectWith(res, `/schemes/enrollments/${enrollmentId}`, 'message', 'Installment payment recorded and synced to cashbook.');
+  } catch (error) { redirectWith(res, `/schemes/enrollments/${enrollmentId}`, 'error', error.message || 'Could not record payment.'); }
+});
+
+app.post('/schemes/enrollments/:id/cancel', async (req, res, next) => {
+  const enrollmentId = Number(req.params.id);
+  try {
+    const enrollment = await prisma.schemeEnrollment.findUnique({ where: { id: enrollmentId } });
+    if (!enrollment) return redirectWith(res, '/schemes', 'error', 'Enrollment not found.');
+    if (enrollment.status !== 'ACTIVE') return redirectWith(res, `/schemes/enrollments/${enrollmentId}`, 'error', 'Only active enrollments can be cancelled.');
+    await prisma.schemeEnrollment.update({
+      where: { id: enrollmentId },
+      data: { status: 'CANCELLED' }
+    });
+    redirectWith(res, `/schemes/enrollments/${enrollmentId}`, 'message', 'Enrollment cancelled. Payments already recorded remain in the cashbook.');
+  } catch (error) { redirectWith(res, `/schemes/enrollments/${enrollmentId}`, 'error', error.message || 'Could not cancel enrollment.'); }
 });
 
 // Keep fall-through and error handlers last. Reports registered after either

@@ -9,7 +9,8 @@ const RESOURCE_LIST = [
   { key: 'cancelled-sales', label: 'Cancelled invoices', dateLabel: 'Cancelled invoice date', archiveNote: 'Cancelled invoices are audit records and cannot be archived from this screen.', archiveDisabled: true },
   { key: 'urd', label: 'URD purchases', dateLabel: 'URD purchase date', archiveNote: 'Only URD purchases with no amount still payable to the customer can be removed.' },
   { key: 'cancelled-urd', label: 'Cancelled URD purchases', dateLabel: 'Cancelled URD purchase date', archiveNote: 'Cancelled URD purchases are audit records and cannot be archived from this screen.', archiveDisabled: true },
-  { key: 'cashbook', label: 'Daily cashbook', dateLabel: 'Entry date', archiveNote: 'Cashbook entries in the chosen period are permanently removed. Any linked customer balance, invoice payment or URD payout is reversed safely.' },
+  { key: 'cashbook', label: 'Daily cashbook', dateLabel: 'Entry date', archiveNote: 'Cashbook entries in the chosen period are permanently removed. Any linked customer balance, invoice payment, URD payout or scheme installment is reversed safely.' },
+  { key: 'schemes', label: 'Jewellery savings schemes', dateLabel: 'Scheme start date', archiveNote: 'Scheme records and their Cashbook receipts are retained as financial history. Export this register instead of archiving it here.', archiveDisabled: true },
   { key: 'inventory', label: 'Inventory records', dateLabel: 'Created date', archiveNote: 'Only zero-stock records can be removed. Sold barcode items are automatically removed when billed.' },
   { key: 'stock-movements', label: 'Stock movements', dateLabel: 'Movement date', archiveNote: 'Movement history can be removed without changing current stock quantity.' },
   { key: 'customers', label: 'Customer directory', dateLabel: 'Customer created date', archiveNote: 'Only customers with no sales, URD, cashbook or ledger history can be removed.' },
@@ -81,6 +82,10 @@ function exportDate(value) { return dateInput(value); }
 function displayDate(value) {
   const [year, month, day] = String(value).split('-');
   return `${day}-${month}-${year}`;
+}
+
+function registerPeriod(range) {
+  return `From    ${displayDate(range.from).replaceAll('-', '/')}   To   ${displayDate(range.to).replaceAll('-', '/')}`;
 }
 
 function enumLabel(value) {
@@ -240,205 +245,56 @@ async function getExportPayload(db, key, range, options = {}) {
       });
       assertExportRows(sales, 'Sales register');
 
-      // Line-item rows (one per sold piece)
-      const lineRows = sales.flatMap((s) => {
-        const settlement = urdSettlement(s.total, s.urdOffset);
-        const refunded = settlement.hasRefund ? num(s.urdPurchase?.paid) : 0;
-        return s.items.map((item) => ({
-        saleDate: exportDate(s.saleDate),
-        invoiceNumber: s.invoiceNumber,
-        customerPhone: s.customer?.phone || '',
-        customerName: s.customer?.name || 'Walk-in customer',
-        customerPan: s.customerPan || s.customer?.panNumber || '',
-        barcode: item.product?.barcode || item.productBarcode || item.product?.sku || item.productSku,
-        itemName: item.product?.name || item.productName,
-        metal: item.product?.metal || item.productMetal || '',
-        purity: item.product?.purity || item.productPurity || '',
-        hsnCode: item.hsnCode || '',
-        huidCode: item.huidCode || '',
-        quantity: item.quantity,
-        grossWeight: num(item.grossWeight),
-        weight: num(item.weight),
-        metalRate: num(item.metalRate),
-        metalAmount: num(item.metalAmount),
-        makingType: makingLabel(item.makingChargeType),
-        makingValue: num(item.makingChargeValue),
-        makingCharge: num(item.makingCharge),
-        taxableAmount: num(item.taxableAmount),
-        gstRate: num(s.gstRate),
-        invoiceTotal: num(s.total),
-        urdValuation: num(s.urdOffset),
-        urdSaleAdjustment: settlement.saleAdjustment,
-        netPayable: settlement.netPayable,
-        netRefundable: settlement.netRefundable,
-        refundedAmount: refunded,
-        refundMethod: refunded > 0 ? paymentLabel(s.urdPurchase?.paymentMethod) : '',
-        paid: num(s.paid),
-        cashPaid: num(s.cashPaid),
-        upiPaid: num(s.upiPaid),
-        cardPaid: num(s.cardPaid),
-        bankPaid: num(s.bankPaid),
-        otherPaid: Math.max(0, num(s.paid) - num(s.cashPaid) - num(s.upiPaid) - num(s.cardPaid) - num(s.bankPaid)),
-        balance: num(s.balance),
-        paymentMethod: paymentLabel(s.paymentMethod),
-        notes: str(s.notes)
-        }));
-      });
-      assertExportRows(lineRows, 'Sales item-wise register');
-
-      const allLineColumns = [
-        col.date('saleDate', 'Invoice date'),
-        col.identifier('invoiceNumber', 'Invoice no.', 20),
-        col.identifier('customerPhone', 'Customer phone', 16),
-        col.text('customerName', 'Customer'),
-        col.identifier('customerPan', 'PAN no.', 14),
-        col.identifier('barcode', 'Barcode', 14),
-        col.text('itemName', 'Item name'),
-        col.text('metal', 'Metal', 12),
-        col.text('purity', 'Purity', 10),
-        col.identifier('hsnCode', 'HSN code', 12),
-        col.identifier('huidCode', 'HUID', 12),
-        col.integer('quantity', 'Qty'),
-        col.weight('grossWeight', 'Gross wt. (g)'),
-        col.weight('weight', 'Weight (g)'),
-        col.currency('metalRate', 'Rate / g'),
-        col.currency('metalAmount', 'Metal value'),
-        col.text('makingType', 'Making basis', 15),
-        col.number('makingValue', 'Making value'),
-        col.currency('makingCharge', 'Making amount'),
-        col.currency('taxableAmount', 'Taxable amount'),
-        col.number('gstRate', 'GST rate (%)'),
-        col.currency('invoiceTotal', 'Invoice total'),
-        col.currency('urdValuation', 'URD valuation'),
-        col.currency('urdSaleAdjustment', 'URD sale adjustment'),
-        col.currency('netPayable', 'Net payable'),
-        col.currency('netRefundable', 'Net refundable'),
-        col.currency('refundedAmount', 'Refunded amount'),
-        col.text('refundMethod', 'Refund method', 16),
-        col.currency('paid', 'Total paid'),
-        col.currency('cashPaid', 'Cash paid'),
-        col.currency('upiPaid', 'UPI paid'),
-        col.currency('cardPaid', 'Card paid'),
-        col.currency('bankPaid', 'Bank transfer paid'),
-        col.currency('otherPaid', 'Other paid'),
-        col.currency('balance', 'Due balance'),
-        col.text('paymentMethod', 'Payment method', 16),
-        col.text('notes', 'Notes', 30)
-      ];
-      const lineColumns = pruneEmptyColumns(allLineColumns, lineRows);
-
-      // Invoice summary rows (one per invoice)
-      const invoiceRows = sales.map((s) => {
-        const settlement = urdSettlement(s.total, s.urdOffset);
-        const refunded = settlement.hasRefund ? num(s.urdPurchase?.paid) : 0;
+      // One clean, invoice-wise CA register.  The financial columns match the
+      // supplied Sales Register reference rather than exporting a cluttered
+      // dashboard or a second item-detail worksheet.
+      const rows = sales.map((sale) => {
+        const settlement = urdSettlement(sale.total, sale.urdOffset);
+        const grossWeight = sale.items.reduce((sum, item) => sum + num(item.grossWeight) * Number(item.quantity || 0), 0);
+        const netWeight = sale.items.reduce((sum, item) => sum + num(item.weight) * Number(item.quantity || 0), 0);
+        const gstAmount = num(sale.gstAmount);
+        const cgstAmount = Math.round((gstAmount / 2) * 100) / 100;
         return {
-        saleDate: exportDate(s.saleDate),
-        invoiceNumber: s.invoiceNumber,
-        customerPhone: s.customer?.phone || '',
-        customerName: s.customer?.name || 'Walk-in customer',
-        customerPan: s.customerPan || s.customer?.panNumber || '',
-        itemCount: s.items.reduce((total, item) => total + Number(item.quantity || 0), 0),
-        totalWeight: s.items.reduce((sum, i) => sum + num(i.weight) * i.quantity, 0),
-        subtotal: num(s.subtotal),
-        discount: num(s.discount),
-        taxableAfterDiscount: Math.max(0, num(s.subtotal) - num(s.discount)),
-        cgstRate: num(s.gstRate) / 2,
-        cgstAmount: Math.round((num(s.gstAmount) / 2) * 100) / 100,
-        sgstRate: num(s.gstRate) / 2,
-        sgstAmount: num(s.gstAmount) - Math.round((num(s.gstAmount) / 2) * 100) / 100,
-        total: num(s.total),
-        urdValuation: num(s.urdOffset),
-        urdSaleAdjustment: settlement.saleAdjustment,
-        netPayable: settlement.netPayable,
-        netRefundable: settlement.netRefundable,
-        refundedAmount: refunded,
-        refundMethod: refunded > 0 ? paymentLabel(s.urdPurchase?.paymentMethod) : '',
-        paid: num(s.paid),
-        cashPaid: num(s.cashPaid),
-        upiPaid: num(s.upiPaid),
-        cardPaid: num(s.cardPaid),
-        bankPaid: num(s.bankPaid),
-        otherPaid: Math.max(0, num(s.paid) - num(s.cashPaid) - num(s.upiPaid) - num(s.cardPaid) - num(s.bankPaid)),
-        balance: num(s.balance),
-        paymentMethod: paymentLabel(s.paymentMethod),
-        notes: str(s.notes)
+          saleDate: exportDate(sale.saleDate),
+          invoiceNumber: sale.invoiceNumber,
+          customerName: sale.customer?.name || 'Walk-in customer',
+          grossWeight,
+          netWeight,
+          taxableAmount: Math.max(0, num(sale.subtotal) - num(sale.discount)),
+          cgstAmount,
+          sgstAmount: gstAmount - cgstAmount,
+          igstAmount: 0,
+          total: num(sale.total),
+          urdAdjustment: settlement.saleAdjustment,
+          discount: num(sale.discount),
+          netAmount: settlement.netPayable
         };
       });
-
-      const allInvColumns = [
-        col.date('saleDate', 'Invoice date'),
-        col.identifier('invoiceNumber', 'Invoice no.', 20),
-        col.identifier('customerPhone', 'Customer phone', 16),
-        col.text('customerName', 'Customer'),
-        col.identifier('customerPan', 'PAN no.', 14),
-        col.integer('itemCount', 'Items sold'),
-        col.weight('totalWeight', 'Total weight (g)'),
-        col.currency('subtotal', 'Subtotal'),
+      const columns = [
+        col.date('saleDate', 'Date'),
+        col.identifier('invoiceNumber', 'Doc-no', 20),
+        col.text('customerName', 'Customer', 30),
+        col.weight('grossWeight', 'Gr-wt'),
+        col.weight('netWeight', 'Net-wt'),
+        col.currency('taxableAmount', 'Taxable-amt'),
+        col.currency('cgstAmount', 'CGST'),
+        col.currency('sgstAmount', 'SGST'),
+        col.currency('igstAmount', 'IGST'),
+        col.currency('total', 'Total'),
+        col.currency('urdAdjustment', 'URD'),
         col.currency('discount', 'Discount'),
-        col.currency('taxableAfterDiscount', 'Taxable value'),
-        col.number('cgstRate', 'CGST (%)'),
-        col.currency('cgstAmount', 'CGST amount'),
-        col.number('sgstRate', 'SGST (%)'),
-        col.currency('sgstAmount', 'SGST amount'),
-        col.currency('total', 'Invoice total'),
-        col.currency('urdValuation', 'URD valuation'),
-        col.currency('urdSaleAdjustment', 'URD sale adjustment'),
-        col.currency('netPayable', 'Net payable'),
-        col.currency('netRefundable', 'Net refundable'),
-        col.currency('refundedAmount', 'Refunded amount'),
-        col.text('refundMethod', 'Refund method', 16),
-        col.currency('paid', 'Total paid'),
-        col.currency('cashPaid', 'Cash paid'),
-        col.currency('upiPaid', 'UPI paid'),
-        col.currency('cardPaid', 'Card paid'),
-        col.currency('bankPaid', 'Bank transfer paid'),
-        col.currency('otherPaid', 'Other paid'),
-        col.currency('balance', 'Due balance'),
-        col.text('paymentMethod', 'Payment method', 16),
-        col.text('notes', 'Notes', 30)
+        col.currency('netAmount', 'Net-amt')
       ];
-      const invColumns = pruneEmptyColumns(allInvColumns, invoiceRows);
-
-      const totalSales = sales.reduce((s, sl) => s + num(sl.total), 0);
-      const totalPaid = sales.reduce((s, sl) => s + num(sl.paid), 0);
-      const totalDue = sales.reduce((s, sl) => s + num(sl.balance), 0);
-      const totalRefundable = sales.reduce((sum, sale) => sum + urdSettlement(sale.total, sale.urdOffset).netRefundable, 0);
-      const totalRefunded = sales.reduce((sum, sale) => sum + Math.max(0, num(sale.urdPurchase?.paid)), 0);
-      const totalItemsSold = sales.reduce(
-        (total, sale) => total + sale.items.reduce((quantity, item) => quantity + Number(item.quantity || 0), 0),
-        0
-      );
-
-      const sheets = [
-        {
-          name: 'Invoice summary',
-          title: `Sales - Invoice summary`,
-          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | ${invoiceRows.length} invoice${invoiceRows.length === 1 ? '' : 's'}`,
-          columns: invColumns,
-          rows: invoiceRows,
-          infoRows: [
-            { label: 'Total invoices', value: invoiceRows.length, type: 'integer' },
-            { label: 'Total sales value', value: totalSales, type: 'currency' },
-            { label: 'Total received', value: totalPaid, type: 'currency' },
-            { label: 'Total net refundable for URD excess', value: totalRefundable, type: 'currency' },
-            { label: 'Total refunded for URD excess', value: totalRefunded, type: 'currency' },
-            { label: 'Total due balance', value: totalDue, type: 'currency' }
-          ]
-        },
-        {
-          name: 'Item-wise details',
-          title: `Sales - Item-wise line details`,
-          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | ${totalItemsSold} item${totalItemsSold === 1 ? '' : 's'} across ${invoiceRows.length} invoice${invoiceRows.length === 1 ? '' : 's'}`,
-          columns: lineColumns,
-          rows: lineRows,
-          infoRows: [
-            { label: 'Total items sold', value: totalItemsSold, type: 'integer' },
-            { label: 'Total sales value', value: totalSales, type: 'currency' }
-          ]
-        }
-      ];
-
-      return exportEnvelope(resource, range, lineColumns, lineRows, { sheets });
+      const sheet = {
+        name: 'Sales Register',
+        title: '01. Sales Register',
+        subtitle: registerPeriod(range),
+        layout: 'ca-register',
+        columns,
+        rows,
+        totalKeys: ['grossWeight', 'netWeight', 'taxableAmount', 'cgstAmount', 'sgstAmount', 'igstAmount', 'total', 'urdAdjustment', 'discount', 'netAmount']
+      };
+      return exportEnvelope(resource, range, columns, rows, { sheets: [sheet] });
     }
 
     case 'top-selling-items': {
@@ -504,69 +360,44 @@ async function getExportPayload(db, key, range, options = {}) {
         take: MAX_SOURCE_ROWS + 1
       });
       assertExportRows(purchases, 'URD purchase register');
-      const rows = purchases.map((p) => ({
-        purchaseDate: exportDate(p.purchaseDate),
-        purchaseNumber: p.purchaseNumber,
-        customerPhone: p.customer.phone || '',
-        customerName: p.customer.name,
-        metal: p.metal,
-        purity: p.purity || '',
-        grossWeight: num(p.grossWeight),
-        netWeight: num(p.netWeight),
-        ratePerGram: num(p.ratePerGram),
-        totalAmount: num(p.totalAmount),
-        saleOffset: num(p.saleOffset),
-        cashPayable: Math.max(0, num(p.totalAmount) - num(p.saleOffset)),
-        paid: num(p.paid),
-        outstanding: Math.max(0, num(p.totalAmount) - num(p.saleOffset) - num(p.paid)),
-        paymentMethod: paymentLabel(p.paymentMethod),
-        settledSale: p.sale?.invoiceNumber || '',
-        description: str(p.description),
-        notes: str(p.notes)
-      }));
-
-      const allColumns = [
-        col.date('purchaseDate', 'Purchase date'),
-        col.identifier('purchaseNumber', 'URD no.', 22),
-        col.identifier('customerPhone', 'Customer phone', 16),
-        col.text('customerName', 'Customer'),
-        col.text('metal', 'Metal', 12),
-        col.text('purity', 'Purity', 10),
-        col.weight('grossWeight', 'Gross wt. (g)'),
-        col.weight('netWeight', 'Net wt. (g)'),
-        col.currency('ratePerGram', 'Rate / g'),
-        col.currency('totalAmount', 'Total amount'),
-        col.currency('saleOffset', 'Sale adjustment'),
-        col.currency('cashPayable', 'Cash payout / refund'),
-        col.currency('paid', 'Amount paid / refunded'),
-        col.currency('outstanding', 'Outstanding'),
-        col.text('paymentMethod', 'Payment method', 16),
-        col.identifier('settledSale', 'Settled invoice', 20),
-        col.text('description', 'Description', 30),
-        col.text('notes', 'Notes', 30)
-      ];
-      const columns = pruneEmptyColumns(allColumns, rows);
-      const totalPurchased = rows.reduce((s, r) => s + r.totalAmount, 0);
-      const totalPaid = rows.reduce((s, r) => s + r.paid, 0);
-      const totalAdjusted = rows.reduce((s, r) => s + r.saleOffset, 0);
-      const totalPending = rows.reduce((s, r) => s + r.outstanding, 0);
-
-      return exportEnvelope(resource, range, columns, rows, {
-        sheets: [{
-          name: 'URD purchases',
-          title: `URD Purchases - Detailed register`,
-          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | ${rows.length} purchase${rows.length === 1 ? '' : 's'}`,
-          columns,
-          rows,
-          infoRows: [
-            { label: 'Total purchases', value: rows.length, type: 'integer' },
-            { label: 'Total value', value: totalPurchased, type: 'currency' },
-            { label: 'Adjusted in sales', value: totalAdjusted, type: 'currency' },
-            { label: 'Total paid / refunded', value: totalPaid, type: 'currency' },
-            { label: 'Pending', value: totalPending, type: 'currency' }
-          ]
-        }]
+      const rows = purchases.map((purchase) => {
+        const paid = num(purchase.paid);
+        return {
+          purchaseDate: exportDate(purchase.purchaseDate),
+          purchaseNumber: purchase.purchaseNumber,
+          customerName: purchase.customer.name,
+          grossWeight: num(purchase.grossWeight),
+          netWeight: num(purchase.netWeight),
+          totalAmount: num(purchase.totalAmount),
+          remark: [
+            purchase.metal,
+            purchase.purity ? `Purity: ${purchase.purity}` : '',
+            str(purchase.description),
+            purchase.sale?.invoiceNumber ? `Bill No: ${purchase.sale.invoiceNumber}` : '',
+            paid > 0 ? `Paid: ${paid.toFixed(2)} (${paymentLabel(purchase.paymentMethod)})` : '',
+            str(purchase.notes)
+          ].filter(Boolean).join(' | ')
+        };
       });
+      const columns = [
+        col.date('purchaseDate', 'Date'),
+        col.identifier('purchaseNumber', 'Doc-no', 22),
+        col.text('customerName', 'Customer', 28),
+        col.weight('grossWeight', 'Gross-wt'),
+        col.weight('netWeight', 'Net-wt'),
+        col.currency('totalAmount', 'Amount'),
+        col.text('remark', 'Remark', 42)
+      ];
+      const sheet = {
+        name: 'URD Purchase Register',
+        title: '03. URD Purchase',
+        subtitle: registerPeriod(range),
+        layout: 'ca-register',
+        columns,
+        rows,
+        totalKeys: ['grossWeight', 'netWeight', 'totalAmount']
+      };
+      return exportEnvelope(resource, range, columns, rows, { sheets: [sheet] });
     }
 
     case 'cancelled-urd': {
@@ -882,7 +713,7 @@ async function getExportPayload(db, key, range, options = {}) {
       const customers = await db.customer.findMany({
         where: { createdAt: dateTimeRange(range) },
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-        include: { _count: { select: { sales: true, urdPurchases: true } } },
+        include: { _count: { select: { sales: true, urdPurchases: true, schemeEnrollments: true } } },
         take: MAX_SOURCE_ROWS + 1
       });
       assertExportRows(customers, 'Customer directory');
@@ -901,6 +732,7 @@ async function getExportPayload(db, key, range, options = {}) {
         address: c.address || '',
         salesCount: c._count.sales,
         urdCount: c._count.urdPurchases,
+        schemeCount: c._count.schemeEnrollments,
         outstanding: balanceByCustomer.get(c.id) || 0
       }));
 
@@ -913,6 +745,7 @@ async function getExportPayload(db, key, range, options = {}) {
         col.text('address', 'Address', 34),
         col.integer('salesCount', 'Total sales'),
         col.integer('urdCount', 'URD purchases'),
+        col.integer('schemeCount', 'Savings schemes'),
         col.currency('outstanding', 'Outstanding due')
       ];
       const columns = pruneEmptyColumns(allColumns, rows);
@@ -930,6 +763,111 @@ async function getExportPayload(db, key, range, options = {}) {
             { label: 'Total outstanding', value: totalDue, type: 'currency' }
           ]
         }]
+      });
+    }
+
+    // ────────────────────────────────────────────────────────────
+    //  JEWELLERY SAVINGS SCHEMES
+    // ────────────────────────────────────────────────────────────
+    case 'schemes': {
+      const enrollments = await db.schemeEnrollment.findMany({
+        where: { startDate: dateTimeRange(range) },
+        orderBy: [{ startDate: 'asc' }, { id: 'asc' }],
+        include: {
+          customer: true,
+          schemePlan: true,
+          installments: { orderBy: { installmentNumber: 'asc' } }
+        },
+        take: MAX_SOURCE_ROWS + 1
+      });
+      assertExportRows(enrollments, 'Savings scheme register');
+      const installmentTotal = enrollments.reduce((sum, enrollment) => sum + enrollment.installments.length, 0);
+      if (installmentTotal > MAX_SOURCE_ROWS) {
+        throw new Error(`Savings scheme installment register has more than ${MAX_SOURCE_ROWS.toLocaleString('en-IN')} records in this range. Choose a shorter date range so the export remains reliable.`);
+      }
+
+      const enrollmentRows = enrollments.map((enrollment) => {
+        const totalInstallments = enrollment.schemePlan.durationMonths;
+        const pending = Math.max(0, totalInstallments - Number(enrollment.installmentsPaid || 0));
+        return {
+          enrollmentNumber: enrollment.enrollmentNumber,
+          customerPhone: enrollment.customer.phone || '',
+          customerName: enrollment.customer.name,
+          schemeName: enrollment.schemePlan.name,
+          startDate: exportDate(enrollment.startDate),
+          endDate: exportDate(enrollment.endDate),
+          status: enumLabel(enrollment.status),
+          durationMonths: totalInstallments,
+          monthlyAmount: num(enrollment.schemePlan.monthlyAmount),
+          totalSchemeAmount: num(enrollment.schemePlan.maturityAmount),
+          installmentsPaid: Number(enrollment.installmentsPaid || 0),
+          installmentsPending: pending,
+          totalPaid: num(enrollment.totalPaid),
+          totalPending: Math.max(0, num(enrollment.schemePlan.monthlyAmount) * totalInstallments - num(enrollment.totalPaid)),
+          notes: str(enrollment.notes)
+        };
+      });
+      const installmentRows = enrollments.flatMap((enrollment) => enrollment.installments.map((installment) => ({
+        enrollmentNumber: enrollment.enrollmentNumber,
+        customerPhone: enrollment.customer.phone || '',
+        customerName: enrollment.customer.name,
+        schemeName: enrollment.schemePlan.name,
+        installmentNumber: installment.installmentNumber,
+        dueDate: installment.dueDate,
+        status: installment.status,
+        scheduledAmount: num(enrollment.schemePlan.monthlyAmount),
+        paidAmount: num(installment.paidAmount),
+        paymentDate: installment.paymentDate || '',
+        paymentMethod: paymentLabel(installment.paymentMethod),
+        cashbookReference: installment.cashbookEntryId ? `Cashbook #${installment.cashbookEntryId}` : '',
+        notes: str(installment.notes)
+      })));
+
+      const enrollmentColumns = [
+        col.date('startDate', 'Date'),
+        col.identifier('enrollmentNumber', 'Scheme no.', 22),
+        col.text('customerName', 'Customer', 26),
+        col.text('schemeName', 'Scheme', 32),
+        col.integer('durationMonths', 'Months', 12),
+        col.currency('monthlyAmount', 'Monthly-amt'),
+        col.currency('totalSchemeAmount', 'Total-amt'),
+        col.integer('installmentsPaid', 'Paid-ins'),
+        col.integer('installmentsPending', 'Pending-ins', 14),
+        col.currency('totalPaid', 'Paid-amt'),
+        col.currency('totalPending', 'Pending-amt'),
+        col.date('endDate', 'End-date'),
+        col.text('status', 'Status', 14),
+        col.text('notes', 'Remark', 30)
+      ];
+      const installmentColumns = [
+        col.date('dueDate', 'Due-date'),
+        col.identifier('enrollmentNumber', 'Scheme no.', 22),
+        col.text('customerName', 'Customer', 26),
+        col.text('schemeName', 'Scheme', 32),
+        col.integer('installmentNumber', 'Installment', 14),
+        col.currency('scheduledAmount', 'Scheduled-amt'),
+        col.currency('paidAmount', 'Paid-amt'),
+        col.date('paymentDate', 'Payment-date'),
+        col.text('paymentMethod', 'Payment-mode', 16),
+        col.text('status', 'Status', 14),
+        col.identifier('cashbookReference', 'Cashbook-ref', 18),
+        col.text('notes', 'Remark', 30)
+      ];
+      return exportEnvelope(resource, range, enrollmentColumns, enrollmentRows, {
+        sheets: [
+          {
+            name: 'Scheme Register', title: 'Jewellery Savings Scheme Register',
+            subtitle: registerPeriod(range), layout: 'ca-register',
+            columns: enrollmentColumns, rows: enrollmentRows,
+            totalKeys: ['monthlyAmount', 'totalSchemeAmount', 'totalPaid', 'totalPending']
+          },
+          {
+            name: 'Installment Register', title: 'Scheme Installment Register',
+            subtitle: registerPeriod(range), layout: 'ca-register',
+            columns: installmentColumns, rows: installmentRows,
+            totalKeys: ['scheduledAmount', 'paidAmount']
+          }
+        ]
       });
     }
 
@@ -1104,7 +1042,7 @@ async function archiveData(db, key, range) {
         const result = await reverseAndDeleteCashbookEntry(tx, entry.id);
         deleted += result.deleted;
       }
-      return { deleted, skipped: 0, note: 'Linked customer, invoice and URD accounting was reversed before each cashbook entry was removed.' };
+      return { deleted, skipped: 0, note: 'Linked customer, invoice, URD and scheme installment accounting was reversed before each cashbook entry was removed.' };
     }
     if (key === 'inventory') {
       const candidates = await takeArchiveWindow(tx, 'product', { createdAt: archiveRange }, { id: true, quantity: true });
@@ -1118,7 +1056,7 @@ async function archiveData(db, key, range) {
       return { deleted: result.count, skipped: 0, note: 'Current inventory quantity was not adjusted.' };
     }
     if (key === 'customers') {
-      const candidates = await takeArchiveWindow(tx, 'customer', { createdAt: archiveRange }, { id: true, _count: { select: { sales: true, ledger: true, urdPurchases: true, cashbookEntries: true } } });
+      const candidates = await takeArchiveWindow(tx, 'customer', { createdAt: archiveRange }, { id: true, _count: { select: { sales: true, ledger: true, urdPurchases: true, cashbookEntries: true, schemeEnrollments: true } } });
       const ids = candidates.filter((c) => Object.values(c._count).every((n) => n === 0)).map((c) => c.id);
       const result = ids.length ? await tx.customer.deleteMany({ where: { id: { in: ids } } }) : { count: 0 };
       return { deleted: result.count, skipped: candidates.length - ids.length, note: 'Customers with business history were kept.' };

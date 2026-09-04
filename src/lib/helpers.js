@@ -55,14 +55,12 @@ function nullableNumber(value) {
   return value === undefined || value === null || value === '' ? null : number(value);
 }
 
-// Store names, addresses and stock labels in a clean print-ready form while
-// leaving invoice numbers, barcodes and PAN values to their own rules.
-function titleCase(value) {
-  return String(value ?? '')
-    .trim()
-    .toLowerCase()
-    .replace(/(^|[^A-Za-z])([A-Za-z])/g, (_, prefix, letter) => `${prefix}${letter.toUpperCase()}`);
+// Store names, addresses, inventory and stock labels in standard UPPERCASE form
+function upperCase(value) {
+  return String(value ?? '').trim().toUpperCase();
 }
+const titleCase = upperCase;
+
 
 function asArray(value) {
   if (Array.isArray(value)) return value;
@@ -122,7 +120,9 @@ async function reserveDocumentNumber(tx, prefix, value = new Date()) {
     const candidate = prefix === 'INV' ? `${day}${serial}` : `${prefix}-${day}-${serial}`;
     const existing = prefix === 'INV'
       ? await tx.sale.findUnique({ where: { invoiceNumber: candidate }, select: { id: true } })
-      : await tx.urdPurchase.findUnique({ where: { purchaseNumber: candidate }, select: { id: true } });
+      : prefix === 'SCH'
+        ? await tx.schemeEnrollment.findUnique({ where: { enrollmentNumber: candidate }, select: { id: true } })
+        : await tx.urdPurchase.findUnique({ where: { purchaseNumber: candidate }, select: { id: true } });
     if (!existing) return candidate;
   }
 }
@@ -209,7 +209,7 @@ function formatDateDisplay(value) {
 }
 
 module.exports = {
-  number, roundToNearestRupee, nullableNumber, titleCase, asArray, dateInput, startOfToday, dateTimeFromInput,
+  number, roundToNearestRupee, nullableNumber, upperCase, titleCase, asArray, dateInput, startOfToday, dateTimeFromInput,
   localDateParts, localDateBoundary, localDateTimeRange, localTimeZoneName,
   money, grams, formatDateDisplay, nextDocumentNumber, nextBatchDocumentNumber, barcodePrefix,
   metalRateFromDailyRate, makingAmount

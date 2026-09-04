@@ -1,0 +1,134 @@
+<%
+  const plan = enrollment.schemePlan;
+  const cust = enrollment.customer;
+  const installments = enrollment.installments || [];
+  const paidCount = installments.filter(i => i.status === 'PAID').length;
+  const pendingCount = installments.filter(i => i.status === 'PENDING' || i.status === 'OVERDUE').length;
+  const progressPct = plan.durationMonths > 0 ? Math.round((paidCount / plan.durationMonths) * 100) : 0;
+  const todayStr = dateInput();
+%>
+
+<header class="page-header">
+  <div>
+    <p class="eyebrow">Scheme Enrollment</p>
+    <h1><%= enrollment.enrollmentNumber %></h1>
+  </div>
+  <div class="header-actions">
+    <a class="button ghost" href="/schemes/plans/<%= plan.id %>">← Back to <%= plan.name %></a>
+    <a class="button ghost" href="/schemes">All Schemes</a>
+  </div>
+</header>
+
+<!-- Customer & Scheme info -->
+<div class="cashbook-summary">
+  <article class="stat-card">
+    <span class="stat-label">Customer</span>
+    <strong><%= cust.name %></strong>
+    <p><%= cust.phone || '—' %></p>
+  </article>
+  <article class="stat-card">
+    <span class="stat-label">Scheme Plan</span>
+    <strong><%= plan.name %></strong>
+    <p><%= plan.durationMonths %> months · <%- money(plan.monthlyAmount) %>/month</p>
+  </article>
+  <article class="stat-card accent-gold">
+    <span class="stat-label">Total Paid</span>
+    <strong class="stat-positive"><%- money(enrollment.totalPaid) %></strong>
+    <p><%= paidCount %> of <%= plan.durationMonths %> installments</p>
+  </article>
+  <article class="stat-card">
+    <span class="stat-label">Maturity Value</span>
+    <strong><%- money(plan.maturityAmount) %></strong>
+    <p>Remaining: <%- money(Math.max(0, Number(plan.durationMonths) * Number(plan.monthlyAmount) - Number(enrollment.totalPaid))) %></p>
+  </article>
+</div>
+
+<!-- Status & Progress -->
+<div class="content-grid scheme-detail-layout">
+  <section class="panel">
+    <div class="panel-heading">
+      <div>
+        <h2>Installment Schedule</h2>
+        <p>
+          <span class="pill <%= enrollment.status === 'ACTIVE' ? 'active' : (enrollment.status === 'COMPLETED' ? 'completed' : 'cancelled') %>"><%= enrollment.status %></span>
+          &nbsp; <%= formatDateDisplay(enrollment.startDate) %> → <%= formatDateDisplay(enrollment.endDate) %>
+        </p>
+      </div>
+      <% if (enrollment.status === 'ACTIVE') { %>
+      <form method="post" action="/schemes/enrollments/<%= enrollment.id %>/cancel" onsubmit="return confirm('Cancel this enrollment? This cannot be undone. Payments already recorded will remain in the cashbook.')">
+        <button type="submit" class="button ghost small" style="color:#c0392b;">Cancel Enrollment</button>
+      </form>
+      <% } %>
+    </div>
+
+    <!-- Progress bar -->
+    <div class="scheme-progress-bar">
+      <div class="scheme-progress-fill" style="width: <%= progressPct %>%"></div>
+      <span class="scheme-progress-label"><%= progressPct %>% Complete</span>
+    </div>
+
+    <!-- Installment table -->
+    <div class="table-wrap" style="margin-top: 0; overflow-x: auto;">
+      <table style="width: 100%; min-width: 700px;">
+        <thead>
+          <tr>
+            <th style="width:50px;">#</th>
+            <th style="width:120px;">Due Date</th>
+            <th style="width:100px;">Status</th>
+            <th class="right" style="width:130px;">Amount</th>
+            <th style="width:120px;">Paid On</th>
+            <th style="width:100px;">Method</th>
+            <th style="width:130px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <% installments.forEach(inst => {
+            const isOverdue = inst.status === 'PENDING' && inst.dueDate < todayStr;
+            const displayStatus = isOverdue ? 'OVERDUE' : inst.status;
+          %>
+          <tr class="<%= displayStatus === 'OVERDUE' ? 'row-overdue' : '' %>">
+            <td><strong><%= inst.installmentNumber %></strong></td>
+            <td><%= inst.dueDate %></td>
+            <td>
+              <span class="pill <%= displayStatus === 'PAID' ? 'completed' : (displayStatus === 'OVERDUE' ? 'overdue' : 'pending') %>">
+                <%= displayStatus %>
+              </span>
+            </td>
+            <td class="right">
+              <% if (inst.status === 'PAID') { %>
+                <strong><%- money(inst.paidAmount) %></strong>
+              <% } else { %>
+                <%- money(plan.monthlyAmount) %>
+              <% } %>
+            </td>
+            <td><%= inst.paymentDate || '—' %></td>
+            <td><%= inst.paymentMethod ? inst.paymentMethod.replace('_', ' ') : '—' %></td>
+            <td>
+              <% if ((inst.status === 'PENDING' || displayStatus === 'OVERDUE') && enrollment.status === 'ACTIVE') { %>
+              <form method="post" action="/schemes/enrollments/<%= enrollment.id %>/pay" style="display:flex; gap:4px; align-items:center;">
+                <input type="hidden" name="installmentId" value="<%= inst.id %>">
+                <select name="paymentMethod" style="font-size:12px; padding:3px 6px; border-radius:4px; border:1px solid #d5c9b1;">
+                  <option value="CASH">Cash</option>
+                  <option value="UPI">UPI</option>
+                  <option value="CARD">Card</option>
+                  <option value="BANK_TRANSFER">Bank</option>
+                </select>
+                <input name="paymentDate" type="date" required value="<%= todayStr %>" title="Payment date" style="width:118px; font-size:12px; padding:3px 6px; border-radius:4px; border:1px solid #d5c9b1;">
+                <input name="amount" type="number" min="1" step="0.01" readonly value="<%= Number(plan.monthlyAmount) %>" title="Monthly installment amount" style="width:80px; font-size:12px; padding:3px 6px; border-radius:4px; border:1px solid #d5c9b1; background:#f7f3ed;">
+                <button type="submit" class="button small" style="padding:3px 10px; font-size:12px;">Pay</button>
+              </form>
+              <% } %>
+            </td>
+          </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+
+    <% if (enrollment.notes) { %>
+    <div style="margin-top:16px; padding:10px 14px; background:#faf7f2; border-radius:8px; font-size:13px; color:#5a4933;">
+      <strong>Notes:</strong> <%= enrollment.notes %>
+    </div>
+    <% } %>
+  </section>
+</div>

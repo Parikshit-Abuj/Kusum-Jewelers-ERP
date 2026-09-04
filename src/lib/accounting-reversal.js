@@ -84,6 +84,47 @@ async function reverseUrdPayment(tx, entry) {
   await tx.urdPurchase.update({ where: { id: purchase.id }, data: { paid: nextPaid, paymentMethod } });
 }
 
+// Scheme savings are linked one-to-one to the Cashbook receipt that recorded
+// them. Deleting that receipt must put the installment back to pending rather
+// than leaving a false paid installment in the customer scheme record.
+async function reverseSchemeInstallmentPayment(tx, entry) {
+  const linked = await tx.schemeInstallment.findUnique({
+    where: { cashbookEntryId: entry.id },
+    select: { id: true, enrollmentId: true }
+  });
+  if (!linked) return;
+
+  // Keep the same lock order as payment posting: enrollment, then installment.
+  const lockedEnrollments = await tx.$queryRaw`SELECT id FROM \`SchemeEnrollment\` WHERE id = ${linked.enrollmentId} FOR UPDATE`;
+  if (!lockedEnrollments.length) return;
+  const lockedInstallments = await tx.$queryRaw`SELECT id FROM \`SchemeInstallment\` WHERE id = ${linked.id} FOR UPDATE`;
+  if (!lockedInstallments.length) return;
+  const [enrollment, installment] = await Promise.all([
+    tx.schemeEnrollment.findUniqueOrThrow({ where: { id: linked.enrollmentId }, include: { schemePlan: true } }),
+    tx.schemeInstallment.findUniqueOrThrow({ where: { id: linked.id } })
+  ]);
+  if (installment.cashbookEntryId !== entry.id) return;
+
+  await tx.schemeInstallment.update({
+    where: { id: installment.id },
+    data: { paidAmount: 0, paymentDate: null, paymentMethod: null, cashbookEntryId: null, status: 'PENDING' }
+  });
+  const [paidAggregate, paidCount] = await Promise.all([
+    tx.schemeInstallment.aggregate({ where: { enrollmentId: enrollment.id, status: 'PAID' }, _sum: { paidAmount: true } }),
+    tx.schemeInstallment.count({ where: { enrollmentId: enrollment.id, status: 'PAID' } })
+  ]);
+  await tx.schemeEnrollment.update({
+    where: { id: enrollment.id },
+    data: {
+      totalPaid: roundedMoney(paidAggregate._sum.paidAmount || 0),
+      installmentsPaid: paidCount,
+      status: enrollment.status === 'CANCELLED'
+        ? 'CANCELLED'
+        : paidCount >= enrollment.schemePlan.durationMonths ? 'COMPLETED' : 'ACTIVE'
+    }
+  });
+}
+
 async function reverseAndDeleteCashbookEntry(tx, entryId) {
   const locked = await tx.$queryRaw`SELECT id FROM \`CashbookEntry\` WHERE id = ${entryId} FOR UPDATE`;
   if (!locked.length) return { deleted: 0, affectedSales: [] };
@@ -94,6 +135,7 @@ async function reverseAndDeleteCashbookEntry(tx, entryId) {
 
   const affectedSales = new Set();
   if (entry.urdPurchaseId) await reverseUrdPayment(tx, entry);
+  await reverseSchemeInstallmentPayment(tx, entry);
 
   if (entry.saleId) {
     const reversed = await reverseSalePayment(tx, {
@@ -199,6 +241,7 @@ async function cancelSale(tx, saleId, cancelledAt = new Date()) {
 module.exports = {
   PAYMENT_COMPONENT_FIELDS,
   paymentMethodFromComponents,
+  reverseSchemeInstallmentPayment,
   reverseAndDeleteCashbookEntry,
   deleteSettledUrdPurchase,
   cancelUrdPurchase,

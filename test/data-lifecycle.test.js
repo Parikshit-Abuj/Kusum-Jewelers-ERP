@@ -55,7 +55,7 @@ test('long Excel date ranges stop before loading database data into memory', asy
   );
 });
 
-test('sales and URD export registers label an excess URD valuation as refundable', async () => {
+test('sales and URD CA registers keep URD settlement figures accurate', async () => {
   const sale = {
     saleDate: new Date(2026, 8, 2, 10, 0), invoiceNumber: 'INV-URD-REFUND', customerPan: '',
     subtotal: 97.09, discount: 0, gstRate: 3, gstAmount: 2.91, total: 100, urdOffset: 150,
@@ -75,18 +75,17 @@ test('sales and URD export registers label an excess URD valuation as refundable
   };
 
   const sales = await getExportPayload(db, 'sales', { from: '2026-09-02', to: '2026-09-02' });
-  const summary = sales.sheets.find((sheet) => sheet.name === 'Invoice summary');
-  assert.equal(summary.rows[0].netPayable, 0);
-  assert.equal(summary.rows[0].netRefundable, 50);
-  assert.equal(summary.rows[0].refundedAmount, 50);
-  assert.equal(summary.rows[0].refundMethod, 'UPI');
-  assert.ok(summary.columns.some((column) => column.label === 'Net refundable'));
+  const salesRegister = sales.sheets.find((sheet) => sheet.name === 'Sales Register');
+  assert.equal(salesRegister.layout, 'ca-register');
+  assert.deepEqual(salesRegister.columns.map((column) => column.label), ['Date', 'Doc-no', 'Customer', 'Gr-wt', 'Net-wt', 'Taxable-amt', 'CGST', 'SGST', 'IGST', 'Total', 'URD', 'Discount', 'Net-amt']);
+  assert.equal(salesRegister.rows[0].urdAdjustment, 100);
+  assert.equal(salesRegister.rows[0].netAmount, 0);
 
   const urd = await getExportPayload(db, 'urd', { from: '2026-09-02', to: '2026-09-02' });
-  assert.equal(urd.rows[0].saleOffset, 100);
-  assert.equal(urd.rows[0].cashPayable, 50);
-  assert.equal(urd.rows[0].paid, 50);
-  assert.ok(urd.columns.some((column) => column.label === 'Cash payout / refund'));
+  const urdRegister = urd.sheets.find((sheet) => sheet.name === 'URD Purchase Register');
+  assert.equal(urdRegister.layout, 'ca-register');
+  assert.equal(urdRegister.rows[0].totalAmount, 150);
+  assert.match(urdRegister.rows[0].remark, /Paid: 50\.00 \(UPI\)/);
 });
 
 test('cashbook export retains a URD excess as a method-specific money-out entry', async () => {
@@ -120,6 +119,32 @@ test('URD Excel export preserves a manually entered Silver purity', async () => 
     }
   };
   const payload = await getExportPayload(db, 'urd', { from: '2026-09-02', to: '2026-09-02' });
-  assert.equal(payload.rows[0].purity, '999 Fine Silver');
-  assert.equal(payload.columns.find((column) => column.key === 'purity').type, 'text');
+  assert.match(payload.rows[0].remark, /Purity: 999 Fine Silver/);
+  assert.equal(payload.sheets[0].layout, 'ca-register');
+});
+
+test('scheme export keeps enrollment and installment cashbook information in separate sheets', async () => {
+  const enrollment = {
+    id: 1,
+    enrollmentNumber: 'SCH-20260904-0001',
+    startDate: new Date(2026, 8, 4, 10, 0),
+    endDate: new Date(2027, 7, 4, 10, 0),
+    status: 'ACTIVE', totalPaid: 5000, installmentsPaid: 1, notes: 'Monthly savings',
+    customer: { name: 'Asha', phone: '9999999999' },
+    schemePlan: { name: 'Gold Saving 12M', durationMonths: 12, monthlyAmount: 5000, maturityAmount: 65000 },
+    installments: [
+      { id: 1, installmentNumber: 1, dueDate: '2026-09-04', status: 'PAID', paidAmount: 5000, paymentDate: '2026-09-04', paymentMethod: 'UPI', cashbookEntryId: 23, notes: '' },
+      { id: 2, installmentNumber: 2, dueDate: '2026-10-04', status: 'PENDING', paidAmount: 0, paymentDate: null, paymentMethod: null, cashbookEntryId: null, notes: '' }
+    ]
+  };
+  const db = { schemeEnrollment: { findMany: async () => [enrollment] } };
+  const payload = await getExportPayload(db, 'schemes', { from: '2026-09-01', to: '2026-09-30' });
+  const enrollments = payload.sheets.find((sheet) => sheet.name === 'Scheme Register');
+  const installments = payload.sheets.find((sheet) => sheet.name === 'Installment Register');
+  assert.equal(enrollments.rows[0].totalPaid, 5000);
+  assert.equal(enrollments.rows[0].installmentsPending, 11);
+  assert.equal(enrollments.layout, 'ca-register');
+  assert.equal(installments.rows[0].paymentMethod, 'UPI');
+  assert.equal(installments.rows[0].cashbookReference, 'Cashbook #23');
+  assert.equal(installments.rows[1].paymentDate, '');
 });

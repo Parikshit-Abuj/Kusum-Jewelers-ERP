@@ -90,7 +90,111 @@ function mergeAcross(sheet, row, lastColumn) {
   if (lastColumn > 1) sheet.mergeCells(row, 1, row, lastColumn);
 }
 
+function applyCaRegisterCellFormat(cell, type, alignment = 'left') {
+  cell.alignment = { vertical: 'middle', horizontal: alignment, wrapText: false };
+  if (type === 'date') cell.numFmt = 'dd/mm/yyyy';
+  else if (type === 'currency' || type === 'number') cell.numFmt = '#,##0.00;[Red]-#,##0.00';
+  else if (type === 'weight') cell.numFmt = '#,##0.000;[Red]-#,##0.000';
+  else if (type === 'integer') cell.numFmt = '#,##0;[Red]-#,##0';
+  else cell.numFmt = ['text', 'identifier'].includes(type) ? '@' : 'General';
+}
+
+function addCaRegisterWorksheet(workbook, spec, index, usedNames) {
+  const columns = spec.columns || [];
+  const rows = spec.rows || [];
+  if (!columns.length) throw new Error(`Excel sheet "${spec.name || index + 1}" needs at least one column.`);
+
+  const lastColumn = columns.length;
+  const headerRow = 4;
+  const dataStart = headerRow + 1;
+  const sheet = workbook.addWorksheet(sheetName(spec.name, index, usedNames), {
+    views: [{ showGridLines: true }]
+  });
+  sheet.properties.defaultRowHeight = 18;
+  sheet.columns = columns.map((column) => ({ key: column.key, width: column.width || 16 }));
+
+  mergeAcross(sheet, 1, lastColumn);
+  const shopCell = sheet.getCell(1, 1);
+  shopCell.value = spec.shopName || 'KUSUM JEWELLERS';
+  shopCell.font = { name: 'Arial', bold: true, size: 16, color: { argb: 'FF000000' } };
+  shopCell.alignment = { horizontal: 'center', vertical: 'middle' };
+  sheet.getRow(1).height = 24;
+
+  mergeAcross(sheet, 2, lastColumn);
+  const titleCell = sheet.getCell(2, 1);
+  titleCell.value = String(spec.title || payload.title || 'REGISTER').toUpperCase();
+  titleCell.font = { name: 'Arial', bold: true, size: 14, color: { argb: 'FF000000' } };
+  titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+  sheet.getRow(2).height = 22;
+
+  mergeAcross(sheet, 3, lastColumn);
+  const periodCell = sheet.getCell(3, 1);
+  periodCell.value = spec.subtitle || '';
+  periodCell.font = { name: 'Arial', bold: true, size: 11, color: { argb: 'FF000000' } };
+  periodCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+  const header = sheet.getRow(headerRow);
+  columns.forEach((column, columnIndex) => {
+    const cell = header.getCell(columnIndex + 1);
+    cell.value = String(column.label || '').toUpperCase();
+    cell.font = { name: 'Arial', bold: true, color: { argb: 'FF000000' } };
+    cell.alignment = {
+      horizontal: ['currency', 'number', 'integer', 'weight'].includes(column.type) ? 'right' : 'left',
+      vertical: 'middle',
+      wrapText: true
+    };
+  });
+  header.height = 20;
+
+  if (rows.length) {
+    rows.forEach((row, rowIndex) => {
+      const excelRow = sheet.getRow(dataStart + rowIndex);
+      columns.forEach((column, columnIndex) => {
+        const cell = excelRow.getCell(columnIndex + 1);
+        cell.value = cellValue(row[column.key], column.type);
+        cell.font = { name: 'Arial', color: { argb: 'FF000000' } };
+        applyCaRegisterCellFormat(cell, column.type, ['currency', 'number', 'integer', 'weight'].includes(column.type) ? 'right' : 'left');
+      });
+      excelRow.height = 18;
+    });
+
+    const totals = new Set(spec.totalKeys || []);
+    if (totals.size) {
+      const footerRow = dataStart + rows.length;
+      const labelCell = sheet.getCell(footerRow, 1);
+      labelCell.value = 'Grand Total';
+      labelCell.font = { name: 'Arial', bold: true, color: { argb: 'FF000000' } };
+      columns.forEach((column, columnIndex) => {
+        const cell = sheet.getCell(footerRow, columnIndex + 1);
+        if (totals.has(column.key)) {
+          const letter = sheet.getColumn(columnIndex + 1).letter;
+          cell.value = { formula: `SUM(${letter}${dataStart}:${letter}${footerRow - 1})` };
+          applyCaRegisterCellFormat(cell, column.type, 'right');
+          cell.font = { name: 'Arial', bold: true, color: { argb: 'FF000000' } };
+        }
+      });
+    }
+  } else {
+    mergeAcross(sheet, dataStart, lastColumn);
+    const emptyCell = sheet.getCell(dataStart, 1);
+    emptyCell.value = 'No records matched the selected date range.';
+    emptyCell.font = { name: 'Arial', italic: true, color: { argb: 'FF000000' } };
+  }
+
+  sheet.pageSetup = {
+    paperSize: 9,
+    orientation: lastColumn > 8 ? 'landscape' : 'portrait',
+    fitToPage: true,
+    fitToWidth: 1,
+    fitToHeight: 0,
+    margins: { left: 0.25, right: 0.25, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 },
+    printTitlesRow: `${headerRow}:${headerRow}`
+  };
+  sheet.printArea = `A1:${sheet.getColumn(lastColumn).letter}${Math.max(dataStart, headerRow + rows.length + (rows.length && spec.totalKeys?.length ? 1 : 0))}`;
+}
+
 function addWorksheet(workbook, spec, index, usedNames) {
+  if (spec.layout === 'ca-register') return addCaRegisterWorksheet(workbook, spec, index, usedNames);
   const columns = spec.columns || [];
   const rows = spec.rows || [];
   if (!columns.length) throw new Error(`Excel sheet "${spec.name || index + 1}" needs at least one column.`);

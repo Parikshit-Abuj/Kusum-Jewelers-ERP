@@ -43,12 +43,12 @@
       <% } %>
       <label>Item name *
         <div class="autocomplete-wrap">
-          <input name="name" required placeholder="e.g. Gold bridal necklace" value="<%= product?.name || '' %>" data-item-name-input data-title-case autocomplete="off">
+          <input name="name" required placeholder="e.g. Gold bridal necklace" value="<%= product?.name || '' %>" data-item-name-input data-uppercase autocomplete="off">
           <ul class="autocomplete-list" data-item-name-list></ul>
         </div>
       </label>
       <label>Category *
-        <input name="category" required placeholder="Ring, Chain, Bangle, Pendant…" value="<%= product?.category || '' %>" data-item-category-input data-title-case>
+        <input name="category" required placeholder="Ring, Chain, Bangle, Pendant…" value="<%= product?.category || '' %>" data-item-category-input data-uppercase>
       </label>
     </div>
   </section>
@@ -123,7 +123,7 @@
         <input name="purchasePrice" type="number" step="0.01" min="0" placeholder="0.00" value="<%= product ? product.purchasePrice : '' %>">
       </label>
       <label>Storage / counter location
-        <input name="location" placeholder="e.g. Gold Tray A, Safe 3" value="<%= product?.location || '' %>">
+        <input name="location" data-uppercase placeholder="e.g. Gold Tray A, Safe 3" value="<%= product?.location || '' %>">
       </label>
     </div>
     <input type="hidden" name="sellingPrice" value="<%= product?.sellingPrice || 0 %>" data-selling-price>
@@ -132,7 +132,7 @@
   <!-- Section 5: Notes -->
   <section class="form-section">
     <label>Notes
-      <textarea name="notes" rows="3" placeholder="Design details, certificate number, stone details, etc."><%= product?.notes || '' %></textarea>
+      <textarea name="notes" data-uppercase rows="3" placeholder="Design details, certificate number, stone details, etc."><%= product?.notes || '' %></textarea>
     </label>
   </section>
 

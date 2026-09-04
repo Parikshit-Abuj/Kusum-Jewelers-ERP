@@ -14,11 +14,11 @@
     <form method="post" action="/item-names/add" id="addItemNameForm" style="display:flex; align-items:flex-end; gap:10px; flex-wrap:wrap; width:100%;">
       <label>
         <span>Item name *</span>
-        <input name="name" data-title-case required placeholder="e.g. Gold bridal necklace">
+        <input name="name" data-uppercase required placeholder="e.g. Gold bridal necklace">
       </label>
       <label>
         <span>Category *</span>
-        <input name="category" data-title-case required placeholder="e.g. Necklace, Ring, Chain">
+        <input name="category" data-uppercase required placeholder="e.g. Necklace, Ring, Chain">
       </label>
       <button class="button small" type="submit">+ Add</button>
     </form>
@@ -36,8 +36,8 @@
   <% if (allItems.length) { %>
     <% allItems.forEach((item) => { %>
     <form class="item-name-row" method="post" action="/item-names/<%= item.id %>">
-      <input name="name" value="<%= item.name %>" data-title-case required placeholder="Item name">
-      <input name="category" value="<%= item.category %>" data-title-case required placeholder="Category">
+      <input name="name" value="<%= item.name %>" data-uppercase required placeholder="Item name">
+      <input name="category" value="<%= item.category %>" data-uppercase required placeholder="Category">
       <button class="button small ghost" type="submit">Save</button>
       <button class="button small ghost" type="submit" formaction="/item-names/<%= item.id %>/delete" onclick="return confirm('Delete this item name?')">✕</button>
     </form>

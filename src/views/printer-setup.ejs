@@ -12,11 +12,11 @@
         <label><input type="radio" name="printerMode" value="TCP" <%= printer.mode === 'TCP' ? 'checked' : '' %>> Direct TCP / Ethernet</label>
       </div>
       <div data-windows-printer-fields>
-        <label>Installed Windows printer name<input name="printerName" value="<%= printer.name %>" autocomplete="off" placeholder="Example: TSC TTP-244 Pro"></label>
+        <label>Installed Windows printer name<input name="printerName" type="text" value="<%= printer.name %>" autocomplete="off" placeholder="Example: TSC TTP-244 Pro" class="preserve-case" data-no-uppercase></label>
       </div>
       <div class="form-grid two compact-fields" data-tcp-printer-fields hidden>
-        <label>Printer / print-server IP<input name="printerHost" value="<%= printer.host %>" autocomplete="off" placeholder="Example: 192.168.1.60"></label>
-        <label>Direct TCP port<input name="printerPort" type="number" min="1" max="65535" value="<%= printer.port || 9100 %>" autocomplete="off"></label>
+        <label>Printer / print-server IP<input name="printerHost" type="text" value="<%= printer.host %>" autocomplete="off" placeholder="Example: 192.168.1.60" class="preserve-case" data-no-uppercase autocapitalize="none" spellcheck="false"></label>
+        <label>Direct TCP port<input name="printerPort" type="number" min="1" max="65535" value="<%= printer.port || 9100 %>" autocomplete="off" class="preserve-case" data-no-uppercase></label>
       </div>
       <button class="button" type="submit" style="margin-top: 12px;">Save printer connection</button>
     </form>

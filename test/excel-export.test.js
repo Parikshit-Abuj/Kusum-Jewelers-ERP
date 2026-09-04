@@ -83,3 +83,34 @@ test('uses one standard AutoFilter per populated worksheet without broken Excel 
   assert.equal((populatedXml.match(/<autoFilter\b/g) || []).length, 1, 'a populated register needs one standard AutoFilter');
   assert.equal((emptyXml.match(/<autoFilter\b/g) || []).length, 0, 'an empty register must not have a dangling AutoFilter');
 });
+
+test('writes a plain CA register without colours or filter arrows, with working grand-total formulas', async () => {
+  const workbookBytes = await buildExcelExport({
+    title: 'Kusum ERP - CA register validation',
+    columns: [], rows: [],
+    sheets: [{
+      name: 'Sales Register',
+      title: '01. Sales Register',
+      subtitle: 'From    01/09/2026   To   01/09/2026',
+      layout: 'ca-register',
+      columns: [
+        { key: 'date', label: 'Date', type: 'date', width: 14 },
+        { key: 'document', label: 'Doc-no', type: 'identifier', width: 18 },
+        { key: 'weight', label: 'Net-wt', type: 'weight', width: 13 },
+        { key: 'amount', label: 'Net-amt', type: 'currency', width: 18 }
+      ],
+      rows: [{ date: '2026-09-01', document: 'INV-1', weight: 2.5, amount: 1500 }],
+      totalKeys: ['weight', 'amount']
+    }]
+  });
+
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(workbookBytes);
+  const sheet = workbook.getWorksheet('Sales Register');
+  assert.equal(sheet.autoFilter, undefined);
+  assert.equal(sheet.getCell('A1').value, 'KUSUM JEWELLERS');
+  assert.equal(sheet.getCell('A4').value, 'DATE');
+  assert.equal(sheet.getCell('D6').value.formula, 'SUM(D5:D5)');
+  assert.equal(sheet.getCell('D5').numFmt, '#,##0.00;[Red]-#,##0.00');
+  assert.equal(sheet.getCell('A4').fill.fgColor?.argb, undefined);
+});

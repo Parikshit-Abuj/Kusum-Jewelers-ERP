@@ -5,16 +5,21 @@ const mysql = require('mysql2/promise');
 const mysqlCore = require('mysql2');
 const { hashPassword, hasConfiguredPassword, requiredPassword } = require('./auth-security');
 
-// A few very early migrations used lower-case table references. They work on
-// the case-insensitive Windows MySQL installations used by the shop, but not
-// on case-sensitive MySQL servers. Their corrected SQL must remain compatible
-// with databases installed by an earlier release, whose migration history
-// naturally contains the original file checksums.
+// A few early migrations were corrected after release. They work on the
+// case-insensitive Windows MySQL installations used by the shop, but their
+// corrected SQL must remain compatible with databases that recorded one of
+// the known, reviewed historical file checksums. This is deliberately an
+// exact allowlist; an unknown changed migration still stops startup.
 const LEGACY_MIGRATION_CHECKSUMS = Object.freeze({
   '20260820200000_daily_rates_barcodes_ledger': new Set(['30659da325d2d6ddb6bd2afc79500d2ce5d98b0e0c7452aaeb35c2945ae22ff1']),
   '20260821031245_add_urd_purchase_and_cashbook_sync': new Set(['62a6e77ccf86f6bae7aaf74073ab5c651606d9dd1c800e43cc97a6241c0b7bfc']),
   '20260821090000_sale_urd_settlement_and_cash_sync': new Set(['9498636353ef73e3420f77ce6e02942a88572483d048e97c9fe9ef03738448d7']),
-  '20260823093000_add_sale_split_payments': new Set(['78b39e4f0f03d2a676072fd9a39ec5a1fd8a2eada4dafea489dfc1bf7fcbd368'])
+  '20260823093000_add_sale_split_payments': new Set(['78b39e4f0f03d2a676072fd9a39ec5a1fd8a2eada4dafea489dfc1bf7fcbd368']),
+  // The six-character barcode experiment was applied to a few development
+  // databases, then intentionally retired in favour of the supported
+  // five-character Base-36 series. Its no-op successor is safe because the
+  // original change only widened BarcodeSequence.prefix.
+  '20260903120000_six_character_barcode_sequences': new Set(['6a983cebd4ee313fb763a10b1290efcaac36627c56f425343eaafb5580d82b6e'])
 });
 
 function migrationChecksumMatches(migrationName, installedChecksum, bundledChecksum) {
@@ -200,6 +205,9 @@ const REQUIRED_RUNTIME_SCHEMA = {
   Product: ['id', 'barcode', 'sku', 'quantity', 'status', 'batchDocNo', 'makingChargeType', 'makingChargeValue', 'createdAt', 'updatedAt'],
   Sale: ['id', 'invoiceNumber', 'cashPaid', 'upiPaid', 'cardPaid', 'bankPaid', 'balance', 'cancelledAt'],
   SaleItem: ['id', 'saleId', 'productBarcode', 'productName', 'productPurity', 'weight', 'makingChargeType', 'makingChargeValue', 'hsnCode', 'huidCode'],
+  SchemePlan: ['id', 'name', 'durationMonths', 'monthlyAmount', 'maturityAmount', 'isActive'],
+  SchemeEnrollment: ['id', 'enrollmentNumber', 'schemePlanId', 'customerId', 'startDate', 'endDate', 'status', 'totalPaid', 'installmentsPaid'],
+  SchemeInstallment: ['id', 'enrollmentId', 'installmentNumber', 'dueDate', 'paidAmount', 'paymentDate', 'paymentMethod', 'cashbookEntryId', 'status'],
   StockMovement: ['id', 'productId', 'productBarcode', 'type', 'quantity', 'createdAt'],
   CashbookEntry: ['id', 'entryDate', 'paymentMethod', 'customerId', 'saleId', 'urdPurchaseId', 'syncLedger'],
   CustomerLedger: ['id', 'customerId', 'saleId', 'cashbookEntryId', 'amount'],
@@ -429,7 +437,11 @@ async function verifyClientConnection(databaseUrl, appRoot) {
       const installedByName = new Map(installed.map((row) => [row.migration_name, String(row.checksum || '').toLowerCase()]));
       const missingMigrations = bundled.filter((migration) => !installedByName.has(migration.name));
       if (missingMigrations.length) throw new Error('The main database PC is using an older ERP schema. Update and start the ERP on the main PC before connecting this client.');
-      const changedMigration = bundled.find((migration) => installedByName.get(migration.name) !== migration.checksum.toLowerCase());
+      const changedMigration = bundled.find((migration) => !migrationChecksumMatches(
+        migration.name,
+        installedByName.get(migration.name),
+        migration.checksum
+      ));
       if (changedMigration) throw new Error(`The main database migration ${changedMigration.name} does not match this ERP release. Use the same intact release on every PC.`);
     }
   } catch (error) {

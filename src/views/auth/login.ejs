@@ -287,7 +287,7 @@
       font-size: 14.5px;
       color: #1a1612;
       transition: border-color .2s, box-shadow .2s;
-      text-transform: none;
+      text-transform: none !important;
       font-weight: 500;
     }
 
@@ -434,9 +434,8 @@
               </div>
               <% } %>
                 <form method="post" action="/login">
-                  <label>Username<input name="username" autocomplete="username" required autofocus></label>
-                  <label>Password<input name="password" type="password" autocomplete="current-password"
-                      required></label>
+                  <label>Username<input name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" class="preserve-case" data-no-uppercase required autofocus></label>
+                  <label>Password<input name="password" type="password" autocomplete="current-password" class="preserve-case" data-no-uppercase required></label>
                   <button class="login-submit" type="submit">Sign in →</button>
                 </form>
                 <div class="login-footer">

@@ -122,7 +122,7 @@ nav a.active { box-shadow: inset 3px 0 0 #dfa437; }
 /* ── Content grids ────────────────────────────────────────── */
 .content-grid { display: grid; gap: 18px; align-items: start; }
 .two-thirds { grid-template-columns: minmax(0, 1.75fr) minmax(300px, 1fr); }
-.contact-layout { grid-template-columns: minmax(0, 1fr) 315px; }
+.contact-layout { grid-template-columns: 1fr; }
 .reports-grid { grid-template-columns: minmax(0, 1.3fr) minmax(280px, .7fr); }
 .panel { padding: 20px; }
 .panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 17px; }
@@ -232,6 +232,55 @@ input, select, textarea { width: 100%; margin-top: 5px; border: 1px solid #dcd6c
 select { padding-right: 27px; }
 textarea { resize: vertical; }
 input:focus, select:focus, textarea:focus { border-color: #c08a32; box-shadow: 0 0 0 3px rgba(197,142,53,.13); }
+
+/* Standard ERP Text Entry — Automatically displays in CAPITAL LETTERS */
+input[type="text"]:not([data-no-uppercase]):not(.preserve-case):not([name="username"]):not([name="password"]):not([name="appUsername"]):not([name="appPassword"]):not([name="mysqlUser"]):not([name="mysqlPassword"]):not([name="databaseUser"]):not([name="databasePassword"]):not([name="mysqlHost"]):not([name="databaseName"]):not([name="printerHost"]):not([name="printerPort"]):not([name="printerName"]),
+input[type="search"]:not([data-no-uppercase]):not(.preserve-case),
+input:not([type]):not([data-no-uppercase]):not(.preserve-case):not([name="username"]):not([name="password"]):not([name="appUsername"]):not([name="appPassword"]):not([name="mysqlUser"]):not([name="mysqlPassword"]):not([name="databaseUser"]):not([name="databasePassword"]):not([name="mysqlHost"]):not([name="databaseName"]):not([name="printerHost"]):not([name="printerPort"]):not([name="printerName"]),
+textarea:not([data-no-uppercase]):not(.preserve-case),
+[data-uppercase],
+[data-title-case] {
+  text-transform: uppercase;
+}
+
+/* Explicit opt-outs: login screen, passwords, setup & system config */
+input[type="password"],
+input[type="email"],
+input[type="number"],
+input[type="date"],
+input[name="username"],
+input[name="password"],
+input[name="currentPassword"],
+input[name="newPassword"],
+input[name="confirmPassword"],
+input[name="appUsername"],
+input[name="appPassword"],
+input[name="mysqlUser"],
+input[name="mysqlPassword"],
+input[name="databaseUser"],
+input[name="databasePassword"],
+input[name="mysqlHost"],
+input[name="databaseName"],
+input[name="printerHost"],
+input[name="printerPort"],
+input[name="printerName"],
+[data-no-uppercase],
+.preserve-case,
+.login-page input,
+.login-card input,
+.login-form-panel input,
+form[action="/login"] input,
+form[action="/change-password"] input,
+.setup-body input,
+.setup-container input,
+.setup-card input,
+#setup-form input,
+form[action="/setup"] input,
+form[action="/connection-repair"] input,
+form[action="/network-setup"] input,
+#printer-setup-form input {
+  text-transform: none !important;
+}
 .form-panel { padding: 0; overflow: hidden; }
 .form-section { padding: 23px 25px; border-bottom: 1px solid var(--line); }
 .form-section h2 { margin-bottom: 17px; }
@@ -1705,3 +1754,182 @@ nav a {
   .customer-edit-fields { grid-template-columns: 1fr; }
   .customer-edit-fields .full { grid-column: auto; }
 }
+
+.customer-add-modal .modal-card { max-width: 540px; background: #ffffff !important; }
+.customer-add-modal .modal-body { max-height: 75vh; overflow-y: auto; }
+
+/* ── Schemes ──────────────────────────────────────────────── */
+.scheme-layout { grid-template-columns: 1fr; }
+.scheme-detail-layout { grid-template-columns: 1fr; }
+.scheme-plan-modal .modal-card,
+.scheme-enroll-modal .modal-card,
+.scheme-edit-modal .modal-card { max-width: 540px; background: #ffffff !important; }
+.scheme-plan-modal .modal-body,
+.scheme-enroll-modal .modal-body,
+.scheme-edit-modal .modal-body { max-height: 75vh; overflow-y: auto; }
+
+.scheme-plans-list { display: flex; flex-direction: column; gap: 16px; }
+
+.scheme-plan-card {
+  background: var(--surface);
+  border: 1.5px solid var(--line);
+  border-radius: 12px;
+  padding: 16px 20px;
+  transition: border-color .2s;
+}
+.scheme-plan-card:hover { border-color: var(--gold); }
+
+.scheme-plan-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.scheme-plan-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 750;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+.scheme-plan-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+.scheme-plan-details {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+@media (max-width: 600px) { .scheme-plan-details { grid-template-columns: repeat(2, 1fr); } }
+
+.scheme-detail-item span {
+  display: block;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  font-weight: 600;
+}
+.scheme-detail-item strong {
+  font-size: 15px;
+  color: var(--ink);
+}
+
+.scheme-plan-desc {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.scheme-edit-form {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+}
+
+.scheme-enroll-details summary {
+  cursor: pointer;
+  list-style: none;
+}
+.scheme-enroll-details summary::-webkit-details-marker { display: none; }
+
+.scheme-enroll-form {
+  padding: 12px 0 0;
+}
+
+.scheme-enrollments-table { overflow-x: auto; }
+.scheme-enrollments-table table { font-size: 13px; }
+.scheme-enrollments-table th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+
+/* Status pills for schemes */
+.pill.active { color: #166342; background: var(--green-pale); font-weight: 700; }
+.pill.completed { color: #2e7d32; background: #e0f2e9; font-weight: 700; }
+.pill.cancelled { color: #9c302b; background: var(--red-pale); font-weight: 700; }
+.pill.inactive { color: #756f69; background: #f0ede9; font-weight: 600; }
+.pill.pending { color: #96650d; background: #fff2d7; font-weight: 600; }
+.pill.overdue { color: #9c302b; background: var(--red-pale); font-weight: 700; }
+
+.row-overdue { background: #fff8f7; }
+
+/* Progress bar */
+.scheme-progress-bar {
+  position: relative;
+  height: 28px;
+  background: #f0ede9;
+  border-radius: 14px;
+  overflow: hidden;
+  margin: 16px 0;
+}
+.scheme-progress-fill {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  background: linear-gradient(135deg, var(--gold), #d4a843);
+  border-radius: 14px;
+  transition: width .5s ease;
+  min-width: 0;
+}
+.scheme-progress-label {
+  position: absolute;
+  left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 12px;
+  font-weight: 750;
+  color: var(--ink);
+  z-index: 1;
+}
+
+/* ── Scheme Installment Chips & Filter Controls ───────────── */
+.inst-chips-wrap {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  align-items: center;
+  max-width: 290px;
+}
+.inst-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9.5px;
+  font-weight: 750;
+  padding: 2px 5px;
+  border-radius: 4px;
+  line-height: 1.2;
+  letter-spacing: .02em;
+  cursor: default;
+  transition: all .15s ease;
+  user-select: none;
+}
+.inst-chip.paid {
+  background: var(--green-pale);
+  color: #166342;
+  border: 1px solid #b7e3cf;
+}
+.inst-chip.overdue {
+  background: var(--red-pale);
+  color: #9c302b;
+  border: 1px solid #f6c0be;
+}
+.inst-chip.pending {
+  background: #f4efe8;
+  color: #7a7065;
+  border: 1px solid #e2dad0;
+}
+.inst-chip.highlighted {
+  box-shadow: 0 0 0 2px #b47a21;
+  font-weight: 850;
+  transform: scale(1.12);
+  z-index: 2;
+}
+
+.scheme-filter-panel {
+  background: #fffdfa;
+  border: 1.5px solid #ebd9c4;
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 18px;
+}
+

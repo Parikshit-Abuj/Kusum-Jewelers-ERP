@@ -46,8 +46,9 @@ function hasConfiguredPassword(environment = process.env) {
 }
 
 function usesKnownDefaultPassword(environment = process.env) {
+  const username = String(environment.AUTH_USERNAME || '').trim().toLowerCase();
   return !environment.AUTH_PASSWORD_HASH
-    && secureTextMatch(environment.AUTH_USERNAME, 'kusum')
+    && username === 'kusum'
     && secureTextMatch(environment.AUTH_PASSWORD, 'kusum@123');
 }
 

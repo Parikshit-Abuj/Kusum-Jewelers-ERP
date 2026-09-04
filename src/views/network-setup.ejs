@@ -15,12 +15,12 @@
           <label>MySQL port<input value="<%= connection.port %>" disabled></label>
         </div>
         <div class="form-grid two compact-fields">
-          <label>MySQL admin user<input name="mysqlUser" required value="root" autocomplete="username"></label>
-          <label>MySQL admin password<input name="mysqlPassword" type="password" autocomplete="current-password" placeholder="Leave blank if none"></label>
+          <label>MySQL admin user<input name="mysqlUser" type="text" required value="root" autocomplete="username" class="preserve-case" data-no-uppercase autocapitalize="none" spellcheck="false"></label>
+          <label>MySQL admin password<input name="mysqlPassword" type="password" autocomplete="current-password" placeholder="Leave blank if none" class="preserve-case" data-no-uppercase></label>
         </div>
         <div class="form-grid two compact-fields">
-          <label>Shared ERP username<input name="databaseUser" required value="kusum_erp_shared" minlength="3" autocomplete="off"></label>
-          <label>Shared ERP password<input name="databasePassword" type="password" required autocomplete="new-password"></label>
+          <label>Shared ERP username<input name="databaseUser" type="text" required value="kusum_erp_shared" minlength="3" autocomplete="off" class="preserve-case" data-no-uppercase autocapitalize="none" spellcheck="false"></label>
+          <label>Shared ERP password<input name="databasePassword" type="password" required autocomplete="new-password" class="preserve-case" data-no-uppercase></label>
         </div>
         <button class="button" type="submit">Save client PC access</button>
       </form>

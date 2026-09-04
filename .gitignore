@@ -12,3 +12,4 @@ tmp/
 kusum-erp-mobile-apk/
 analytics.settings
 .electron-cache/
+.tmp-ca-reference/

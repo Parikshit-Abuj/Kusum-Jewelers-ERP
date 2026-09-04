@@ -1,0 +1,526 @@
+<%
+  const enrolls = typeof enrollments !== 'undefined' && Array.isArray(enrollments) ? enrollments : [];
+  const planStats = typeof stats !== 'undefined' && stats ? stats : { totalEnrollments: enrolls.length, activeEnrollments: 0, completedEnrollments: 0, cancelledEnrollments: 0, totalCollected: 0 };
+  const termsLocked = (plan._count?.enrollments || 0) > 0;
+  const today = dateInput();
+%>
+
+<header class="page-header">
+  <div>
+    <p class="eyebrow">Savings Scheme</p>
+    <div style="display:flex; align-items:center; gap:12px;">
+      <h1 style="margin:0;"><%= plan.name %></h1>
+      <span class="pill <%= plan.isActive ? 'active' : 'inactive' %>"><%= plan.isActive ? 'Active' : 'Inactive' %></span>
+    </div>
+  </div>
+  <div class="header-actions">
+    <a class="button ghost" href="/schemes">← All Schemes</a>
+    <button type="button" class="button secondary" data-edit-plan-open>Edit Plan</button>
+    <% if (plan.isActive) { %>
+    <button type="button" class="button" data-scheme-enroll-open>+ Enroll Customer</button>
+    <% } %>
+  </div>
+</header>
+
+<!-- Summary cards -->
+<div class="cashbook-summary">
+  <article class="stat-card">
+    <span class="stat-label">Monthly Installment</span>
+    <strong><%- money(plan.monthlyAmount) %></strong>
+    <p><%= plan.durationMonths %> months duration</p>
+  </article>
+  <article class="stat-card accent-gold">
+    <span class="stat-label">Total Scheme Amount</span>
+    <strong class="stat-positive"><%- money(plan.maturityAmount) %></strong>
+    <p>Maturity value per customer</p>
+  </article>
+  <article class="stat-card">
+    <span class="stat-label">Enrolled Customers</span>
+    <strong><%= planStats.activeEnrollments %></strong>
+    <p><%= planStats.totalEnrollments %> total · <%= planStats.completedEnrollments %> completed</p>
+  </article>
+  <article class="stat-card accent-gold">
+    <span class="stat-label">Total Collected</span>
+    <strong class="stat-positive"><%- money(planStats.totalCollected) %></strong>
+    <p>Synced with Cashbook</p>
+  </article>
+</div>
+
+<% if (plan.description) { %>
+<div class="panel" style="margin-bottom:18px; padding:14px 20px; background:#fffcf7; border-color:#ebd9c4;">
+  <strong style="font-size:12px; text-transform:uppercase; letter-spacing:0.05em; color:var(--gold-dark);">Scheme Terms & Description:</strong>
+  <p style="margin:4px 0 0; font-size:13.5px; color:var(--ink); line-height:1.5;"><%= plan.description %></p>
+</div>
+<% } %>
+
+<section class="panel" data-duration="<%= plan.durationMonths %>">
+  <div class="panel-heading" style="margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
+    <div>
+      <h2 style="margin: 0;">Enrolled Customers</h2>
+      <p id="enrolledCustomerCount" style="margin: 2px 0 0; font-size: 13px; color: var(--muted);"><%= enrolls.length %> customer<%= enrolls.length === 1 ? '' : 's' %> enrolled in this scheme</p>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+      <% if (enrolls.length) { %>
+      <!-- Simple Search -->
+      <input type="search" id="filterSearch" placeholder="Search customer…" autocomplete="off" style="min-height: 34px; width: 160px; padding: 4px 8px; font-size: 12.5px; border: 1px solid var(--line); border-radius: 6px; margin: 0;">
+
+      <!-- Month Dropdown -->
+      <select id="filterMonth" style="min-height: 34px; padding: 4px 8px; font-size: 12.5px; font-weight: 600; border: 1.5px solid var(--gold); border-radius: 6px; background: #fff; cursor: pointer; margin: 0;">
+        <option value="ALL">All Months</option>
+        <% for (let m = 1; m <= plan.durationMonths; m++) { %>
+        <option value="<%= m %>">Month <%= m %></option>
+        <% } %>
+      </select>
+
+      <!-- Paid or Not Paid Dropdown -->
+      <select id="filterStatus" style="min-height: 34px; padding: 4px 8px; font-size: 12.5px; font-weight: 600; border: 1.5px solid var(--gold); border-radius: 6px; background: #fff; cursor: pointer; margin: 0;">
+        <option value="ALL">Paid & Not Paid</option>
+        <option value="PAID">✓ Paid</option>
+        <option value="NOT_PAID">❌ Not Paid</option>
+      </select>
+
+      <button type="button" class="button ghost small" id="resetFiltersBtn" style="min-height: 34px; padding: 0 10px;" title="Reset filters">Reset</button>
+      <% } %>
+
+      <% if (plan.isActive) { %>
+      <button type="button" class="button secondary small" data-scheme-enroll-open style="min-height: 34px;">+ Enroll Customer</button>
+      <% } %>
+    </div>
+  </div>
+
+  <% if (enrolls.length) { %>
+  <div class="table-wrap" style="overflow-x:auto;">
+    <table id="enrollmentsTable" style="width:100%;">
+      <thead>
+        <tr>
+          <th style="width:130px;">Enrollment #</th>
+          <th>Customer</th>
+          <th style="width:100px;">Start Date</th>
+          <th style="width:130px;">Paid / Total</th>
+          <th style="min-width:280px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:6px;">
+              <span>Monthly Timeline (M1 to M<%= plan.durationMonths %>)</span>
+              <span id="colActiveFilterLabel" style="font-size:11.5px; color:var(--gold-dark); font-weight:700;"></span>
+            </div>
+          </th>
+          <th style="width:90px;">Status</th>
+          <th style="width:120px;"></th>
+        </tr>
+      </thead>
+      <tbody id="enrollmentsTbody">
+        <% enrolls.forEach(enr => { %>
+        <%
+          const instList = enr.installments || [];
+          const paidMonths = [];
+          const unpaidMonths = [];
+          const overdueMonths = [];
+          const instMap = {};
+          let hasOverdue = false;
+
+          instList.forEach(inst => {
+            const isOverdue = inst.status === 'PENDING' && inst.dueDate < today;
+            if (isOverdue) hasOverdue = true;
+            if (inst.status === 'PAID') {
+              paidMonths.push(inst.installmentNumber);
+            } else {
+              unpaidMonths.push(inst.installmentNumber);
+              if (isOverdue) overdueMonths.push(inst.installmentNumber);
+            }
+            instMap[inst.installmentNumber] = {
+              status: inst.status,
+              dueDate: inst.dueDate,
+              paidAmount: Number(inst.paidAmount || 0),
+              paymentDate: inst.paymentDate || '',
+              paymentMethod: inst.paymentMethod || '',
+              isOverdue
+            };
+          });
+
+          const paidCount = enr.installmentsPaid || paidMonths.length;
+          const pct = plan.durationMonths > 0 ? Math.round((paidCount / plan.durationMonths) * 100) : 0;
+          const phoneDigits = (enr.customer?.phone || '').replace(/\D/g, '');
+        %>
+        <tr data-enr-row
+            data-customer-name="<%= (enr.customer?.name || '').toLowerCase() %>"
+            data-customer-phone="<%= (enr.customer?.phone || '') %>"
+            data-enrollment-number="<%= enr.enrollmentNumber.toLowerCase() %>"
+            data-status="<%= enr.status %>"
+            data-has-overdue="<%= hasOverdue ? 'true' : 'false' %>"
+            data-paid-months="<%= paidMonths.join(',') %>"
+            data-unpaid-months="<%= unpaidMonths.join(',') %>"
+            data-overdue-months="<%= overdueMonths.join(',') %>">
+          <td><strong><%= enr.enrollmentNumber %></strong></td>
+          <td>
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:6px;">
+              <div>
+                <strong><%= enr.customer?.name || '—' %></strong><br>
+                <small style="color:var(--muted);"><%= enr.customer?.phone || '' %></small>
+              </div>
+              <% if (phoneDigits.length >= 10) { %>
+              <a href="https://wa.me/91<%= phoneDigits.slice(-10) %>" target="_blank" class="icon-button whatsapp-icon" title="Send WhatsApp Message to customer" style="flex-shrink:0;">
+                💬
+              </a>
+              <% } %>
+            </div>
+          </td>
+          <td><%= formatDateDisplay(enr.startDate) %></td>
+          <td>
+            <strong><%- money(enr.totalPaid) %></strong>
+            <small style="color:var(--muted); display:block;"><%= paidCount %>/<%= plan.durationMonths %> months (<%= pct %>%)</small>
+          </td>
+          <td>
+            <div class="inst-chips-wrap">
+              <% for (let m = 1; m <= plan.durationMonths; m++) { %>
+              <% const inst = instMap[m]; %>
+              <% if (inst && inst.status === 'PAID') { %>
+                <span class="inst-chip paid" data-month-chip="<%= m %>" title="Month <%= m %>: Paid ₹<%= inst.paidAmount %> on <%= formatDateDisplay(inst.paymentDate) %> (<%= inst.paymentMethod || 'Cash' %>)">M<%= m %> ✓</span>
+              <% } else if (inst && inst.isOverdue) { %>
+                <span class="inst-chip overdue" data-month-chip="<%= m %>" title="Month <%= m %>: OVERDUE! Due <%= formatDateDisplay(inst.dueDate) %>">M<%= m %> !</span>
+              <% } else if (inst) { %>
+                <span class="inst-chip pending" data-month-chip="<%= m %>" title="Month <%= m %>: Due <%= formatDateDisplay(inst.dueDate) %>">M<%= m %></span>
+              <% } else { %>
+                <span class="inst-chip pending" data-month-chip="<%= m %>">M<%= m %></span>
+              <% } %>
+              <% } %>
+            </div>
+          </td>
+          <td>
+            <span class="pill <%= enr.status === 'ACTIVE' ? 'active' : (enr.status === 'COMPLETED' ? 'completed' : 'cancelled') %>">
+              <%= enr.status %>
+            </span>
+          </td>
+          <td>
+            <a class="button secondary small" href="/schemes/enrollments/<%= enr.id %>">View Passbook →</a>
+          </td>
+        </tr>
+        <% }) %>
+      </tbody>
+    </table>
+
+    <div id="noFilterMatchMessage" style="display:none; text-align:center; padding:36px 16px; color:var(--muted);">
+      <p style="font-size:15px; font-weight:600; color:var(--ink); margin:0 0 4px;">No customers match the selected filter</p>
+      <p style="font-size:13px; margin:0 0 12px;">Try adjusting the month, payment status or search query.</p>
+      <button type="button" class="button small ghost" id="resetFilterFromEmptyBtn">Reset Filters</button>
+    </div>
+  </div>
+  <% } else { %>
+  <div class="empty-state compact">
+    <span>◎</span>
+    <h3>No customers enrolled in this scheme yet</h3>
+    <p>Enroll customers into <%= plan.name %> to start tracking monthly installments and cashbook receipts.</p>
+    <% if (plan.isActive) { %>
+    <button type="button" class="button" data-scheme-enroll-open style="margin-top:12px;">+ Enroll First Customer</button>
+    <% } %>
+  </div>
+  <% } %>
+</section>
+
+<!-- Enroll Customer Modal Popup -->
+<div class="modal-overlay scheme-enroll-modal" id="enrollCustomerModal" style="display:none;" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="enrollCustomerModalTitle">
+  <div class="modal-card">
+    <header class="modal-header">
+      <div>
+        <p class="eyebrow" style="margin:0 0 2px;">Enrollment · <%= plan.name %></p>
+        <h2 id="enrollCustomerModalTitle" style="margin:0;">Enroll Customer</h2>
+      </div>
+      <button class="modal-close-btn" type="button" data-scheme-enroll-close aria-label="Close modal">✕</button>
+    </header>
+    <form method="post" action="/schemes/<%= plan.id %>/enroll" id="enrollCustomerForm">
+      <div class="modal-body" style="padding: 20px; display: flex; flex-direction: column; gap: 14px;">
+        <div class="pos-field">
+          <label>Customer Mobile *</label>
+          <input name="customerPhone" inputmode="numeric" maxlength="15" required placeholder="10-digit mobile" data-scheme-phone autofocus autocomplete="off">
+        </div>
+        <div class="pos-field">
+          <label>Customer Name *</label>
+          <input name="customerName" data-uppercase required placeholder="Full name" data-scheme-name>
+        </div>
+        <div class="form-grid two compact-fields">
+          <div class="pos-field">
+            <label>Start Date *</label>
+            <input name="startDate" type="date" required value="<%= dateInput() %>">
+          </div>
+          <div class="pos-field">
+            <label>Notes (optional)</label>
+            <input name="notes" data-uppercase placeholder="Optional notes">
+          </div>
+        </div>
+      </div>
+      <footer class="modal-footer" style="padding: 14px 20px; background: #faf8f5; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; gap: 10px;">
+        <button type="button" class="button ghost" data-scheme-enroll-close>Cancel</button>
+        <button class="button" type="submit">Enroll Customer</button>
+      </footer>
+    </form>
+  </div>
+</div>
+
+<!-- Edit Plan Modal Popup -->
+<div class="modal-overlay scheme-edit-modal" id="editPlanModal" style="display:none;" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="editPlanModalTitle">
+  <div class="modal-card">
+    <header class="modal-header">
+      <div>
+        <p class="eyebrow" style="margin:0 0 2px;">Scheme Settings</p>
+        <h2 id="editPlanModalTitle" style="margin:0;">Edit Scheme Plan</h2>
+      </div>
+      <button class="modal-close-btn" type="button" data-edit-plan-close aria-label="Close modal">✕</button>
+    </header>
+    <form method="post" action="/schemes/plans/<%= plan.id %>/edit">
+      <input type="hidden" name="returnTo" value="plan">
+      <div class="modal-body" style="padding: 20px; display: flex; flex-direction: column; gap: 14px;">
+        <div class="pos-field">
+          <label>Scheme Plan Name *</label>
+          <input name="name" data-uppercase required value="<%= plan.name %>">
+        </div>
+        <div class="form-grid two compact-fields">
+          <div class="pos-field">
+            <label>Duration (months) *</label>
+            <input name="durationMonths" type="number" min="1" max="60" required value="<%= plan.durationMonths %>" <%= termsLocked ? 'readonly' : '' %>>
+          </div>
+          <div class="pos-field">
+            <label>Monthly Installment (₹) *</label>
+            <input name="monthlyAmount" type="number" min="1" step="0.01" required value="<%= Number(plan.monthlyAmount) %>" <%= termsLocked ? 'readonly' : '' %>>
+          </div>
+        </div>
+        <div class="pos-field">
+          <label>Total Scheme Amount (₹) *</label>
+          <input name="maturityAmount" type="number" min="1" step="0.01" required value="<%= Number(plan.maturityAmount) %>" <%= termsLocked ? 'readonly' : '' %>>
+          <% if (termsLocked) { %>
+          <small style="color:#8a7a5a; display:block; margin-top:4px;">Duration and amounts are locked because customers are enrolled in this plan.</small>
+          <% } %>
+        </div>
+        <div class="pos-field">
+          <label>Description</label>
+          <textarea name="description" data-uppercase rows="3"><%= plan.description || '' %></textarea>
+        </div>
+        <div class="pos-field">
+          <label style="display:flex; align-items:center; gap:8px; font-weight:600; cursor:pointer;">
+            <input type="checkbox" name="isActive" <%= plan.isActive ? 'checked' : '' %> style="width:auto; margin:0;">
+            Active (accepting new customer enrollments)
+          </label>
+        </div>
+      </div>
+      <footer class="modal-footer" style="padding: 14px 20px; background: #faf8f5; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; gap: 10px;">
+        <button type="button" class="button ghost" data-edit-plan-close>Cancel</button>
+        <button class="button" type="submit">Save Changes</button>
+      </footer>
+    </form>
+  </div>
+</div>
+
+<script>
+// Enroll Customer modal popup
+(function initEnrollModal() {
+  const modal = document.getElementById('enrollCustomerModal');
+  if (!modal) return;
+
+  const openButtons = document.querySelectorAll('[data-scheme-enroll-open]');
+  const closeButtons = modal.querySelectorAll('[data-scheme-enroll-close]');
+  const phoneInput = modal.querySelector('input[name="customerPhone"]');
+  let previousFocus = null;
+
+  function openModal() {
+    previousFocus = document.activeElement;
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    setTimeout(() => phoneInput?.focus(), 60);
+  }
+
+  function closeModal() {
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+    previousFocus?.focus();
+  }
+
+  openButtons.forEach(btn => btn.addEventListener('click', openModal));
+  closeButtons.forEach(btn => btn.addEventListener('click', closeModal));
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeModal();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal.style.display === 'flex') closeModal();
+  });
+
+  if (new URLSearchParams(window.location.search).get('enroll') === '1') {
+    openModal();
+  }
+})();
+
+// Edit Plan modal popup
+(function initEditPlanModal() {
+  const modal = document.getElementById('editPlanModal');
+  if (!modal) return;
+
+  const openButtons = document.querySelectorAll('[data-edit-plan-open]');
+  const closeButtons = modal.querySelectorAll('[data-edit-plan-close]');
+  const nameInput = modal.querySelector('input[name="name"]');
+  let previousFocus = null;
+
+  function openModal() {
+    previousFocus = document.activeElement;
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    setTimeout(() => nameInput?.focus(), 60);
+  }
+
+  function closeModal() {
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+    previousFocus?.focus();
+  }
+
+  openButtons.forEach(btn => btn.addEventListener('click', openModal));
+  closeButtons.forEach(btn => btn.addEventListener('click', closeModal));
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeModal();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal.style.display === 'flex') closeModal();
+  });
+})();
+
+// Phone lookup for customer name in enrollment
+(function initPhoneLookup() {
+  const phoneInput = document.querySelector('[data-scheme-phone]');
+  if (!phoneInput) return;
+  let timer = null;
+  phoneInput.addEventListener('input', () => {
+    clearTimeout(timer);
+    const digits = (phoneInput.value || '').replace(/\D/g, '');
+    if (digits.length >= 10 && digits.length <= 15) {
+      timer = setTimeout(async () => {
+        try {
+          const resp = await fetch(`/api/customers/phone/${encodeURIComponent(digits)}`);
+          if (!resp.ok) return;
+          const data = await resp.json();
+          if (data.found && data.customer) {
+            const form = phoneInput.closest('form');
+            const nameInput = form?.querySelector('[data-scheme-name]');
+            if (nameInput && !nameInput.value) nameInput.value = String(data.customer.name || '').toUpperCase();
+          }
+        } catch (_) {}
+      }, 350);
+    }
+  });
+})();
+
+// Real-time Simple Customer & Installment Filtering
+(function initSimpleFilters() {
+  const searchInput = document.getElementById('filterSearch');
+  const monthSelect = document.getElementById('filterMonth');
+  const statusSelect = document.getElementById('filterStatus');
+  const resetBtn = document.getElementById('resetFiltersBtn');
+  const resetEmptyBtn = document.getElementById('resetFilterFromEmptyBtn');
+
+  const rows = Array.from(document.querySelectorAll('[data-enr-row]'));
+  const totalCount = rows.length;
+  if (!totalCount) return;
+
+  const countEl = document.getElementById('enrolledCustomerCount');
+  const colFilterLabel = document.getElementById('colActiveFilterLabel');
+  const noMatchBox = document.getElementById('noFilterMatchMessage');
+  const tableEl = document.getElementById('enrollmentsTable');
+
+  function applyFilters() {
+    const q = (searchInput?.value || '').trim().toLowerCase();
+    const selectedMonth = monthSelect?.value || 'ALL';
+    const selectedStatus = statusSelect?.value || 'ALL';
+
+    let matched = 0;
+
+    rows.forEach(row => {
+      const name = row.getAttribute('data-customer-name') || '';
+      const phone = row.getAttribute('data-customer-phone') || '';
+      const num = row.getAttribute('data-enrollment-number') || '';
+
+      const paidMonths = (row.getAttribute('data-paid-months') || '').split(',').filter(Boolean).map(Number);
+      const unpaidMonths = (row.getAttribute('data-unpaid-months') || '').split(',').filter(Boolean).map(Number);
+
+      // Search match
+      const searchMatch = !q || name.includes(q) || phone.includes(q) || num.includes(q);
+
+      // Installment match
+      let instMatch = true;
+      if (selectedMonth === 'ALL') {
+        if (selectedStatus === 'NOT_PAID') {
+          instMatch = unpaidMonths.length > 0;
+        } else if (selectedStatus === 'PAID') {
+          instMatch = paidMonths.length > 0;
+        }
+      } else {
+        const m = parseInt(selectedMonth, 10);
+        if (selectedStatus === 'NOT_PAID') {
+          instMatch = unpaidMonths.includes(m);
+        } else if (selectedStatus === 'PAID') {
+          instMatch = paidMonths.includes(m);
+        }
+      }
+
+      const visible = searchMatch && instMatch;
+      row.style.display = visible ? '' : 'none';
+      if (visible) matched++;
+
+      // Highlight target month chip
+      row.querySelectorAll('[data-month-chip]').forEach(chip => {
+        const chipMonth = parseInt(chip.getAttribute('data-month-chip'), 10);
+        if (selectedMonth !== 'ALL' && chipMonth === parseInt(selectedMonth, 10)) {
+          chip.classList.add('highlighted');
+        } else {
+          chip.classList.remove('highlighted');
+        }
+      });
+    });
+
+    // Update count display
+    if (countEl) {
+      if (selectedMonth === 'ALL' && selectedStatus === 'ALL' && !q) {
+        countEl.textContent = `${totalCount} customer${totalCount === 1 ? '' : 's'} enrolled in this scheme`;
+      } else {
+        const statusLabel = selectedStatus === 'NOT_PAID' ? 'Not Paid' : (selectedStatus === 'PAID' ? 'Paid' : '');
+        const monthLabel = selectedMonth !== 'ALL' ? `Month ${selectedMonth}` : '';
+        const filterDesc = [monthLabel, statusLabel].filter(Boolean).join(' · ');
+        countEl.textContent = `Showing ${matched} of ${totalCount} customers${filterDesc ? ` (${filterDesc})` : ''}`;
+      }
+    }
+
+    if (colFilterLabel) {
+      if (selectedMonth !== 'ALL') {
+        const stText = selectedStatus === 'NOT_PAID' ? '❌ Not Paid' : (selectedStatus === 'PAID' ? '✓ Paid' : '');
+        colFilterLabel.textContent = `[Month ${selectedMonth}${stText ? ' · ' + stText : ''}]`;
+      } else if (selectedStatus !== 'ALL') {
+        colFilterLabel.textContent = selectedStatus === 'NOT_PAID' ? '[❌ Has Unpaid]' : '[✓ Has Paid]';
+      } else {
+        colFilterLabel.textContent = '';
+      }
+    }
+
+    // Toggle empty state
+    if (noMatchBox && tableEl) {
+      if (matched === 0) {
+        noMatchBox.style.display = 'block';
+        tableEl.style.display = 'none';
+      } else {
+        noMatchBox.style.display = 'none';
+        tableEl.style.display = '';
+      }
+    }
+  }
+
+  // Events
+  searchInput?.addEventListener('input', applyFilters);
+  monthSelect?.addEventListener('change', applyFilters);
+  statusSelect?.addEventListener('change', applyFilters);
+
+  function resetAll() {
+    if (searchInput) searchInput.value = '';
+    if (monthSelect) monthSelect.value = 'ALL';
+    if (statusSelect) statusSelect.value = 'ALL';
+    applyFilters();
+  }
+
+  resetBtn?.addEventListener('click', resetAll);
+  resetEmptyBtn?.addEventListener('click', resetAll);
+
+  applyFilters();
+})();
+</script>

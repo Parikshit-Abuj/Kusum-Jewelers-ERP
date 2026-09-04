@@ -22,6 +22,9 @@ const KNOWN_ERP_TABLES = new Set([
   'Product',
   'Sale',
   'SaleItem',
+  'SchemeEnrollment',
+  'SchemeInstallment',
+  'SchemePlan',
   'StockMovement',
   'SyncRevision',
   'UrdPurchase',
@@ -36,7 +39,8 @@ const KNOWN_ERP_TABLES = new Set([
 const CURRENT_ERP_TABLES = [
   '_prisma_migrations', 'AppSession', 'BarcodeSequence', 'CashbookEntry', 'Customer',
   'CustomerLedger', 'DailyRate', 'DocumentSequence', 'ItemName', 'Product',
-  'Sale', 'SaleItem', 'StockMovement', 'SyncRevision', 'UrdPurchase'
+  'Sale', 'SaleItem', 'SchemeEnrollment', 'SchemeInstallment', 'SchemePlan',
+  'StockMovement', 'SyncRevision', 'UrdPurchase'
 ];
 
 // These six tables existed in the first ERP schema and are sufficient to
@@ -60,6 +64,9 @@ const ERP_SCHEMA_COLUMNS = {
   Product: ['id', 'barcode', 'sku', 'name', 'category', 'metal', 'purity', 'grossWeight', 'stoneWeight', 'netWeight', 'quantity', 'reorderLevel', 'purchasePrice', 'sellingPrice', 'makingChargePerGram', 'makingChargeType', 'makingChargeValue', 'location', 'batchDocNo', 'notes', 'status', 'createdAt', 'updatedAt'],
   Sale: ['id', 'invoiceNumber', 'customerId', 'customerPan', 'saleDate', 'subtotal', 'discount', 'gstRate', 'gstAmount', 'total', 'urdOffset', 'paid', 'cashPaid', 'upiPaid', 'cardPaid', 'bankPaid', 'balance', 'paymentMethod', 'notes', 'cancelledAt', 'createdAt', 'updatedAt'],
   SaleItem: ['id', 'saleId', 'productId', 'productBarcode', 'productSku', 'productName', 'productMetal', 'productPurity', 'grossWeight', 'quantity', 'weight', 'unitPrice', 'metalRate', 'metalAmount', 'makingCharge', 'makingChargeType', 'makingChargeValue', 'taxableAmount', 'lineTotal', 'hsnCode', 'huidCode'],
+  SchemePlan: ['id', 'name', 'durationMonths', 'monthlyAmount', 'maturityAmount', 'description', 'isActive', 'createdAt', 'updatedAt'],
+  SchemeEnrollment: ['id', 'enrollmentNumber', 'schemePlanId', 'customerId', 'startDate', 'endDate', 'status', 'totalPaid', 'installmentsPaid', 'notes', 'createdAt', 'updatedAt'],
+  SchemeInstallment: ['id', 'enrollmentId', 'installmentNumber', 'dueDate', 'paidAmount', 'paymentDate', 'paymentMethod', 'cashbookEntryId', 'status', 'notes', 'createdAt'],
   StockMovement: ['id', 'productId', 'productBarcode', 'productSku', 'productName', 'productMetal', 'productPurity', 'netWeight', 'type', 'quantity', 'note', 'createdAt'],
   SyncRevision: ['id', 'revision', 'updatedAt'],
   UrdPurchase: ['id', 'purchaseNumber', 'customerId', 'purchaseDate', 'metal', 'purity', 'grossWeight', 'netWeight', 'ratePerGram', 'totalAmount', 'saleOffset', 'paid', 'paymentMethod', 'description', 'notes', 'saleId', 'cancelledAt', 'createdAt', 'updatedAt']

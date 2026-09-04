@@ -1,0 +1,228 @@
+<header class="page-header">
+  <div>
+    <p class="eyebrow">Monthly savings plans</p>
+    <h1>Schemes</h1>
+  </div>
+  <div class="header-actions">
+    <button type="button" class="button" data-scheme-create-plan-open>+ Create Scheme Plan</button>
+  </div>
+</header>
+
+<%
+  const plans = typeof schemePlans !== 'undefined' && Array.isArray(schemePlans) ? schemePlans : [];
+  const stats = typeof schemeStats !== 'undefined' && schemeStats ? schemeStats : { activePlans: 0, totalEnrollments: 0, activeEnrollments: 0, totalCollected: 0 };
+%>
+
+<!-- Summary cards -->
+<div class="cashbook-summary">
+  <article class="stat-card accent-gold">
+    <span class="stat-label">Active Plans</span>
+    <strong class="stat-positive"><%= stats.activePlans %></strong>
+  </article>
+  <article class="stat-card">
+    <span class="stat-label">Active Enrollments</span>
+    <strong><%= stats.activeEnrollments %></strong>
+    <p><%= stats.totalEnrollments %> total</p>
+  </article>
+  <article class="stat-card accent-gold">
+    <span class="stat-label">Total Collected</span>
+    <strong class="stat-positive"><%- money(stats.totalCollected) %></strong>
+  </article>
+</div>
+
+<div class="content-grid scheme-layout">
+
+  <!-- Left: Scheme plans list -->
+  <section class="panel">
+    <div class="panel-heading">
+      <div>
+        <h2>Scheme Plans</h2>
+        <p><%= plans.length %> plan<%= plans.length === 1 ? '' : 's' %> configured</p>
+      </div>
+      <button type="button" class="button secondary small" data-scheme-create-plan-open>+ New Plan</button>
+    </div>
+
+    <% if (plans.length) { %>
+    <div class="scheme-plans-list">
+      <% plans.forEach(plan => { %>
+      <% const termsLocked = (plan._count?.enrollments || 0) > 0; %>
+      <div class="scheme-plan-card">
+        <div class="scheme-plan-header">
+          <div>
+            <h3><%= plan.name %></h3>
+            <span class="pill <%= plan.isActive ? 'active' : 'inactive' %>"><%= plan.isActive ? 'Active' : 'Inactive' %></span>
+          </div>
+          <div class="scheme-plan-actions">
+            <button type="button" class="button ghost small" data-toggle-edit="plan-<%= plan.id %>">Edit</button>
+            <% if (plan._count?.enrollments === 0) { %>
+            <form method="post" action="/schemes/plans/<%= plan.id %>/delete" style="display:inline;" onsubmit="return confirm('Delete this scheme plan permanently?')">
+              <button type="submit" class="button ghost small" style="color:#c0392b;">Delete</button>
+            </form>
+            <% } %>
+          </div>
+        </div>
+        <div class="scheme-plan-details">
+          <div class="scheme-detail-item">
+            <span>Duration</span>
+            <strong><%= plan.durationMonths %> months</strong>
+          </div>
+          <div class="scheme-detail-item">
+            <span>Monthly</span>
+            <strong><%- money(plan.monthlyAmount) %></strong>
+          </div>
+          <div class="scheme-detail-item">
+            <span>Total scheme amount</span>
+            <strong><%- money(plan.maturityAmount) %></strong>
+          </div>
+          <div class="scheme-detail-item">
+            <span>Enrolled Customers</span>
+            <strong><%= plan._count?.enrollments || 0 %></strong>
+          </div>
+        </div>
+        <% if (plan.description) { %>
+        <p class="scheme-plan-desc"><%= plan.description %></p>
+        <% } %>
+
+        <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <a class="button" href="/schemes/plans/<%= plan.id %>">View Scheme & Customers →</a>
+            <% if (plan.isActive) { %>
+            <a class="button secondary small" href="/schemes/plans/<%= plan.id %>?enroll=1">+ Enroll Customer</a>
+            <% } %>
+          </div>
+          <span style="font-size:12.5px; color:var(--muted); font-weight:600;"><%= plan._count?.enrollments || 0 %> customer<%= plan._count?.enrollments === 1 ? '' : 's' %> enrolled</span>
+        </div>
+
+        <!-- Inline edit form (hidden) -->
+        <form class="scheme-edit-form" id="plan-<%= plan.id %>" method="post" action="/schemes/plans/<%= plan.id %>/edit" hidden>
+          <div class="form-grid two compact-fields">
+            <div class="pos-field"><label>Plan Name *</label><input name="name" data-uppercase required value="<%= plan.name %>"></div>
+            <div class="pos-field"><label>Duration (months) *</label><input name="durationMonths" type="number" min="1" max="60" required value="<%= plan.durationMonths %>" <%= termsLocked ? 'readonly' : '' %>></div>
+            <div class="pos-field"><label>Monthly Amount (₹) *</label><input name="monthlyAmount" type="number" min="1" step="0.01" required value="<%= Number(plan.monthlyAmount) %>" <%= termsLocked ? 'readonly' : '' %>></div>
+            <div class="pos-field"><label>Total Scheme Amount (₹) *</label><input name="maturityAmount" type="number" min="1" step="0.01" required value="<%= Number(plan.maturityAmount) %>" <%= termsLocked ? 'readonly' : '' %>></div>
+          </div>
+          <% if (termsLocked) { %><p class="muted" style="margin:8px 0 0;">Duration and amounts are locked after the first customer enrollment. Create a new plan for different terms.</p><% } %>
+          <div class="pos-field" style="margin-top:8px;"><label>Description</label><textarea name="description" rows="2" data-uppercase style="width:100%;"><%= plan.description || '' %></textarea></div>
+          <div style="margin-top:8px; display:flex; align-items:center; gap:10px;">
+            <label style="display:flex; align-items:center; gap:6px; font-size:13px;"><input type="checkbox" name="isActive" <%= plan.isActive ? 'checked' : '' %>> Active (accepting enrollments)</label>
+            <button class="button small" type="submit">Save Changes</button>
+            <button class="button ghost small" type="button" data-toggle-edit="plan-<%= plan.id %>">Cancel</button>
+          </div>
+        </form>
+      </div>
+      <% }) %>
+    </div>
+    <% } else { %>
+    <div class="empty-state compact">
+      <span>⬡</span>
+      <h3>No scheme plans yet</h3>
+      <p>Create a savings scheme plan to get started.</p>
+      <button type="button" class="button" data-scheme-create-plan-open style="margin-top:12px;">+ Create Scheme Plan</button>
+    </div>
+    <% } %>
+  </section>
+
+</div>
+
+<!-- Create Scheme Plan Modal Popup -->
+<div class="modal-overlay scheme-plan-modal" id="schemePlanModal" style="display:none;" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="schemePlanModalTitle">
+  <div class="modal-card">
+    <header class="modal-header">
+      <div>
+        <p class="eyebrow" style="margin:0 0 2px;">Savings Plan</p>
+        <h2 id="schemePlanModalTitle" style="margin:0;">Create Scheme Plan</h2>
+      </div>
+      <button class="modal-close-btn" type="button" data-scheme-create-plan-close aria-label="Close modal">✕</button>
+    </header>
+    <form method="post" action="/schemes/plans/new" id="createSchemePlanForm">
+      <div class="modal-body" style="padding: 20px; display: flex; flex-direction: column; gap: 14px;">
+        <label>Scheme Name *
+          <input name="name" data-uppercase required placeholder="e.g. GOLD SAVINGS 12M" autocomplete="off">
+        </label>
+        <div class="form-grid two compact-fields">
+          <label>Duration (months) *
+            <input name="durationMonths" type="number" min="1" max="60" required placeholder="12">
+          </label>
+          <label>Monthly Installment (₹) *
+            <input name="monthlyAmount" type="number" min="1" step="0.01" required placeholder="5000">
+          </label>
+        </div>
+        <label>Total Scheme Amount (₹) *
+          <input name="maturityAmount" type="number" min="1" step="0.01" required placeholder="65000">
+          <small style="color:#8a7a5a; display:block; margin-top:3px;">Total value at completion; it may include a shop bonus.</small>
+        </label>
+        <label>Description
+          <textarea name="description" data-uppercase rows="3" placeholder="Scheme details, terms, etc."></textarea>
+        </label>
+      </div>
+      <footer class="modal-footer" style="padding: 14px 20px; background: #faf8f5; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; gap: 10px;">
+        <button type="button" class="button ghost" data-scheme-create-plan-close>Cancel</button>
+        <button class="button" type="submit">Create Plan</button>
+      </footer>
+    </form>
+  </div>
+</div>
+
+<script>
+// Create Scheme Plan modal popup
+(function initSchemePlanModal() {
+  const modal = document.getElementById('schemePlanModal');
+  if (!modal) return;
+
+  const openButtons = document.querySelectorAll('[data-scheme-create-plan-open]');
+  const closeButtons = modal.querySelectorAll('[data-scheme-create-plan-close]');
+  const firstField = modal.querySelector('input[name="name"]');
+  let previousFocus = null;
+
+  function openModal() {
+    previousFocus = document.activeElement;
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    setTimeout(() => firstField?.focus(), 60);
+  }
+
+  function closeModal() {
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+    previousFocus?.focus();
+  }
+
+  openButtons.forEach(btn => btn.addEventListener('click', openModal));
+  closeButtons.forEach(btn => btn.addEventListener('click', closeModal));
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeModal();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal.style.display === 'flex') closeModal();
+  });
+})();
+document.querySelectorAll('[data-toggle-edit]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const target = document.getElementById(btn.dataset.toggleEdit);
+    if (target) target.hidden = !target.hidden;
+  });
+});
+
+// Phone lookup for enrollment
+document.querySelectorAll('[data-scheme-phone]').forEach(phoneInput => {
+  let timer = null;
+  phoneInput.addEventListener('input', () => {
+    clearTimeout(timer);
+    const digits = (phoneInput.value || '').replace(/\D/g, '');
+    if (digits.length >= 10 && digits.length <= 15) {
+      timer = setTimeout(async () => {
+        try {
+          const resp = await fetch(`/api/customers/phone/${encodeURIComponent(digits)}`);
+          if (!resp.ok) return;
+          const data = await resp.json();
+          if (data.found && data.customer) {
+            const form = phoneInput.closest('form');
+            const nameInput = form?.querySelector('[data-scheme-name]');
+            if (nameInput && !nameInput.value) nameInput.value = String(data.customer.name || '').toUpperCase();
+          }
+        } catch (_) {}
+      }, 350);
+    }
+  });
+});
+</script>

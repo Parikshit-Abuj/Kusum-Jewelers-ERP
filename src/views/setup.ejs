@@ -236,7 +236,9 @@
       letter-spacing: .04em;
     }
 
-    .setup-field input {
+    .setup-field input,
+    .setup-card input,
+    #setup-form input {
       padding: 12px 15px;
       border: 1.5px solid #dcd1c2;
       border-radius: 10px;
@@ -246,6 +248,7 @@
       transition: all 0.2s ease;
       font-family: inherit;
       font-weight: 500;
+      text-transform: none !important;
     }
 
     .setup-field input:focus {
@@ -384,15 +387,15 @@
           <div class="form-row three">
             <div class="setup-field">
               <label>Host / IP Address</label>
-              <input name="mysqlHost" required value="<%= defaults.mysqlHost %>" autocomplete="off" data-mysql-host placeholder="localhost">
+              <input name="mysqlHost" type="text" required value="<%= defaults.mysqlHost %>" autocomplete="off" data-mysql-host placeholder="localhost" class="preserve-case" data-no-uppercase autocapitalize="none" spellcheck="false">
             </div>
             <div class="setup-field">
               <label>Port</label>
-              <input name="mysqlPort" type="number" min="1" max="65535" required value="<%= defaults.mysqlPort %>" autocomplete="off">
+              <input name="mysqlPort" type="number" min="1" max="65535" required value="<%= defaults.mysqlPort %>" autocomplete="off" class="preserve-case" data-no-uppercase>
             </div>
             <div class="setup-field">
               <label>Database Name</label>
-              <input name="databaseName" required value="<%= defaults.databaseName %>" pattern="[A-Za-z0-9_]+" autocomplete="off">
+              <input name="databaseName" type="text" required value="<%= defaults.databaseName %>" pattern="[A-Za-z0-9_]+" autocomplete="off" class="preserve-case" data-no-uppercase autocapitalize="none" spellcheck="false">
             </div>
           </div>
 
@@ -400,11 +403,11 @@
             <div class="form-row two">
               <div class="setup-field">
                 <label>MySQL Administrator User</label>
-                <input name="mysqlUser" required value="root" autocomplete="username">
+                <input name="mysqlUser" type="text" required value="root" autocomplete="username" class="preserve-case" data-no-uppercase autocapitalize="none" spellcheck="false">
               </div>
               <div class="setup-field">
                 <label>MySQL Root Password</label>
-                <input name="mysqlPassword" type="password" autocomplete="current-password" placeholder="Leave blank only if no password">
+                <input name="mysqlPassword" type="password" autocomplete="current-password" placeholder="Leave blank only if no password" class="preserve-case" data-no-uppercase>
               </div>
             </div>
           </div>
@@ -427,11 +430,11 @@
           <div class="form-row two">
             <div class="setup-field">
               <label>Database Username</label>
-              <input name="databaseUser" required value="<%= defaults.databaseUser %>" minlength="3" autocomplete="off">
+              <input name="databaseUser" type="text" required value="<%= defaults.databaseUser %>" minlength="3" autocomplete="off" class="preserve-case" data-no-uppercase autocapitalize="none" spellcheck="false">
             </div>
             <div class="setup-field">
               <label>Database Password</label>
-              <input name="databasePassword" type="password" required autocomplete="new-password" placeholder="Choose a secure password">
+              <input name="databasePassword" type="password" required autocomplete="new-password" placeholder="Choose a secure password" class="preserve-case" data-no-uppercase>
             </div>
           </div>
           <div class="field-helper">
@@ -449,11 +452,11 @@
           <div class="form-row two">
             <div class="setup-field">
               <label>ERP Login Username</label>
-              <input name="appUsername" required value="<%= defaults.appUsername %>" minlength="3" autocomplete="username">
+              <input name="appUsername" type="text" required value="<%= defaults.appUsername %>" minlength="3" autocomplete="username" class="preserve-case" data-no-uppercase autocapitalize="none" spellcheck="false">
             </div>
             <div class="setup-field">
               <label>ERP Login Password</label>
-              <input name="appPassword" type="password" required autocomplete="new-password" placeholder="Set your shop login password">
+              <input name="appPassword" type="password" required autocomplete="new-password" placeholder="Set your shop login password" class="preserve-case" data-no-uppercase>
             </div>
           </div>
           <div class="field-helper">
@@ -482,18 +485,18 @@
           <div data-windows-printer-fields>
             <div class="setup-field">
               <label>Installed Windows TSC Printer Name</label>
-              <input name="printerName" value="<%= defaults.printerName %>" autocomplete="off" placeholder="e.g. TSC TTP-244 Pro">
+              <input name="printerName" type="text" value="<%= defaults.printerName %>" autocomplete="off" placeholder="e.g. TSC TTP-244 Pro" class="preserve-case" data-no-uppercase>
             </div>
           </div>
 
           <div class="form-row two" data-tcp-printer-fields hidden>
             <div class="setup-field">
               <label>Printer / Print-Server IP</label>
-              <input name="printerHost" value="<%= defaults.printerHost %>" autocomplete="off" placeholder="e.g. 192.168.1.60">
+              <input name="printerHost" type="text" value="<%= defaults.printerHost %>" autocomplete="off" placeholder="e.g. 192.168.1.60" class="preserve-case" data-no-uppercase autocapitalize="none" spellcheck="false">
             </div>
             <div class="setup-field">
               <label>Direct RAW TCP Port</label>
-              <input name="printerPort" type="number" min="1" max="65535" value="<%= defaults.printerPort %>" autocomplete="off" placeholder="9100">
+              <input name="printerPort" type="number" min="1" max="65535" value="<%= defaults.printerPort %>" autocomplete="off" placeholder="9100" class="preserve-case" data-no-uppercase>
             </div>
           </div>
 
