@@ -53,7 +53,16 @@
             <span class="pill <%= plan.isActive ? 'active' : 'inactive' %>"><%= plan.isActive ? 'Active' : 'Inactive' %></span>
           </div>
           <div class="scheme-plan-actions">
-            <button type="button" class="button ghost small" data-toggle-edit="plan-<%= plan.id %>">Edit</button>
+            <button type="button" class="button ghost small"
+              data-edit-plan-open
+              data-plan-id="<%= plan.id %>"
+              data-plan-name="<%= plan.name %>"
+              data-plan-duration="<%= plan.durationMonths %>"
+              data-plan-monthly="<%= Number(plan.monthlyAmount) %>"
+              data-plan-maturity="<%= Number(plan.maturityAmount) %>"
+              data-plan-desc="<%= plan.description || '' %>"
+              data-plan-active="<%= plan.isActive ? '1' : '0' %>"
+              data-plan-locked="<%= termsLocked ? '1' : '0' %>">Edit</button>
             <% if (plan._count?.enrollments === 0) { %>
             <form method="post" action="/schemes/plans/<%= plan.id %>/delete" style="display:inline;" onsubmit="return confirm('Delete this scheme plan permanently?')">
               <button type="submit" class="button ghost small" style="color:#c0392b;">Delete</button>
@@ -92,23 +101,6 @@
           </div>
           <span style="font-size:12.5px; color:var(--muted); font-weight:600;"><%= plan._count?.enrollments || 0 %> customer<%= plan._count?.enrollments === 1 ? '' : 's' %> enrolled</span>
         </div>
-
-        <!-- Inline edit form (hidden) -->
-        <form class="scheme-edit-form" id="plan-<%= plan.id %>" method="post" action="/schemes/plans/<%= plan.id %>/edit" hidden>
-          <div class="form-grid two compact-fields">
-            <div class="pos-field"><label>Plan Name *</label><input name="name" data-uppercase required value="<%= plan.name %>"></div>
-            <div class="pos-field"><label>Duration (months) *</label><input name="durationMonths" type="number" min="1" max="60" required value="<%= plan.durationMonths %>" <%= termsLocked ? 'readonly' : '' %>></div>
-            <div class="pos-field"><label>Monthly Amount (₹) *</label><input name="monthlyAmount" type="number" min="1" step="0.01" required value="<%= Number(plan.monthlyAmount) %>" <%= termsLocked ? 'readonly' : '' %>></div>
-            <div class="pos-field"><label>Total Scheme Amount (₹) *</label><input name="maturityAmount" type="number" min="1" step="0.01" required value="<%= Number(plan.maturityAmount) %>" <%= termsLocked ? 'readonly' : '' %>></div>
-          </div>
-          <% if (termsLocked) { %><p class="muted" style="margin:8px 0 0;">Duration and amounts are locked after the first customer enrollment. Create a new plan for different terms.</p><% } %>
-          <div class="pos-field" style="margin-top:8px;"><label>Description</label><textarea name="description" rows="2" data-uppercase style="width:100%;"><%= plan.description || '' %></textarea></div>
-          <div style="margin-top:8px; display:flex; align-items:center; gap:10px;">
-            <label style="display:flex; align-items:center; gap:6px; font-size:13px;"><input type="checkbox" name="isActive" <%= plan.isActive ? 'checked' : '' %>> Active (accepting enrollments)</label>
-            <button class="button small" type="submit">Save Changes</button>
-            <button class="button ghost small" type="button" data-toggle-edit="plan-<%= plan.id %>">Cancel</button>
-          </div>
-        </form>
       </div>
       <% }) %>
     </div>
@@ -163,6 +155,56 @@
   </div>
 </div>
 
+<!-- Edit Scheme Plan Modal Popup -->
+<div class="modal-overlay scheme-edit-modal" id="editSchemePlanModal" style="display:none;" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="editSchemePlanModalTitle">
+  <div class="modal-card">
+    <header class="modal-header">
+      <div>
+        <p class="eyebrow" id="editPlanEyebrow" style="margin:0 0 2px;">Scheme Settings</p>
+        <h2 id="editSchemePlanModalTitle" style="margin:0;">Edit Scheme Plan</h2>
+      </div>
+      <button class="modal-close-btn" type="button" data-edit-plan-close aria-label="Close modal">✕</button>
+    </header>
+    <form method="post" action="" id="editSchemePlanForm">
+      <div class="modal-body" style="padding: 20px; display: flex; flex-direction: column; gap: 14px;">
+        <div class="pos-field">
+          <label>Scheme Plan Name *</label>
+          <input name="name" id="editPlanName" data-uppercase required autocomplete="off">
+        </div>
+        <div class="form-grid two compact-fields">
+          <div class="pos-field">
+            <label>Duration (months) *</label>
+            <input name="durationMonths" id="editPlanDuration" type="number" min="1" max="60" required>
+          </div>
+          <div class="pos-field">
+            <label>Monthly Installment (₹) *</label>
+            <input name="monthlyAmount" id="editPlanMonthly" type="number" min="1" step="0.01" required>
+          </div>
+        </div>
+        <div class="pos-field">
+          <label>Total Scheme Amount (₹) *</label>
+          <input name="maturityAmount" id="editPlanMaturity" type="number" min="1" step="0.01" required>
+          <small id="editPlanLockedNote" style="color:#8a7a5a; display:none; margin-top:4px;">Duration and amounts are locked because customers are enrolled in this plan.</small>
+        </div>
+        <div class="pos-field">
+          <label>Description</label>
+          <textarea name="description" id="editPlanDesc" data-uppercase rows="3" placeholder="Scheme details, terms, etc."></textarea>
+        </div>
+        <div class="pos-field">
+          <label style="display:flex; align-items:center; gap:8px; font-weight:600; cursor:pointer;">
+            <input type="checkbox" name="isActive" id="editPlanActive" style="width:auto; margin:0;">
+            Active (accepting new customer enrollments)
+          </label>
+        </div>
+      </div>
+      <footer class="modal-footer" style="padding: 14px 20px; background: #faf8f5; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; gap: 10px;">
+        <button type="button" class="button ghost" data-edit-plan-close>Cancel</button>
+        <button class="button" type="submit">Save Changes</button>
+      </footer>
+    </form>
+  </div>
+</div>
+
 <script>
 // Create Scheme Plan modal popup
 (function initSchemePlanModal() {
@@ -196,12 +238,76 @@
     if (e.key === 'Escape' && modal.style.display === 'flex') closeModal();
   });
 })();
-document.querySelectorAll('[data-toggle-edit]').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const target = document.getElementById(btn.dataset.toggleEdit);
-    if (target) target.hidden = !target.hidden;
+
+// Edit Scheme Plan modal popup
+(function initEditSchemePlanModal() {
+  const modal = document.getElementById('editSchemePlanModal');
+  if (!modal) return;
+
+  const form = document.getElementById('editSchemePlanForm');
+  const eyebrow = document.getElementById('editPlanEyebrow');
+  const nameInput = document.getElementById('editPlanName');
+  const durationInput = document.getElementById('editPlanDuration');
+  const monthlyInput = document.getElementById('editPlanMonthly');
+  const maturityInput = document.getElementById('editPlanMaturity');
+  const lockedNote = document.getElementById('editPlanLockedNote');
+  const descInput = document.getElementById('editPlanDesc');
+  const activeInput = document.getElementById('editPlanActive');
+  const closeButtons = modal.querySelectorAll('[data-edit-plan-close]');
+  let previousFocus = null;
+
+  function openEditModal(btn) {
+    const planId = btn.getAttribute('data-plan-id');
+    const planName = btn.getAttribute('data-plan-name') || '';
+    const duration = btn.getAttribute('data-plan-duration') || '12';
+    const monthly = btn.getAttribute('data-plan-monthly') || '0';
+    const maturity = btn.getAttribute('data-plan-maturity') || '0';
+    const desc = btn.getAttribute('data-plan-desc') || '';
+    const isActive = btn.getAttribute('data-plan-active') === '1';
+    const isLocked = btn.getAttribute('data-plan-locked') === '1';
+
+    form.action = `/schemes/plans/${planId}/edit`;
+    if (eyebrow) eyebrow.textContent = `Scheme Settings · ${planName}`;
+    if (nameInput) nameInput.value = planName;
+    if (durationInput) {
+      durationInput.value = duration;
+      durationInput.readOnly = isLocked;
+    }
+    if (monthlyInput) {
+      monthlyInput.value = monthly;
+      monthlyInput.readOnly = isLocked;
+    }
+    if (maturityInput) {
+      maturityInput.value = maturity;
+      maturityInput.readOnly = isLocked;
+    }
+    if (lockedNote) lockedNote.style.display = isLocked ? 'block' : 'none';
+    if (descInput) descInput.value = desc;
+    if (activeInput) activeInput.checked = isActive;
+
+    previousFocus = document.activeElement;
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    setTimeout(() => nameInput?.focus(), 60);
+  }
+
+  function closeModal() {
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+    previousFocus?.focus();
+  }
+
+  document.querySelectorAll('[data-edit-plan-open]').forEach(btn => {
+    btn.addEventListener('click', () => openEditModal(btn));
   });
-});
+  closeButtons.forEach(btn => btn.addEventListener('click', closeModal));
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeModal();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal.style.display === 'flex') closeModal();
+  });
+})();
 
 // Phone lookup for enrollment
 document.querySelectorAll('[data-scheme-phone]').forEach(phoneInput => {

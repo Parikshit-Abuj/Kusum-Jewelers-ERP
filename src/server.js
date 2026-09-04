@@ -2841,6 +2841,10 @@ app.get('/schemes/plans/:id', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+app.get('/schemes/plans/:id/edit', (req, res) => {
+  res.redirect(`/schemes/plans/${req.params.id}?edit=1`);
+});
+
 app.post('/schemes/plans/new', async (req, res, next) => {
   try {
     const name = titleCase(req.body.name);

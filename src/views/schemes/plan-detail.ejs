@@ -377,6 +377,10 @@
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && modal.style.display === 'flex') closeModal();
   });
+
+  if (new URLSearchParams(window.location.search).get('edit') === '1') {
+    openModal();
+  }
 })();
 
 // Phone lookup for customer name in enrollment
