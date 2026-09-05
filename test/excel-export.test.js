@@ -145,3 +145,30 @@ test('renders the compact customer ledger register without filters or unnecessar
   assert.equal(sheet.getCell('D5').text, '9876543210');
   assert.equal(sheet.getCell('E5').numFmt, '#,##0.00;[Red]-#,##0.00');
 });
+
+test('preserves financial-year Sales and URD document numbers in plain CA registers', async () => {
+  const documentColumn = { key: 'documentNumber', label: 'Doc-no', type: 'identifier', width: 22 };
+  const workbookBytes = await buildExcelExport({
+    title: 'Kusum ERP - Document number validation',
+    columns: [], rows: [],
+    sheets: [
+      {
+        name: 'Sales Register', title: '01. Sales Register', subtitle: 'From    01/04/2026   To   31/03/2027', layout: 'ca-register',
+        columns: [{ key: 'date', label: 'Date', type: 'date', width: 14 }, documentColumn],
+        rows: [{ date: '2026-04-01', documentNumber: 'SB/26-27/00001' }]
+      },
+      {
+        name: 'URD Purchase Register', title: '03. URD Purchase', subtitle: 'From    01/04/2026   To   31/03/2027', layout: 'ca-register',
+        columns: [{ key: 'date', label: 'Date', type: 'date', width: 14 }, documentColumn],
+        rows: [{ date: '2026-04-01', documentNumber: 'UR/26-27/00001' }]
+      }
+    ]
+  });
+
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(workbookBytes);
+  assert.equal(workbook.getWorksheet('Sales Register').getCell('B5').text, 'SB/26-27/00001');
+  assert.equal(workbook.getWorksheet('URD Purchase Register').getCell('B5').text, 'UR/26-27/00001');
+  assert.equal(workbook.getWorksheet('Sales Register').autoFilter, undefined);
+  assert.equal(workbook.getWorksheet('URD Purchase Register').autoFilter, undefined);
+});

@@ -97,9 +97,24 @@ function grams(value) {
   return `${Number(value || 0).toFixed(3)} g`;
 }
 
+function indianFinancialYear(value = new Date()) {
+  const parts = localDateParts(value);
+  const calendarYear = Number(parts.year);
+  // India's financial year runs from 1 April through 31 March. Use the shop
+  // PC's local date, consistently with all other operational document dates.
+  const startYear = Number(parts.month) < 4 ? calendarYear - 1 : calendarYear;
+  const endYear = startYear + 1;
+  return {
+    key: `${startYear}-${endYear}`,
+    label: `${String(startYear).slice(-2)}-${String(endYear).slice(-2)}`
+  };
+}
+
 async function reserveDocumentNumber(tx, prefix, value = new Date()) {
   const day = dateInput(value).replaceAll('-', '');
-  const key = `${prefix}-${day}`;
+  const isFinancialYearDocument = prefix === 'SB' || prefix === 'UR';
+  const financialYear = isFinancialYearDocument ? indianFinancialYear(value) : null;
+  const key = isFinancialYearDocument ? `${prefix}-${financialYear.key}` : `${prefix}-${day}`;
   // LAST_INSERT_ID(expr) is scoped to this MySQL connection. Combined with an
   // interactive Prisma transaction, it atomically reserves a counter value
   // for every LAN client, including the very first request of a new day.
@@ -116,9 +131,13 @@ async function reserveDocumentNumber(tx, prefix, value = new Date()) {
     if (!Number.isInteger(lastNumber) || lastNumber < 1) {
       throw new Error(`Could not reserve the next ${prefix} document number.`);
     }
-    const serial = String(lastNumber).padStart(4, '0');
-    const candidate = prefix === 'INV' ? `${day}${serial}` : `${prefix}-${day}-${serial}`;
-    const existing = prefix === 'INV'
+    const serial = String(lastNumber).padStart(isFinancialYearDocument ? 5 : 4, '0');
+    const candidate = prefix === 'SB'
+      ? `SB/${financialYear.label}/${serial}`
+      : prefix === 'UR'
+        ? `UR/${financialYear.label}/${serial}`
+      : prefix === 'INV' ? `${day}${serial}` : `${prefix}-${day}-${serial}`;
+    const existing = (prefix === 'INV' || prefix === 'SB')
       ? await tx.sale.findUnique({ where: { invoiceNumber: candidate }, select: { id: true } })
       : prefix === 'SCH'
         ? await tx.schemeEnrollment.findUnique({ where: { enrollmentNumber: candidate }, select: { id: true } })

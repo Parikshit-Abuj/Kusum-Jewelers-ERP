@@ -1712,7 +1712,7 @@ app.post('/sales', async (req, res, next) => {
       const acceptedPaid = payment.paid;
       const balance = roundedMoney(Math.max(0, netPayable - acceptedPaid));
       const sale = await tx.sale.create({ data: {
-        invoiceNumber: await nextDocumentNumber(tx, 'INV', saleDate), customerId, customerPan, saleDate,
+        invoiceNumber: await nextDocumentNumber(tx, 'SB', saleDate), customerId, customerPan, saleDate,
         subtotal, discount: appliedDiscount, gstRate, gstAmount, total, urdOffset: urdAmount, paid: acceptedPaid,
         cashPaid: payment.cashPaid, upiPaid: payment.upiPaid, cardPaid: payment.cardPaid, bankPaid: payment.bankPaid, balance,
         paymentMethod: payment.paymentMethod, notes: req.body.notes ? String(req.body.notes).trim().toUpperCase() : null,
@@ -1732,7 +1732,7 @@ app.post('/sales', async (req, res, next) => {
       });
       if (includeUrdPurchase) {
         const urdPurchase = await tx.urdPurchase.create({ data: {
-          purchaseNumber: await nextDocumentNumber(tx, 'URD', saleDate), customerId, purchaseDate: saleDate,
+          purchaseNumber: await nextDocumentNumber(tx, 'UR', saleDate), customerId, purchaseDate: saleDate,
           metal: req.body.urdMetal || 'GOLD', purity: req.body.urdPurity ? String(req.body.urdPurity).trim().toUpperCase() : null,
           grossWeight: number(req.body.urdGrossWeight), netWeight: number(req.body.urdNetWeight),
           ratePerGram: number(req.body.urdRatePerGram), totalAmount: urdAmount, saleOffset: settlement.saleAdjustment,
@@ -2087,7 +2087,7 @@ app.post('/sales/:id/edit', async (req, res, next) => {
       } else if (includeUrdPurchase) {
         urdPurchase = await tx.urdPurchase.create({
           data: {
-            purchaseNumber: await nextDocumentNumber(tx, 'URD', saleDate),
+            purchaseNumber: await nextDocumentNumber(tx, 'UR', saleDate),
             customerId: finalCustomerId,
             purchaseDate: saleDate,
             metal: req.body.urdMetal || 'GOLD',
@@ -2435,7 +2435,7 @@ app.post('/urd-purchases', async (req, res, next) => {
     const purchase = await prisma.$transaction(async (tx) => {
       const record = await tx.urdPurchase.create({
         data: {
-          purchaseNumber: await nextDocumentNumber(tx, 'URD', purchaseDate),
+          purchaseNumber: await nextDocumentNumber(tx, 'UR', purchaseDate),
           customerId,
           purchaseDate,
           metal: req.body.metal || 'GOLD', purity: req.body.purity || null,

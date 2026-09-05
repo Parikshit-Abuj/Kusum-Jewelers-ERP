@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { dateInput, roundToNearestRupee } = require('../src/lib/helpers');
+const { dateInput, roundToNearestRupee, nextDocumentNumber } = require('../src/lib/helpers');
 const { getExportPayload } = require('../src/lib/data-lifecycle');
 
 test('uses the Windows-local calendar date instead of UTC for operational date keys', () => {
@@ -17,6 +17,48 @@ test('rounds final invoice values to the nearest whole rupee', () => {
   assert.equal(roundToNearestRupee(1.1), 1);
   assert.equal(roundToNearestRupee(1.5), 2);
   assert.equal(roundToNearestRupee(19.49), 19);
+});
+
+test('sales bill numbers use an India financial-year counter and roll over on 1 April', async () => {
+  const sequenceKeys = [];
+  const counters = new Map();
+  let currentKey = '';
+  const tx = {
+    $executeRaw: async (_strings, ...values) => {
+      currentKey = values[0];
+      sequenceKeys.push(currentKey);
+      counters.set(currentKey, (counters.get(currentKey) || 0) + 1);
+    },
+    $queryRaw: async () => [{ lastNumber: counters.get(currentKey) }],
+    sale: { findUnique: async () => null },
+    urdPurchase: { findUnique: async () => null },
+    schemeEnrollment: { findUnique: async () => null }
+  };
+
+  assert.equal(await nextDocumentNumber(tx, 'SB', new Date(2026, 2, 31, 12, 0)), 'SB/25-26/00001');
+  assert.equal(await nextDocumentNumber(tx, 'SB', new Date(2026, 3, 1, 12, 0)), 'SB/26-27/00001');
+  assert.deepEqual(sequenceKeys, ['SB-2025-2026', 'SB-2026-2027']);
+});
+
+test('URD purchase numbers use their own India financial-year counter', async () => {
+  const sequenceKeys = [];
+  const counters = new Map();
+  let currentKey = '';
+  const tx = {
+    $executeRaw: async (_strings, ...values) => {
+      currentKey = values[0];
+      sequenceKeys.push(currentKey);
+      counters.set(currentKey, (counters.get(currentKey) || 0) + 1);
+    },
+    $queryRaw: async () => [{ lastNumber: counters.get(currentKey) }],
+    sale: { findUnique: async () => null },
+    urdPurchase: { findUnique: async () => null },
+    schemeEnrollment: { findUnique: async () => null }
+  };
+
+  assert.equal(await nextDocumentNumber(tx, 'UR', new Date(2027, 2, 31, 12, 0)), 'UR/26-27/00001');
+  assert.equal(await nextDocumentNumber(tx, 'UR', new Date(2027, 3, 1, 12, 0)), 'UR/27-28/00001');
+  assert.deepEqual(sequenceKeys, ['UR-2026-2027', 'UR-2027-2028']);
 });
 
 test('cashbook export carries each payment method opening balance into its own sheet', async () => {
@@ -57,7 +99,7 @@ test('long Excel date ranges stop before loading database data into memory', asy
 
 test('sales and URD CA registers keep URD settlement figures accurate', async () => {
   const sale = {
-    saleDate: new Date(2026, 8, 2, 10, 0), invoiceNumber: 'INV-URD-REFUND', customerPan: '',
+    saleDate: new Date(2026, 8, 2, 10, 0), invoiceNumber: 'SB/26-27/00001', customerPan: '',
     subtotal: 97.09, discount: 0, gstRate: 3, gstAmount: 2.91, total: 100, urdOffset: 150,
     paid: 0, cashPaid: 0, upiPaid: 0, cardPaid: 0, bankPaid: 0, balance: 0, paymentMethod: 'CREDIT', notes: '',
     customer: { name: 'Asha', phone: '9999999999', panNumber: '' },
@@ -65,9 +107,9 @@ test('sales and URD CA registers keep URD settlement figures accurate', async ()
     urdPurchase: { paid: 50, paymentMethod: 'UPI' }
   };
   const purchase = {
-    purchaseDate: new Date(2026, 8, 2, 10, 0), purchaseNumber: 'URD-REFUND', metal: 'GOLD', purity: '22K',
+    purchaseDate: new Date(2026, 8, 2, 10, 0), purchaseNumber: 'UR/26-27/00001', metal: 'GOLD', purity: '22K',
     grossWeight: 3, netWeight: 3, ratePerGram: 50, totalAmount: 150, saleOffset: 100, paid: 50,
-    paymentMethod: 'UPI', description: 'Old chain', notes: '', customer: { name: 'Asha', phone: '9999999999' }, sale: { invoiceNumber: 'INV-URD-REFUND' }
+    paymentMethod: 'UPI', description: 'Old chain', notes: '', customer: { name: 'Asha', phone: '9999999999' }, sale: { invoiceNumber: 'SB/26-27/00001' }
   };
   const db = {
     sale: { findMany: async () => [sale] },
@@ -78,14 +120,16 @@ test('sales and URD CA registers keep URD settlement figures accurate', async ()
   const salesRegister = sales.sheets.find((sheet) => sheet.name === 'Sales Register');
   assert.equal(salesRegister.layout, 'ca-register');
   assert.deepEqual(salesRegister.columns.map((column) => column.label), ['Date', 'Doc-no', 'Customer', 'Gr-wt', 'Net-wt', 'Taxable-amt', 'CGST', 'SGST', 'IGST', 'Total', 'URD', 'Discount', 'Net-amt']);
+  assert.equal(salesRegister.rows[0].invoiceNumber, 'SB/26-27/00001');
   assert.equal(salesRegister.rows[0].urdAdjustment, 100);
   assert.equal(salesRegister.rows[0].netAmount, 0);
 
   const urd = await getExportPayload(db, 'urd', { from: '2026-09-02', to: '2026-09-02' });
   const urdRegister = urd.sheets.find((sheet) => sheet.name === 'URD Purchase Register');
   assert.equal(urdRegister.layout, 'ca-register');
+  assert.equal(urdRegister.rows[0].purchaseNumber, 'UR/26-27/00001');
   assert.equal(urdRegister.rows[0].totalAmount, 150);
-  assert.match(urdRegister.rows[0].remark, /Paid: 50\.00 \(UPI\)/);
+  assert.equal(urdRegister.rows[0].remark, 'SB/26-27/00001');
 });
 
 test('cashbook export retains a URD excess as a method-specific money-out entry', async () => {
@@ -108,7 +152,7 @@ test('cashbook export retains a URD excess as a method-specific money-out entry'
   assert.equal(upi.rows[0].moneyOut, 50);
 });
 
-test('URD Excel export preserves a manually entered Silver purity', async () => {
+test('URD Excel export keeps Remark empty when a standalone purchase has no linked sales bill', async () => {
   const db = {
     urdPurchase: {
       findMany: async () => [{
@@ -119,7 +163,7 @@ test('URD Excel export preserves a manually entered Silver purity', async () => 
     }
   };
   const payload = await getExportPayload(db, 'urd', { from: '2026-09-02', to: '2026-09-02' });
-  assert.match(payload.rows[0].remark, /Purity: 999 Fine Silver/);
+  assert.equal(payload.rows[0].remark, '');
   assert.equal(payload.sheets[0].layout, 'ca-register');
 });
 

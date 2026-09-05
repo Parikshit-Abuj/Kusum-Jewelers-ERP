@@ -356,12 +356,11 @@ async function getExportPayload(db, key, range, options = {}) {
       const purchases = await db.urdPurchase.findMany({
         where: { purchaseDate: dateTimeRange(range), cancelledAt: null },
         orderBy: [{ purchaseDate: 'asc' }, { id: 'asc' }],
-        include: { customer: true },
+        include: { customer: true, sale: true },
         take: MAX_SOURCE_ROWS + 1
       });
       assertExportRows(purchases, 'URD purchase register');
       const rows = purchases.map((purchase) => {
-        const paid = num(purchase.paid);
         return {
           purchaseDate: exportDate(purchase.purchaseDate),
           purchaseNumber: purchase.purchaseNumber,
@@ -369,14 +368,9 @@ async function getExportPayload(db, key, range, options = {}) {
           grossWeight: num(purchase.grossWeight),
           netWeight: num(purchase.netWeight),
           totalAmount: num(purchase.totalAmount),
-          remark: [
-            purchase.metal,
-            purchase.purity ? `Purity: ${purchase.purity}` : '',
-            str(purchase.description),
-            purchase.sale?.invoiceNumber ? `Bill No: ${purchase.sale.invoiceNumber}` : '',
-            paid > 0 ? `Paid: ${paid.toFixed(2)} (${paymentLabel(purchase.paymentMethod)})` : '',
-            str(purchase.notes)
-          ].filter(Boolean).join(' | ')
+          // The CA register must remain compact. Its only remark is the
+          // related sales bill, when this URD purchase was adjusted in a bill.
+          remark: purchase.sale?.invoiceNumber || ''
         };
       });
       const columns = [
