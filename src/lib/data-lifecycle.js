@@ -98,6 +98,16 @@ function paymentLabel(value) {
   return labels[value] || enumLabel(value);
 }
 
+function latestSchemePayment(installments = []) {
+  const paid = installments.filter((installment) => Number(installment.paidAmount || 0) > 0 && installment.paymentDate);
+  if (!paid.length) return { paidDate: '', paymentType: '' };
+  const latest = [...paid].sort((a, b) => String(a.paymentDate).localeCompare(String(b.paymentDate)) || Number(a.installmentNumber || 0) - Number(b.installmentNumber || 0)).at(-1);
+  return {
+    paidDate: latest.paymentDate,
+    paymentType: latest.paymentMethod ? paymentLabel(latest.paymentMethod) : ''
+  };
+}
+
 function makingLabel(value) {
   const labels = { FIXED: 'Fixed', PER_GRAM: 'Per gram', PERCENTAGE: 'Percentage' };
   return labels[value] || enumLabel(value);
@@ -823,7 +833,10 @@ async function getExportPayload(db, key, range, options = {}) {
       const enrollments = await db.schemeEnrollment.findMany({
         where: { startDate: dateTimeRange(range) },
         orderBy: [{ startDate: 'asc' }, { id: 'asc' }],
-        include: { customer: true },
+        include: {
+          customer: true,
+          installments: { select: { installmentNumber: true, paidAmount: true, paymentDate: true, paymentMethod: true } }
+        },
         take: MAX_SOURCE_ROWS + 1
       });
       assertExportRows(enrollments, 'Savings scheme register');
@@ -831,7 +844,9 @@ async function getExportPayload(db, key, range, options = {}) {
         col.integer('srNo', 'Sr. No.', 9),
         col.identifier('enrollmentNumber', 'Scheme Doc No.', 22),
         col.text('customerName', 'Name', 28),
-        col.identifier('customerPhone', 'Mobile Number', 16),
+        col.identifier('customerPhone', 'Mobile No.', 18),
+        col.date('paidDate', 'Paid Date'),
+        col.text('paymentType', 'Payment Type', 18),
         col.currency('amount', 'Amount')
       ];
       const rows = enrollments.map((enrollment, index) => ({
@@ -839,7 +854,8 @@ async function getExportPayload(db, key, range, options = {}) {
         enrollmentNumber: enrollment.enrollmentNumber,
         customerName: enrollment.customer?.name || 'Unknown customer',
         customerPhone: enrollment.customer?.phone || '',
-        amount: num(enrollment.totalPaid)
+        amount: num(enrollment.totalPaid),
+        ...latestSchemePayment(enrollment.installments)
       }));
       return exportEnvelope(resource, range, columns, rows, {
         sheets: [{
@@ -961,8 +977,8 @@ async function getSchemePlanExportPayload(db, schemePlanId, options = {}) {
     include: {
       customer: true,
       installments: month === null
-        ? false
-        : { where: { installmentNumber: month }, select: { paidAmount: true } }
+        ? { select: { installmentNumber: true, paidAmount: true, paymentDate: true, paymentMethod: true } }
+        : { where: { installmentNumber: month }, select: { installmentNumber: true, paidAmount: true, paymentDate: true, paymentMethod: true } }
     },
     take: MAX_SOURCE_ROWS + 1
   });
@@ -972,18 +988,24 @@ async function getSchemePlanExportPayload(db, schemePlanId, options = {}) {
     col.integer('srNo', 'Sr. No.', 9),
     col.identifier('enrollmentNumber', 'Scheme Doc No.', 22),
     col.text('customerName', 'Name', 28),
-    col.identifier('customerPhone', 'Mobile Number', 16),
+    col.identifier('customerPhone', 'Mobile No.', 18),
+    col.date('paidDate', 'Paid Date'),
+    col.text('paymentType', 'Payment Type', 18),
     col.currency('amount', 'Amount')
   ];
-  const rows = enrollments.map((enrollment, index) => ({
-    srNo: index + 1,
-    enrollmentNumber: enrollment.enrollmentNumber,
-    customerName: enrollment.customer?.name || 'Unknown customer',
-    customerPhone: enrollment.customer?.phone || '',
-    amount: month === null
-      ? num(enrollment.totalPaid)
-      : num(enrollment.installments?.[0]?.paidAmount)
-  }));
+  const rows = enrollments.map((enrollment, index) => {
+    const payment = latestSchemePayment(enrollment.installments);
+    return {
+      srNo: index + 1,
+      enrollmentNumber: enrollment.enrollmentNumber,
+      customerName: enrollment.customer?.name || 'Unknown customer',
+      customerPhone: enrollment.customer?.phone || '',
+      amount: month === null
+        ? num(enrollment.totalPaid)
+        : num(enrollment.installments?.[0]?.paidAmount),
+      ...payment
+    };
+  });
   const reportLabel = month === null ? 'Consolidated Scheme Report' : `Month ${month} Scheme Report`;
   return {
     title: `Kusum ERP - ${plan.name}`,

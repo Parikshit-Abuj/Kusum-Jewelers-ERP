@@ -249,9 +249,10 @@ test('scheme export is a simple CA register', async () => {
   const payload = await getExportPayload(db, 'schemes', { from: '2026-09-01', to: '2026-09-30' });
   const register = payload.sheets[0];
   assert.equal(register.layout, 'ca-register');
-  assert.deepEqual(register.columns.map((column) => column.label), ['Sr. No.', 'Scheme Doc No.', 'Name', 'Mobile Number', 'Amount']);
+  assert.deepEqual(register.columns.map((column) => column.label), ['Sr. No.', 'Scheme Doc No.', 'Name', 'Mobile No.', 'Paid Date', 'Payment Type', 'Amount']);
   assert.deepEqual(register.rows[0], {
-    srNo: 1, enrollmentNumber: 'SCH-20260904-0001', customerName: 'Asha', customerPhone: '9999999999', amount: 5000
+    srNo: 1, enrollmentNumber: 'SCH-20260904-0001', customerName: 'Asha', customerPhone: '9999999999', amount: 5000,
+    paidDate: '2026-09-04', paymentType: 'UPI'
   });
 });
 
@@ -260,7 +261,7 @@ test('scheme plan monthly reports use that month payment instead of cumulative p
   const enrollment = {
     id: 1, enrollmentNumber: 'SCH-26-0001', totalPaid: 10000,
     customer: { name: 'Asha', phone: '9999999999' },
-    installments: [{ paidAmount: 5000 }]
+    installments: [{ installmentNumber: 2, paidAmount: 5000, paymentDate: '2026-10-04', paymentMethod: 'CASH' }]
   };
   const db = {
     schemePlan: { findUnique: async () => plan },
@@ -270,6 +271,8 @@ test('scheme plan monthly reports use that month payment instead of cumulative p
   const consolidated = await getSchemePlanExportPayload(db, 8, {});
   assert.equal(monthTwo.sheets[0].name, 'Month 2');
   assert.equal(monthTwo.rows[0].amount, 5000);
+  assert.equal(monthTwo.rows[0].paidDate, '2026-10-04');
+  assert.equal(monthTwo.rows[0].paymentType, 'Cash');
   assert.equal(consolidated.sheets[0].name, 'Consolidated');
   assert.equal(consolidated.rows[0].amount, 10000);
 });
