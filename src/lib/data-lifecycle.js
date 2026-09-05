@@ -158,6 +158,22 @@ function roundCurrency(value) {
   return Math.round(num(value) * 100) / 100;
 }
 
+function isGoldSilverOnlyMixedSale(sale) {
+  const metals = new Set((sale.items || []).map((item) => String(item.productMetal || '').toUpperCase()));
+  return metals.has('GOLD') && metals.has('SILVER') && [...metals].every((metal) => metal === 'GOLD' || metal === 'SILVER');
+}
+
+// Gold and Silver registers show a proportional share for an invoice that
+// contains both metals.  Rounding both shares independently can create or
+// lose one paisa.  Gold takes the normal rounded value and Silver receives
+// the exact remainder, so the two registers always reconcile to All sales.
+function mixedMetalAllocatedAmount(amount, selectedMetal, allItemTaxable, goldItemTaxable, selectedItemTaxable, isMixedGoldSilverOnly) {
+  if (!selectedMetal || allItemTaxable <= 0) return num(amount);
+  if (!isMixedGoldSilverOnly) return roundCurrency(num(amount) * (selectedItemTaxable / allItemTaxable));
+  const goldAmount = roundCurrency(num(amount) * (goldItemTaxable / allItemTaxable));
+  return selectedMetal === 'GOLD' ? goldAmount : roundCurrency(num(amount) - goldAmount);
+}
+
 function saleRegisterRows(sales, metal = null) {
   const selectedMetal = metal ? String(metal).toUpperCase() : null;
   return sales
@@ -169,17 +185,23 @@ function saleRegisterRows(sales, metal = null) {
       const netWeight = items.reduce((sum, item) => sum + num(item.weight) * Number(item.quantity || 0), 0);
       const allItemTaxable = sale.items.reduce((sum, item) => sum + num(item.taxableAmount), 0);
       const selectedItemTaxable = items.reduce((sum, item) => sum + num(item.taxableAmount), 0);
-      const allocation = selectedMetal && allItemTaxable > 0 ? selectedItemTaxable / allItemTaxable : 1;
-      const discount = selectedMetal ? roundCurrency(num(sale.discount) * allocation) : num(sale.discount);
+      const goldItemTaxable = sale.items
+        .filter((item) => item.productMetal === 'GOLD')
+        .reduce((sum, item) => sum + num(item.taxableAmount), 0);
+      const mixedGoldSilverOnly = isGoldSilverOnlyMixedSale(sale);
+      const allocate = (amount) => mixedMetalAllocatedAmount(amount, selectedMetal, allItemTaxable, goldItemTaxable, selectedItemTaxable, mixedGoldSilverOnly);
+      const discount = selectedMetal ? allocate(sale.discount) : num(sale.discount);
       const taxableAmount = selectedMetal
-        ? roundCurrency(Math.max(0, selectedItemTaxable - discount))
+        ? mixedGoldSilverOnly
+          ? allocate(Math.max(0, num(sale.subtotal) - num(sale.discount)))
+          : roundCurrency(Math.max(0, selectedItemTaxable - discount))
         : Math.max(0, num(sale.subtotal) - num(sale.discount));
       const gstAmount = selectedMetal
-        ? roundCurrency(num(sale.gstAmount) * allocation)
+        ? allocate(sale.gstAmount)
         : num(sale.gstAmount);
       const cgstAmount = Math.round((gstAmount / 2) * 100) / 100;
-      const total = selectedMetal ? roundCurrency(num(sale.total) * allocation) : num(sale.total);
-      const urdAdjustment = selectedMetal ? roundCurrency(settlement.saleAdjustment * allocation) : settlement.saleAdjustment;
+      const total = selectedMetal ? allocate(sale.total) : num(sale.total);
+      const urdAdjustment = selectedMetal ? allocate(settlement.saleAdjustment) : settlement.saleAdjustment;
       return {
         saleDate: exportDate(sale.saleDate),
         invoiceNumber: sale.invoiceNumber,

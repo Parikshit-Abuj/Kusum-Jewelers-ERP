@@ -63,10 +63,11 @@ New-Item -ItemType Directory -Path $outputPath -Force | Out-Null
 # MySQL Workbench or the MySQL command line for manual backups, and no
 # production route imports this helper.
 & node $packager $projectRoot 'Kusum ERP' --platform=win32 --arch=x64 --out=$outputPath --overwrite --prune=true --asar=false --electron-zip-dir=$electronZipDirectory `
-  --ignore='^/(?!electron-main\.js$|package\.json$|package-lock\.json$|public(?:/|$)|src(?:/|$)|prisma(?:/|$)|scripts(?:/|$)|node_modules(?:/|$)).*' `
+  --ignore='^/(?!electron-main\.js$|package\.json$|public(?:/|$)|src(?:/|$)|prisma(?:/|$)|scripts(?:/|$)|node_modules(?:/|$)).*' `
   --ignore='^/scripts/(?!print-tspl\.ps1$|list-printers\.ps1$).*' `
   --ignore='^/prisma/(?!schema\.prisma$|migrations(?:/|$)).*' `
   --ignore='^/src/excel-runtime/node_modules(?:/|$)' `
+  --ignore='^/src/excel-runtime/verify-export\.mjs$' `
   --ignore='^/src/lib/sql-backup-restore\.js$'
 if ($LASTEXITCODE -ne 0) { throw 'Could not package the Electron desktop ERP.' }
 
@@ -108,6 +109,14 @@ if (Test-Path -LiteralPath $prismaNamespace) {
 $deepMerge = Join-Path $applicationNodeModules 'deepmerge-ts'
 if (Test-Path -LiteralPath $deepMerge) { Remove-Item -LiteralPath $deepMerge -Recurse -Force }
 if (Test-Path -LiteralPath $prismaCli) { throw 'Unsafe build: Prisma development CLI remained in the portable application.' }
+
+# ExcelJS pulls TypeScript declarations through its CSV helper even though the
+# desktop ERP executes plain JavaScript. Electron Packager can also leave an
+# empty @electron namespace behind. Neither namespace is needed at runtime.
+foreach ($developmentNamespace in @('@electron', '@types')) {
+  $namespacePath = Join-Path $applicationNodeModules $developmentNamespace
+  if (Test-Path -LiteralPath $namespacePath) { Remove-Item -LiteralPath $namespacePath -Recurse -Force }
+}
 
 # Neither cache is used at runtime. Removing them makes the portable folder
 # smaller without changing the ERP's production dependencies.

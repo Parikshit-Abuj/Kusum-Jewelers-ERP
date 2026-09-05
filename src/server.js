@@ -1927,6 +1927,60 @@ app.post('/sales/:id/edit', async (req, res, next) => {
       }
 
       if (sale.customerId && finalCustomerId !== sale.customerId) {
+        // A later customer receipt is linked to a sale through its ledger row,
+        // not through CashbookEntry.saleId. Move that receipt as well. When a
+        // single receipt was allocated across several sales, split the entry
+        // so the other sales continue to point to the original customer.
+        const linkedPaymentRows = await tx.customerLedger.findMany({
+          where: { saleId: sale.id, cashbookEntryId: { not: null } },
+          select: { id: true, cashbookEntryId: true, amount: true }
+        });
+        const paymentRowsByCashbook = new Map();
+        for (const row of linkedPaymentRows) {
+          const entryId = row.cashbookEntryId;
+          if (!entryId) continue;
+          const rowsForEntry = paymentRowsByCashbook.get(entryId) || [];
+          rowsForEntry.push(row);
+          paymentRowsByCashbook.set(entryId, rowsForEntry);
+        }
+        for (const [cashbookEntryId, rowsForEntry] of paymentRowsByCashbook) {
+          const entry = await tx.cashbookEntry.findUniqueOrThrow({ where: { id: cashbookEntryId } });
+          const movedAmount = roundedMoney(rowsForEntry.reduce((sum, row) => sum + Math.abs(Number(row.amount || 0)), 0));
+          const allLinkedRows = await tx.customerLedger.findMany({
+            where: { cashbookEntryId },
+            select: { id: true }
+          });
+          const movedIds = new Set(rowsForEntry.map((row) => row.id));
+          const hasOtherAllocations = allLinkedRows.some((row) => !movedIds.has(row.id));
+          if (!hasOtherAllocations) {
+            await tx.cashbookEntry.update({ where: { id: cashbookEntryId }, data: { customerId: finalCustomerId } });
+            continue;
+          }
+          if (movedAmount <= 0 || movedAmount >= roundedMoney(entry.amount)) {
+            throw new Error('This sale has a shared payment that cannot be reassigned safely. Correct the linked customer payment before editing the customer.');
+          }
+          const movedEntry = await tx.cashbookEntry.create({
+            data: {
+              entryDate: entry.entryDate,
+              type: entry.type,
+              paymentMethod: entry.paymentMethod,
+              description: entry.description,
+              amount: movedAmount,
+              reference: entry.reference,
+              notes: entry.notes,
+              customerId: finalCustomerId,
+              syncLedger: entry.syncLedger
+            }
+          });
+          await tx.cashbookEntry.update({
+            where: { id: cashbookEntryId },
+            data: { amount: roundedMoney(Number(entry.amount) - movedAmount) }
+          });
+          await tx.customerLedger.updateMany({
+            where: { id: { in: rowsForEntry.map((row) => row.id) } },
+            data: { cashbookEntryId: movedEntry.id }
+          });
+        }
         await tx.customerLedger.updateMany({ where: { saleId: sale.id }, data: { customerId: finalCustomerId } });
         await tx.cashbookEntry.updateMany({ where: { saleId: sale.id }, data: { customerId: finalCustomerId } });
         if (sale.urdPurchase) {
@@ -2803,26 +2857,38 @@ app.get('/schemes/plans/:id', async (req, res, next) => {
     });
     if (!plan) return res.status(404).render('not-found', { title: 'Scheme plan not found' });
 
-    const enrollments = await prisma.schemeEnrollment.findMany({
-      where: { schemePlanId: id },
-      include: {
-        customer: true,
-        schemePlan: true,
-        installments: {
-          orderBy: { installmentNumber: 'asc' },
-          select: { installmentNumber: true, dueDate: true, paidAmount: true, paymentDate: true, paymentMethod: true, status: true }
-        }
-      },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }]
-    });
-
-    const activeEnrollments = enrollments.filter((e) => e.status === 'ACTIVE').length;
-    const completedEnrollments = enrollments.filter((e) => e.status === 'COMPLETED').length;
-    const cancelledEnrollments = enrollments.filter((e) => e.status === 'CANCELLED').length;
-    const totalCollected = enrollments.reduce((sum, e) => sum + Number(e.totalPaid || 0), 0);
+    const enrollmentWhere = { schemePlanId: id };
+    const totalItems = await prisma.schemeEnrollment.count({ where: enrollmentWhere });
+    const pagination = paginationFor(req, totalItems, req.query.page, 50);
+    const [enrollments, enrollmentSummary] = await Promise.all([
+      prisma.schemeEnrollment.findMany({
+        where: enrollmentWhere,
+        include: {
+          customer: true,
+          installments: {
+            orderBy: { installmentNumber: 'asc' },
+            select: { installmentNumber: true, dueDate: true, paidAmount: true, paymentDate: true, paymentMethod: true, status: true }
+          }
+        },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: (pagination.page - 1) * pagination.pageSize,
+        take: pagination.pageSize
+      }),
+      prisma.schemeEnrollment.groupBy({
+        by: ['status'],
+        where: enrollmentWhere,
+        _count: { _all: true },
+        _sum: { totalPaid: true }
+      })
+    ]);
+    const summaryByStatus = new Map(enrollmentSummary.map((row) => [row.status, row]));
+    const activeEnrollments = Number(summaryByStatus.get('ACTIVE')?._count._all || 0);
+    const completedEnrollments = Number(summaryByStatus.get('COMPLETED')?._count._all || 0);
+    const cancelledEnrollments = Number(summaryByStatus.get('CANCELLED')?._count._all || 0);
+    const totalCollected = enrollmentSummary.reduce((sum, row) => sum + Number(row._sum.totalPaid || 0), 0);
 
     const stats = {
-      totalEnrollments: enrollments.length,
+      totalEnrollments: totalItems,
       activeEnrollments,
       completedEnrollments,
       cancelledEnrollments,
@@ -2833,7 +2899,8 @@ app.get('/schemes/plans/:id', async (req, res, next) => {
       title: `${plan.name} · Scheme`,
       plan,
       enrollments,
-      stats
+      stats,
+      pagination
     });
   } catch (error) { next(error); }
 });

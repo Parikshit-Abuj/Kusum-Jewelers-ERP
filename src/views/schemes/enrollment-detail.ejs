@@ -63,9 +63,15 @@
 
     <!-- Progress bar -->
     <div class="scheme-progress-bar">
-      <div class="scheme-progress-fill" style="width: <%= progressPct %>%"></div>
+      <div class="scheme-progress-fill" id="schemeProgressFill" style="width: 0;"></div>
       <span class="scheme-progress-label"><%= progressPct %>% Complete</span>
     </div>
+    <script>
+      (function() {
+        var el = document.getElementById('schemeProgressFill');
+        if (el) el.style.width = '<%= progressPct %>%';
+      })();
+    </script>
 
     <!-- Installment table -->
     <div class="table-wrap scheme-installments-table">

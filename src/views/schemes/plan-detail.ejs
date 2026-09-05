@@ -58,7 +58,7 @@
   <div class="panel-heading scheme-enrollments-heading">
     <div>
       <h2>Enrolled Customers</h2>
-      <p id="enrolledCustomerCount"><%= enrolls.length %> customer<%= enrolls.length === 1 ? '' : 's' %> enrolled in this scheme</p>
+      <p id="enrolledCustomerCount"><%= typeof pagination !== 'undefined' && pagination ? `Showing ${pagination.fromItem}–${pagination.toItem} of ${pagination.totalItems} customers` : `${enrolls.length} customer${enrolls.length === 1 ? '' : 's'} enrolled in this scheme` %></p>
     </div>
 
     <div class="scheme-filter-controls">
@@ -201,6 +201,7 @@
       <button type="button" class="button small ghost" id="resetFilterFromEmptyBtn">Reset Filters</button>
     </div>
   </div>
+  <%- include('../_pagination', { pagination: typeof pagination !== 'undefined' ? pagination : null }) %>
   <% } else { %>
   <div class="empty-state compact">
     <span>◎</span>

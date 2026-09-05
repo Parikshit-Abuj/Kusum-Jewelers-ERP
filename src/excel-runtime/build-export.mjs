@@ -168,7 +168,17 @@ function addCaRegisterWorksheet(workbook, spec, index, usedNames) {
         const cell = sheet.getCell(footerRow, columnIndex + 1);
         if (totals.has(column.key)) {
           const letter = sheet.getColumn(columnIndex + 1).letter;
-          cell.value = { formula: `SUM(${letter}${dataStart}:${letter}${footerRow - 1})` };
+          // Keep a normal Excel formula for users, but also store its result.
+          // This lets viewers/importers that do not calculate formulas show
+          // the correct grand total immediately.
+          const calculatedTotal = rows.reduce((sum, row) => {
+            const value = Number(row[column.key]);
+            return sum + (Number.isFinite(value) ? value : 0);
+          }, 0);
+          cell.value = {
+            formula: `SUM(${letter}${dataStart}:${letter}${footerRow - 1})`,
+            result: calculatedTotal
+          };
           applyCaRegisterCellFormat(cell, column.type, 'right');
           cell.font = { name: 'Arial', bold: true, color: { argb: 'FF000000' } };
         }
@@ -311,6 +321,10 @@ workbook.lastModifiedBy = 'Kusum ERP';
 workbook.company = 'Kusum ERP';
 workbook.created = new Date();
 workbook.modified = new Date();
+// Excel will recalculate formulas if a user modifies a workbook, while the
+// saved result above keeps totals available to non-calculating viewers.
+workbook.calcProperties.fullCalcOnLoad = true;
+workbook.calcProperties.forceFullCalc = true;
 const usedNames = new Set();
 sheets.forEach((sheet, index) => addWorksheet(workbook, sheet, index, usedNames));
 

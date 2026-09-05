@@ -111,6 +111,7 @@ test('writes a plain CA register without colours or filter arrows, with working 
   assert.equal(sheet.getCell('A1').value, 'KUSUM JEWELLERS');
   assert.equal(sheet.getCell('A4').value, 'DATE');
   assert.equal(sheet.getCell('D6').value.formula, 'SUM(D5:D5)');
+  assert.equal(sheet.getCell('D6').value.result, 1500);
   assert.equal(sheet.getCell('D5').numFmt, '#,##0.00;[Red]-#,##0.00');
   assert.equal(sheet.getCell('A5').numFmt, 'd-mmm-yy');
   assert.equal(sheet.getCell('A4').fill.fgColor?.argb, undefined);

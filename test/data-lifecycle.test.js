@@ -152,6 +152,25 @@ test('Gold and Silver sales sheets allocate a mixed invoice instead of duplicati
   assert.equal(gold.taxableAmount + silver.taxableAmount, 300);
 });
 
+test('Gold and Silver allocations reconcile exactly after paisa rounding', async () => {
+  const sale = {
+    id: 1, saleDate: new Date(2026, 8, 2, 10, 0), invoiceNumber: 'SB/26-27/00003', subtotal: 1, discount: 0,
+    gstAmount: 0.03, total: 1.03, urdOffset: 0, customer: { name: 'Asha' },
+    items: [
+      { productMetal: 'GOLD', grossWeight: 1, weight: 1, quantity: 1, taxableAmount: 0.005 },
+      { productMetal: 'SILVER', grossWeight: 1, weight: 1, quantity: 1, taxableAmount: 0.995 }
+    ]
+  };
+  const db = { sale: { findMany: async () => [sale] } };
+  const payload = await getExportPayload(db, 'sales', { from: '2026-09-02', to: '2026-09-02' });
+  const all = payload.sheets.find((sheet) => sheet.name === 'All').rows[0];
+  const gold = payload.sheets.find((sheet) => sheet.name === 'Gold').rows[0];
+  const silver = payload.sheets.find((sheet) => sheet.name === 'Silver').rows[0];
+  assert.equal(gold.total + silver.total, all.total);
+  assert.equal(gold.taxableAmount + silver.taxableAmount, all.taxableAmount);
+  assert.equal(gold.cgstAmount + silver.cgstAmount + gold.sgstAmount + silver.sgstAmount, all.cgstAmount + all.sgstAmount);
+});
+
 test('cashbook export retains a URD excess as a method-specific money-out entry', async () => {
   const entry = {
     id: 1, entryDate: '2026-09-02', createdAt: new Date(2026, 8, 2, 10, 0), type: 'OUT', paymentMethod: 'UPI', amount: 50,
