@@ -1,4 +1,4 @@
-<header class="page-header">
+<header class="page-header scheme-page-header">
   <div>
     <p class="eyebrow">Monthly savings plans</p>
     <h1>Schemes</h1>
@@ -14,7 +14,7 @@
 %>
 
 <!-- Summary cards -->
-<div class="cashbook-summary">
+<div class="cashbook-summary scheme-summary-grid">
   <article class="stat-card accent-gold">
     <span class="stat-label">Active Plans</span>
     <strong class="stat-positive"><%= stats.activePlans %></strong>
@@ -30,10 +30,10 @@
   </article>
 </div>
 
-<div class="content-grid scheme-layout">
+<div class="content-grid scheme-layout scheme-overview">
 
   <!-- Left: Scheme plans list -->
-  <section class="panel">
+  <section class="panel scheme-plans-panel">
     <div class="panel-heading">
       <div>
         <h2>Scheme Plans</h2>
@@ -63,11 +63,9 @@
               data-plan-desc="<%= plan.description || '' %>"
               data-plan-active="<%= plan.isActive ? '1' : '0' %>"
               data-plan-locked="<%= termsLocked ? '1' : '0' %>">Edit</button>
-            <% if (plan._count?.enrollments === 0) { %>
-            <form method="post" action="/schemes/plans/<%= plan.id %>/delete" style="display:inline;" onsubmit="return confirm('Delete this scheme plan permanently?')">
+            <form method="post" action="/schemes/plans/<%= plan.id %>/delete" style="display:inline;" onsubmit="return confirm('Delete this scheme plan permanently? All enrolled customers and their installment records will be removed. Any scheme payments will be reversed from the Cashbook. This cannot be undone.')">
               <button type="submit" class="button ghost small" style="color:#c0392b;">Delete</button>
             </form>
-            <% } %>
           </div>
         </div>
         <div class="scheme-plan-details">
@@ -92,14 +90,14 @@
         <p class="scheme-plan-desc"><%= plan.description %></p>
         <% } %>
 
-        <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
-          <div style="display:flex; align-items:center; gap:8px;">
+        <div class="scheme-plan-footer">
+          <div class="scheme-plan-primary-actions">
             <a class="button" href="/schemes/plans/<%= plan.id %>">View Scheme & Customers →</a>
             <% if (plan.isActive) { %>
             <a class="button secondary small" href="/schemes/plans/<%= plan.id %>?enroll=1">+ Enroll Customer</a>
             <% } %>
           </div>
-          <span style="font-size:12.5px; color:var(--muted); font-weight:600;"><%= plan._count?.enrollments || 0 %> customer<%= plan._count?.enrollments === 1 ? '' : 's' %> enrolled</span>
+          <span class="scheme-enrollment-count"><%= plan._count?.enrollments || 0 %> customer<%= plan._count?.enrollments === 1 ? '' : 's' %> enrolled</span>
         </div>
       </div>
       <% }) %>

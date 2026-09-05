@@ -5,16 +5,17 @@
   const today = dateInput();
 %>
 
-<header class="page-header">
+<header class="page-header scheme-page-header">
   <div>
     <p class="eyebrow">Savings Scheme</p>
-    <div style="display:flex; align-items:center; gap:12px;">
-      <h1 style="margin:0;"><%= plan.name %></h1>
+    <div class="scheme-title-row">
+      <h1><%= plan.name %></h1>
       <span class="pill <%= plan.isActive ? 'active' : 'inactive' %>"><%= plan.isActive ? 'Active' : 'Inactive' %></span>
     </div>
   </div>
   <div class="header-actions">
     <a class="button ghost" href="/schemes">← All Schemes</a>
+    <button type="button" class="button ghost" data-scheme-export-open>Export Excel</button>
     <button type="button" class="button secondary" data-edit-plan-open>Edit Plan</button>
     <% if (plan.isActive) { %>
     <button type="button" class="button" data-scheme-enroll-open>+ Enroll Customer</button>
@@ -23,7 +24,7 @@
 </header>
 
 <!-- Summary cards -->
-<div class="cashbook-summary">
+<div class="cashbook-summary scheme-summary-grid">
   <article class="stat-card">
     <span class="stat-label">Monthly Installment</span>
     <strong><%- money(plan.monthlyAmount) %></strong>
@@ -47,51 +48,46 @@
 </div>
 
 <% if (plan.description) { %>
-<div class="panel" style="margin-bottom:18px; padding:14px 20px; background:#fffcf7; border-color:#ebd9c4;">
-  <strong style="font-size:12px; text-transform:uppercase; letter-spacing:0.05em; color:var(--gold-dark);">Scheme Terms & Description:</strong>
-  <p style="margin:4px 0 0; font-size:13.5px; color:var(--ink); line-height:1.5;"><%= plan.description %></p>
+<div class="panel scheme-description-card">
+  <strong>Scheme Terms &amp; Description</strong>
+  <p><%= plan.description %></p>
 </div>
 <% } %>
 
-<section class="panel" data-duration="<%= plan.durationMonths %>">
-  <div class="panel-heading" style="margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
+<section class="panel scheme-enrollments-panel" data-duration="<%= plan.durationMonths %>">
+  <div class="panel-heading scheme-enrollments-heading">
     <div>
-      <h2 style="margin: 0;">Enrolled Customers</h2>
-      <p id="enrolledCustomerCount" style="margin: 2px 0 0; font-size: 13px; color: var(--muted);"><%= enrolls.length %> customer<%= enrolls.length === 1 ? '' : 's' %> enrolled in this scheme</p>
+      <h2>Enrolled Customers</h2>
+      <p id="enrolledCustomerCount"><%= enrolls.length %> customer<%= enrolls.length === 1 ? '' : 's' %> enrolled in this scheme</p>
     </div>
 
-    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+    <div class="scheme-filter-controls">
       <% if (enrolls.length) { %>
       <!-- Simple Search -->
-      <input type="search" id="filterSearch" placeholder="Search customer…" autocomplete="off" style="min-height: 34px; width: 160px; padding: 4px 8px; font-size: 12.5px; border: 1px solid var(--line); border-radius: 6px; margin: 0;">
+      <input type="search" id="filterSearch" placeholder="Search customer…" autocomplete="off">
 
-      <!-- Month Dropdown -->
-      <select id="filterMonth" style="min-height: 34px; padding: 4px 8px; font-size: 12.5px; font-weight: 600; border: 1.5px solid var(--gold); border-radius: 6px; background: #fff; cursor: pointer; margin: 0;">
-        <option value="ALL">All Months</option>
-        <% for (let m = 1; m <= plan.durationMonths; m++) { %>
-        <option value="<%= m %>">Month <%= m %></option>
-        <% } %>
-      </select>
+      <input type="hidden" id="filterMonth" value="ALL">
+      <button type="button" class="scheme-month-picker" id="filterMonthOpen" aria-haspopup="dialog" aria-controls="schemeMonthModal">All Months</button>
 
       <!-- Paid or Not Paid Dropdown -->
-      <select id="filterStatus" style="min-height: 34px; padding: 4px 8px; font-size: 12.5px; font-weight: 600; border: 1.5px solid var(--gold); border-radius: 6px; background: #fff; cursor: pointer; margin: 0;">
+      <select id="filterStatus">
         <option value="ALL">Paid & Not Paid</option>
         <option value="PAID">✓ Paid</option>
         <option value="NOT_PAID">❌ Not Paid</option>
       </select>
 
-      <button type="button" class="button ghost small" id="resetFiltersBtn" style="min-height: 34px; padding: 0 10px;" title="Reset filters">Reset</button>
+      <button type="button" class="button ghost small" id="resetFiltersBtn" title="Reset filters">Reset</button>
       <% } %>
 
       <% if (plan.isActive) { %>
-      <button type="button" class="button secondary small" data-scheme-enroll-open style="min-height: 34px;">+ Enroll Customer</button>
+      <button type="button" class="button secondary small" data-scheme-enroll-open>+ Enroll Customer</button>
       <% } %>
     </div>
   </div>
 
   <% if (enrolls.length) { %>
-  <div class="table-wrap" style="overflow-x:auto;">
-    <table id="enrollmentsTable" style="width:100%;">
+  <div class="table-wrap scheme-enrollments-table">
+    <table id="enrollmentsTable">
       <thead>
         <tr>
           <th style="width:130px;">Enrollment #</th>
@@ -158,7 +154,8 @@
                 <small style="color:var(--muted);"><%= enr.customer?.phone || '' %></small>
               </div>
               <% if (phoneDigits.length >= 10) { %>
-              <a href="https://wa.me/91<%= phoneDigits.slice(-10) %>" target="_blank" class="icon-button whatsapp-icon" title="Send WhatsApp Message to customer" style="flex-shrink:0;">
+              <% const schemeWaText = encodeURIComponent(`Namaste ${enr.customer?.name || 'Customer'},\n\nThis is regarding your ${plan.name} savings scheme with Kusum ERP.`); %>
+              <a href="whatsapp://send?phone=91<%= phoneDigits.slice(-10) %>&text=<%= schemeWaText %>" class="icon-button whatsapp-icon" title="Open WhatsApp Desktop chat" style="flex-shrink:0;">
                 💬
               </a>
               <% } %>
@@ -215,6 +212,47 @@
   </div>
   <% } %>
 </section>
+
+<div class="modal-overlay scheme-month-modal" id="schemeMonthModal" style="display:none;" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="schemeMonthModalTitle">
+  <section class="modal-card" role="document">
+    <header class="modal-header">
+      <div><p class="eyebrow">Customer filter</p><h2 id="schemeMonthModalTitle">Select scheme month</h2></div>
+      <button class="modal-close-btn" type="button" data-scheme-month-close aria-label="Close month picker">×</button>
+    </header>
+    <div class="modal-body scheme-month-modal-body">
+      <button type="button" class="scheme-month-option is-selected" data-month-value="ALL">All Months <small>Show every installment</small></button>
+      <% for (let m = 1; m <= plan.durationMonths; m++) { %>
+      <button type="button" class="scheme-month-option" data-month-value="<%= m %>">Month <%= m %><small>Installment <%= m %> of <%= plan.durationMonths %></small></button>
+      <% } %>
+    </div>
+  </section>
+</div>
+
+<div class="modal-overlay" id="schemeExportModal" style="display:none;" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="schemeExportTitle">
+  <section class="modal-card" role="document" style="max-width:430px;">
+    <header class="modal-header">
+      <div><p class="eyebrow"><%= plan.name %></p><h2 id="schemeExportTitle">Export Excel</h2></div>
+      <button class="modal-close-btn" type="button" data-scheme-export-close aria-label="Close export options">×</button>
+    </header>
+    <form method="get" action="/schemes/plans/<%= plan.id %>/export">
+      <div class="modal-body" style="display:grid; gap:14px;">
+        <label class="pos-field" style="margin:0;">
+          <span>Report</span>
+          <select name="month">
+            <option value="">Consolidated Scheme Report</option>
+            <% for (let month = 1; month <= plan.durationMonths; month++) { %>
+            <option value="<%= month %>">Month <%= month %> Scheme Report</option>
+            <% } %>
+          </select>
+        </label>
+      </div>
+      <footer class="modal-footer">
+        <button class="button ghost" type="button" data-scheme-export-close>Cancel</button>
+        <button class="button" type="submit">Download Excel</button>
+      </footer>
+    </form>
+  </section>
+</div>
 
 <!-- Enroll Customer Modal Popup -->
 <div class="modal-overlay scheme-enroll-modal" id="enrollCustomerModal" style="display:none;" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="enrollCustomerModalTitle">
@@ -408,6 +446,61 @@
   });
 })();
 
+// Scheme-specific export modal
+(function initSchemeExport() {
+  const modal = document.getElementById('schemeExportModal');
+  const open = document.querySelector('[data-scheme-export-open]');
+  if (!modal || !open) return;
+  let previousFocus = null;
+  const close = () => {
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+    previousFocus?.focus();
+  };
+  open.addEventListener('click', () => {
+    previousFocus = open;
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    setTimeout(() => modal.querySelector('select[name="month"]')?.focus(), 0);
+  });
+  modal.querySelectorAll('[data-scheme-export-close]').forEach((button) => button.addEventListener('click', close));
+  modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && modal.style.display === 'flex') close(); });
+})();
+
+// Month picker popup for the enrollment list
+(function initSchemeMonthPicker() {
+  const modal = document.getElementById('schemeMonthModal');
+  const openButton = document.getElementById('filterMonthOpen');
+  const monthInput = document.getElementById('filterMonth');
+  if (!modal || !openButton || !monthInput) return;
+  let previousFocus = null;
+  const close = () => {
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+    previousFocus?.focus();
+  };
+  openButton.addEventListener('click', () => {
+    previousFocus = openButton;
+    modal.querySelectorAll('[data-month-value]').forEach((option) => {
+      option.classList.toggle('is-selected', option.dataset.monthValue === monthInput.value);
+    });
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    setTimeout(() => modal.querySelector('.is-selected')?.focus(), 0);
+  });
+  modal.querySelectorAll('[data-month-value]').forEach((option) => option.addEventListener('click', () => {
+    const value = option.dataset.monthValue || 'ALL';
+    monthInput.value = value;
+    openButton.textContent = value === 'ALL' ? 'All Months' : `Month ${value}`;
+    monthInput.dispatchEvent(new Event('change', { bubbles: true }));
+    close();
+  }));
+  modal.querySelectorAll('[data-scheme-month-close]').forEach((button) => button.addEventListener('click', close));
+  modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && modal.style.display === 'flex') close(); });
+})();
+
 // Real-time Simple Customer & Installment Filtering
 (function initSimpleFilters() {
   const searchInput = document.getElementById('filterSearch');
@@ -518,6 +611,8 @@
   function resetAll() {
     if (searchInput) searchInput.value = '';
     if (monthSelect) monthSelect.value = 'ALL';
+    const monthButton = document.getElementById('filterMonthOpen');
+    if (monthButton) monthButton.textContent = 'All Months';
     if (statusSelect) statusSelect.value = 'ALL';
     applyFilters();
   }

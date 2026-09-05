@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { dateInput, roundToNearestRupee, nextDocumentNumber } = require('../src/lib/helpers');
-const { getExportPayload } = require('../src/lib/data-lifecycle');
+const { getExportPayload, getSchemePlanExportPayload } = require('../src/lib/data-lifecycle');
 
 test('uses the Windows-local calendar date instead of UTC for operational date keys', () => {
   // Constructing with local parts models the shop computer's own clock.  It
@@ -117,7 +117,8 @@ test('sales and URD CA registers keep URD settlement figures accurate', async ()
   };
 
   const sales = await getExportPayload(db, 'sales', { from: '2026-09-02', to: '2026-09-02' });
-  const salesRegister = sales.sheets.find((sheet) => sheet.name === 'Sales Register');
+  const salesRegister = sales.sheets.find((sheet) => sheet.name === 'All');
+  assert.deepEqual(sales.sheets.map((sheet) => sheet.name), ['All', 'Gold', 'Silver']);
   assert.equal(salesRegister.layout, 'ca-register');
   assert.deepEqual(salesRegister.columns.map((column) => column.label), ['Date', 'Doc-no', 'Customer', 'Gr-wt', 'Net-wt', 'Taxable-amt', 'CGST', 'SGST', 'IGST', 'Total', 'URD', 'Discount', 'Net-amt']);
   assert.equal(salesRegister.rows[0].invoiceNumber, 'SB/26-27/00001');
@@ -130,6 +131,25 @@ test('sales and URD CA registers keep URD settlement figures accurate', async ()
   assert.equal(urdRegister.rows[0].purchaseNumber, 'UR/26-27/00001');
   assert.equal(urdRegister.rows[0].totalAmount, 150);
   assert.equal(urdRegister.rows[0].remark, 'SB/26-27/00001');
+});
+
+test('Gold and Silver sales sheets allocate a mixed invoice instead of duplicating it', async () => {
+  const sale = {
+    id: 1, saleDate: new Date(2026, 8, 2, 10, 0), invoiceNumber: 'SB/26-27/00002', subtotal: 300, discount: 0,
+    gstAmount: 9, total: 309, urdOffset: 0, customer: { name: 'Asha' },
+    items: [
+      { productMetal: 'GOLD', grossWeight: 1, weight: 1, quantity: 1, taxableAmount: 100 },
+      { productMetal: 'SILVER', grossWeight: 2, weight: 2, quantity: 1, taxableAmount: 200 }
+    ]
+  };
+  const db = { sale: { findMany: async () => [sale] } };
+  const payload = await getExportPayload(db, 'sales', { from: '2026-09-02', to: '2026-09-02' });
+  const gold = payload.sheets.find((sheet) => sheet.name === 'Gold').rows[0];
+  const silver = payload.sheets.find((sheet) => sheet.name === 'Silver').rows[0];
+  assert.equal(gold.netWeight, 1);
+  assert.equal(silver.netWeight, 2);
+  assert.equal(gold.total + silver.total, 309);
+  assert.equal(gold.taxableAmount + silver.taxableAmount, 300);
 });
 
 test('cashbook export retains a URD excess as a method-specific money-out entry', async () => {
@@ -184,7 +204,7 @@ test('customer ledger export is a compact CA register with phone and running due
 
   assert.equal(sheet.layout, 'ca-register');
   assert.equal(sheet.title, 'Customer Ledger Register');
-  assert.equal(sheet.subtitle, 'From    02/09/2026   To   02/09/2026');
+  assert.equal(sheet.subtitle, 'From    2-Sep-26   To   2-Sep-26');
   assert.deepEqual(sheet.columns.map((column) => column.label), ['Sr No.', 'Date', 'Customer name', 'Phone no.', 'Due']);
   assert.deepEqual(sheet.rows.map((row) => [row.srNo, row.customerName, row.customerPhone, row.due]), [
     [1, 'Ram Sharma', '9876543210', 150],
@@ -192,7 +212,7 @@ test('customer ledger export is a compact CA register with phone and running due
   ]);
 });
 
-test('scheme export keeps enrollment and installment cashbook information in separate sheets', async () => {
+test('scheme export is a simple CA register', async () => {
   const enrollment = {
     id: 1,
     enrollmentNumber: 'SCH-20260904-0001',
@@ -208,12 +228,29 @@ test('scheme export keeps enrollment and installment cashbook information in sep
   };
   const db = { schemeEnrollment: { findMany: async () => [enrollment] } };
   const payload = await getExportPayload(db, 'schemes', { from: '2026-09-01', to: '2026-09-30' });
-  const enrollments = payload.sheets.find((sheet) => sheet.name === 'Scheme Register');
-  const installments = payload.sheets.find((sheet) => sheet.name === 'Installment Register');
-  assert.equal(enrollments.rows[0].totalPaid, 5000);
-  assert.equal(enrollments.rows[0].installmentsPending, 11);
-  assert.equal(enrollments.layout, 'ca-register');
-  assert.equal(installments.rows[0].paymentMethod, 'UPI');
-  assert.equal(installments.rows[0].cashbookReference, 'Cashbook #23');
-  assert.equal(installments.rows[1].paymentDate, '');
+  const register = payload.sheets[0];
+  assert.equal(register.layout, 'ca-register');
+  assert.deepEqual(register.columns.map((column) => column.label), ['Sr. No.', 'Scheme Doc No.', 'Name', 'Mobile Number', 'Amount']);
+  assert.deepEqual(register.rows[0], {
+    srNo: 1, enrollmentNumber: 'SCH-20260904-0001', customerName: 'Asha', customerPhone: '9999999999', amount: 5000
+  });
+});
+
+test('scheme plan monthly reports use that month payment instead of cumulative paid amount', async () => {
+  const plan = { id: 8, name: 'Gold Saving', durationMonths: 12 };
+  const enrollment = {
+    id: 1, enrollmentNumber: 'SCH-26-0001', totalPaid: 10000,
+    customer: { name: 'Asha', phone: '9999999999' },
+    installments: [{ paidAmount: 5000 }]
+  };
+  const db = {
+    schemePlan: { findUnique: async () => plan },
+    schemeEnrollment: { findMany: async () => [enrollment] }
+  };
+  const monthTwo = await getSchemePlanExportPayload(db, 8, { month: 2 });
+  const consolidated = await getSchemePlanExportPayload(db, 8, {});
+  assert.equal(monthTwo.sheets[0].name, 'Month 2');
+  assert.equal(monthTwo.rows[0].amount, 5000);
+  assert.equal(consolidated.sheets[0].name, 'Consolidated');
+  assert.equal(consolidated.rows[0].amount, 10000);
 });

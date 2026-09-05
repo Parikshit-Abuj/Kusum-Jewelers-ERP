@@ -1,0 +1,44 @@
+<div class="modal-overlay" id="<%= exportModalId %>" style="display:none;" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="<%= exportModalId %>Title">
+  <section class="modal-card" role="document" style="max-width:430px;">
+    <header class="modal-header">
+      <div><p class="eyebrow"><%= exportTitle %> register</p><h2 id="<%= exportModalId %>Title">Export Excel</h2></div>
+      <button class="modal-close-btn" type="button" data-export-modal-close aria-label="Close export options">×</button>
+    </header>
+    <form method="post" action="/data/export">
+      <input type="hidden" name="resource" value="<%= exportResource %>">
+      <div class="modal-body">
+        <div class="form-grid two">
+          <label><span>From date</span><input name="from" type="date" required value="<%= exportFrom %>"></label>
+          <label><span>To date</span><input name="to" type="date" required value="<%= exportTo %>"></label>
+        </div>
+      </div>
+      <footer class="modal-footer">
+        <button class="button ghost" type="button" data-export-modal-close>Cancel</button>
+        <button class="button" type="submit">Download Excel</button>
+      </footer>
+    </form>
+  </section>
+</div>
+
+<script>
+(() => {
+  const modal = document.getElementById('<%= exportModalId %>');
+  const open = document.querySelector('[data-export-modal-open="<%= exportModalId %>"]');
+  if (!modal || !open) return;
+  let trigger = null;
+  const close = () => {
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+    trigger?.focus();
+  };
+  open.addEventListener('click', () => {
+    trigger = open;
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    setTimeout(() => modal.querySelector('input[name="from"]')?.focus(), 0);
+  });
+  modal.querySelectorAll('[data-export-modal-close]').forEach((button) => button.addEventListener('click', close));
+  modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && modal.style.display === 'flex') close(); });
+})();
+</script>

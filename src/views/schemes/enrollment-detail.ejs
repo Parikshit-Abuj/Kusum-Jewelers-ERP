@@ -8,7 +8,7 @@
   const todayStr = dateInput();
 %>
 
-<header class="page-header">
+<header class="page-header scheme-page-header">
   <div>
     <p class="eyebrow">Scheme Enrollment</p>
     <h1><%= enrollment.enrollmentNumber %></h1>
@@ -20,7 +20,7 @@
 </header>
 
 <!-- Customer & Scheme info -->
-<div class="cashbook-summary">
+<div class="cashbook-summary scheme-summary-grid">
   <article class="stat-card">
     <span class="stat-label">Customer</span>
     <strong><%= cust.name %></strong>
@@ -44,8 +44,8 @@
 </div>
 
 <!-- Status & Progress -->
-<div class="content-grid scheme-detail-layout">
-  <section class="panel">
+<div class="content-grid scheme-detail-layout scheme-passbook-layout">
+  <section class="panel scheme-passbook-panel">
     <div class="panel-heading">
       <div>
         <h2>Installment Schedule</h2>
@@ -68,8 +68,8 @@
     </div>
 
     <!-- Installment table -->
-    <div class="table-wrap" style="margin-top: 0; overflow-x: auto;">
-      <table style="width: 100%; min-width: 700px;">
+    <div class="table-wrap scheme-installments-table">
+      <table>
         <thead>
           <tr>
             <th style="width:50px;">#</th>
@@ -105,7 +105,7 @@
             <td><%= inst.paymentMethod ? inst.paymentMethod.replace('_', ' ') : '—' %></td>
             <td>
               <% if ((inst.status === 'PENDING' || displayStatus === 'OVERDUE') && enrollment.status === 'ACTIVE') { %>
-              <form method="post" action="/schemes/enrollments/<%= enrollment.id %>/pay" style="display:flex; gap:4px; align-items:center;">
+              <form method="post" action="/schemes/enrollments/<%= enrollment.id %>/pay" class="scheme-pay-form">
                 <input type="hidden" name="installmentId" value="<%= inst.id %>">
                 <select name="paymentMethod" style="font-size:12px; padding:3px 6px; border-radius:4px; border:1px solid #d5c9b1;">
                   <option value="CASH">Cash</option>

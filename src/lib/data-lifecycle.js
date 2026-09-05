@@ -81,11 +81,12 @@ function exportDate(value) { return dateInput(value); }
 
 function displayDate(value) {
   const [year, month, day] = String(value).split('-');
-  return `${day}-${month}-${year}`;
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${Number(day)}-${monthNames[Number(month) - 1] || month}-${String(year).slice(-2)}`;
 }
 
 function registerPeriod(range) {
-  return `From    ${displayDate(range.from).replaceAll('-', '/')}   To   ${displayDate(range.to).replaceAll('-', '/')}`;
+  return `From    ${displayDate(range.from)}   To   ${displayDate(range.to)}`;
 }
 
 function enumLabel(value) {
@@ -128,6 +129,73 @@ function pruneEmptyColumns(columns, rows) {
   // Financial registers must keep a stable schema. A zero GST, balance,
   // stone weight or payment column is meaningful and must not disappear.
   return columns;
+}
+
+function salesExportScope(value) {
+  const scope = String(value || 'ALL').trim().toUpperCase();
+  return ['ALL', 'GOLD', 'SILVER'].includes(scope) ? scope : 'ALL';
+}
+
+function salesRegisterColumns() {
+  return [
+    col.date('saleDate', 'Date'),
+    col.identifier('invoiceNumber', 'Doc-no', 20),
+    col.text('customerName', 'Customer', 30),
+    col.weight('grossWeight', 'Gr-wt'),
+    col.weight('netWeight', 'Net-wt'),
+    col.currency('taxableAmount', 'Taxable-amt'),
+    col.currency('cgstAmount', 'CGST'),
+    col.currency('sgstAmount', 'SGST'),
+    col.currency('igstAmount', 'IGST'),
+    col.currency('total', 'Total'),
+    col.currency('urdAdjustment', 'URD'),
+    col.currency('discount', 'Discount'),
+    col.currency('netAmount', 'Net-amt')
+  ];
+}
+
+function roundCurrency(value) {
+  return Math.round(num(value) * 100) / 100;
+}
+
+function saleRegisterRows(sales, metal = null) {
+  const selectedMetal = metal ? String(metal).toUpperCase() : null;
+  return sales
+    .filter((sale) => !selectedMetal || sale.items.some((item) => item.productMetal === selectedMetal))
+    .map((sale) => {
+      const settlement = urdSettlement(sale.total, sale.urdOffset);
+      const items = selectedMetal ? sale.items.filter((item) => item.productMetal === selectedMetal) : sale.items;
+      const grossWeight = items.reduce((sum, item) => sum + num(item.grossWeight) * Number(item.quantity || 0), 0);
+      const netWeight = items.reduce((sum, item) => sum + num(item.weight) * Number(item.quantity || 0), 0);
+      const allItemTaxable = sale.items.reduce((sum, item) => sum + num(item.taxableAmount), 0);
+      const selectedItemTaxable = items.reduce((sum, item) => sum + num(item.taxableAmount), 0);
+      const allocation = selectedMetal && allItemTaxable > 0 ? selectedItemTaxable / allItemTaxable : 1;
+      const discount = selectedMetal ? roundCurrency(num(sale.discount) * allocation) : num(sale.discount);
+      const taxableAmount = selectedMetal
+        ? roundCurrency(Math.max(0, selectedItemTaxable - discount))
+        : Math.max(0, num(sale.subtotal) - num(sale.discount));
+      const gstAmount = selectedMetal
+        ? roundCurrency(num(sale.gstAmount) * allocation)
+        : num(sale.gstAmount);
+      const cgstAmount = Math.round((gstAmount / 2) * 100) / 100;
+      const total = selectedMetal ? roundCurrency(num(sale.total) * allocation) : num(sale.total);
+      const urdAdjustment = selectedMetal ? roundCurrency(settlement.saleAdjustment * allocation) : settlement.saleAdjustment;
+      return {
+        saleDate: exportDate(sale.saleDate),
+        invoiceNumber: sale.invoiceNumber,
+        customerName: sale.customer?.name || 'Walk-in customer',
+        grossWeight,
+        netWeight,
+        taxableAmount,
+        cgstAmount,
+        sgstAmount: gstAmount - cgstAmount,
+        igstAmount: 0,
+        total,
+        urdAdjustment,
+        discount,
+        netAmount: Math.max(0, roundCurrency(total - urdAdjustment))
+      };
+    });
 }
 
 const CASHBOOK_METHODS = [
@@ -244,57 +312,23 @@ async function getExportPayload(db, key, range, options = {}) {
         take: MAX_SOURCE_ROWS + 1
       });
       assertExportRows(sales, 'Sales register');
-
-      // One clean, invoice-wise CA register.  The financial columns match the
-      // supplied Sales Register reference rather than exporting a cluttered
-      // dashboard or a second item-detail worksheet.
-      const rows = sales.map((sale) => {
-        const settlement = urdSettlement(sale.total, sale.urdOffset);
-        const grossWeight = sale.items.reduce((sum, item) => sum + num(item.grossWeight) * Number(item.quantity || 0), 0);
-        const netWeight = sale.items.reduce((sum, item) => sum + num(item.weight) * Number(item.quantity || 0), 0);
-        const gstAmount = num(sale.gstAmount);
-        const cgstAmount = Math.round((gstAmount / 2) * 100) / 100;
+      const scope = salesExportScope(options.salesMetal);
+      const selectedMetals = scope === 'ALL' ? [null, 'GOLD', 'SILVER'] : [scope];
+      const columns = salesRegisterColumns();
+      const sheets = selectedMetals.map((metal) => {
+        const label = metal ? `${metal[0]}${metal.slice(1).toLowerCase()}` : 'All';
+        const rows = saleRegisterRows(sales, metal);
         return {
-          saleDate: exportDate(sale.saleDate),
-          invoiceNumber: sale.invoiceNumber,
-          customerName: sale.customer?.name || 'Walk-in customer',
-          grossWeight,
-          netWeight,
-          taxableAmount: Math.max(0, num(sale.subtotal) - num(sale.discount)),
-          cgstAmount,
-          sgstAmount: gstAmount - cgstAmount,
-          igstAmount: 0,
-          total: num(sale.total),
-          urdAdjustment: settlement.saleAdjustment,
-          discount: num(sale.discount),
-          netAmount: settlement.netPayable
+          name: label,
+          title: `${label} Sales Register`,
+          subtitle: registerPeriod(range),
+          layout: 'ca-register',
+          columns,
+          rows,
+          totalKeys: ['grossWeight', 'netWeight', 'taxableAmount', 'cgstAmount', 'sgstAmount', 'igstAmount', 'total', 'urdAdjustment', 'discount', 'netAmount']
         };
       });
-      const columns = [
-        col.date('saleDate', 'Date'),
-        col.identifier('invoiceNumber', 'Doc-no', 20),
-        col.text('customerName', 'Customer', 30),
-        col.weight('grossWeight', 'Gr-wt'),
-        col.weight('netWeight', 'Net-wt'),
-        col.currency('taxableAmount', 'Taxable-amt'),
-        col.currency('cgstAmount', 'CGST'),
-        col.currency('sgstAmount', 'SGST'),
-        col.currency('igstAmount', 'IGST'),
-        col.currency('total', 'Total'),
-        col.currency('urdAdjustment', 'URD'),
-        col.currency('discount', 'Discount'),
-        col.currency('netAmount', 'Net-amt')
-      ];
-      const sheet = {
-        name: 'Sales Register',
-        title: '01. Sales Register',
-        subtitle: registerPeriod(range),
-        layout: 'ca-register',
-        columns,
-        rows,
-        totalKeys: ['grossWeight', 'netWeight', 'taxableAmount', 'cgstAmount', 'sgstAmount', 'igstAmount', 'total', 'urdAdjustment', 'discount', 'netAmount']
-      };
-      return exportEnvelope(resource, range, columns, rows, { sheets: [sheet] });
+      return exportEnvelope(resource, range, columns, sheets[0].rows, { sheets });
     }
 
     case 'top-selling-items': {
@@ -767,101 +801,29 @@ async function getExportPayload(db, key, range, options = {}) {
       const enrollments = await db.schemeEnrollment.findMany({
         where: { startDate: dateTimeRange(range) },
         orderBy: [{ startDate: 'asc' }, { id: 'asc' }],
-        include: {
-          customer: true,
-          schemePlan: true,
-          installments: { orderBy: { installmentNumber: 'asc' } }
-        },
+        include: { customer: true },
         take: MAX_SOURCE_ROWS + 1
       });
       assertExportRows(enrollments, 'Savings scheme register');
-      const installmentTotal = enrollments.reduce((sum, enrollment) => sum + enrollment.installments.length, 0);
-      if (installmentTotal > MAX_SOURCE_ROWS) {
-        throw new Error(`Savings scheme installment register has more than ${MAX_SOURCE_ROWS.toLocaleString('en-IN')} records in this range. Choose a shorter date range so the export remains reliable.`);
-      }
-
-      const enrollmentRows = enrollments.map((enrollment) => {
-        const totalInstallments = enrollment.schemePlan.durationMonths;
-        const pending = Math.max(0, totalInstallments - Number(enrollment.installmentsPaid || 0));
-        return {
-          enrollmentNumber: enrollment.enrollmentNumber,
-          customerPhone: enrollment.customer.phone || '',
-          customerName: enrollment.customer.name,
-          schemeName: enrollment.schemePlan.name,
-          startDate: exportDate(enrollment.startDate),
-          endDate: exportDate(enrollment.endDate),
-          status: enumLabel(enrollment.status),
-          durationMonths: totalInstallments,
-          monthlyAmount: num(enrollment.schemePlan.monthlyAmount),
-          totalSchemeAmount: num(enrollment.schemePlan.maturityAmount),
-          installmentsPaid: Number(enrollment.installmentsPaid || 0),
-          installmentsPending: pending,
-          totalPaid: num(enrollment.totalPaid),
-          totalPending: Math.max(0, num(enrollment.schemePlan.monthlyAmount) * totalInstallments - num(enrollment.totalPaid)),
-          notes: str(enrollment.notes)
-        };
-      });
-      const installmentRows = enrollments.flatMap((enrollment) => enrollment.installments.map((installment) => ({
+      const columns = [
+        col.integer('srNo', 'Sr. No.', 9),
+        col.identifier('enrollmentNumber', 'Scheme Doc No.', 22),
+        col.text('customerName', 'Name', 28),
+        col.identifier('customerPhone', 'Mobile Number', 16),
+        col.currency('amount', 'Amount')
+      ];
+      const rows = enrollments.map((enrollment, index) => ({
+        srNo: index + 1,
         enrollmentNumber: enrollment.enrollmentNumber,
-        customerPhone: enrollment.customer.phone || '',
-        customerName: enrollment.customer.name,
-        schemeName: enrollment.schemePlan.name,
-        installmentNumber: installment.installmentNumber,
-        dueDate: installment.dueDate,
-        status: installment.status,
-        scheduledAmount: num(enrollment.schemePlan.monthlyAmount),
-        paidAmount: num(installment.paidAmount),
-        paymentDate: installment.paymentDate || '',
-        paymentMethod: paymentLabel(installment.paymentMethod),
-        cashbookReference: installment.cashbookEntryId ? `Cashbook #${installment.cashbookEntryId}` : '',
-        notes: str(installment.notes)
-      })));
-
-      const enrollmentColumns = [
-        col.date('startDate', 'Date'),
-        col.identifier('enrollmentNumber', 'Scheme no.', 22),
-        col.text('customerName', 'Customer', 26),
-        col.text('schemeName', 'Scheme', 32),
-        col.integer('durationMonths', 'Months', 12),
-        col.currency('monthlyAmount', 'Monthly-amt'),
-        col.currency('totalSchemeAmount', 'Total-amt'),
-        col.integer('installmentsPaid', 'Paid-ins'),
-        col.integer('installmentsPending', 'Pending-ins', 14),
-        col.currency('totalPaid', 'Paid-amt'),
-        col.currency('totalPending', 'Pending-amt'),
-        col.date('endDate', 'End-date'),
-        col.text('status', 'Status', 14),
-        col.text('notes', 'Remark', 30)
-      ];
-      const installmentColumns = [
-        col.date('dueDate', 'Due-date'),
-        col.identifier('enrollmentNumber', 'Scheme no.', 22),
-        col.text('customerName', 'Customer', 26),
-        col.text('schemeName', 'Scheme', 32),
-        col.integer('installmentNumber', 'Installment', 14),
-        col.currency('scheduledAmount', 'Scheduled-amt'),
-        col.currency('paidAmount', 'Paid-amt'),
-        col.date('paymentDate', 'Payment-date'),
-        col.text('paymentMethod', 'Payment-mode', 16),
-        col.text('status', 'Status', 14),
-        col.identifier('cashbookReference', 'Cashbook-ref', 18),
-        col.text('notes', 'Remark', 30)
-      ];
-      return exportEnvelope(resource, range, enrollmentColumns, enrollmentRows, {
-        sheets: [
-          {
-            name: 'Scheme Register', title: 'Jewellery Savings Scheme Register',
-            subtitle: registerPeriod(range), layout: 'ca-register',
-            columns: enrollmentColumns, rows: enrollmentRows,
-            totalKeys: ['monthlyAmount', 'totalSchemeAmount', 'totalPaid', 'totalPending']
-          },
-          {
-            name: 'Installment Register', title: 'Scheme Installment Register',
-            subtitle: registerPeriod(range), layout: 'ca-register',
-            columns: installmentColumns, rows: installmentRows,
-            totalKeys: ['scheduledAmount', 'paidAmount']
-          }
-        ]
+        customerName: enrollment.customer?.name || 'Unknown customer',
+        customerPhone: enrollment.customer?.phone || '',
+        amount: num(enrollment.totalPaid)
+      }));
+      return exportEnvelope(resource, range, columns, rows, {
+        sheets: [{
+          name: 'Scheme Register', title: 'Scheme Register', subtitle: registerPeriod(range), layout: 'ca-register',
+          columns, rows, totalKeys: ['amount']
+        }]
       });
     }
 
@@ -959,6 +921,66 @@ async function getExportPayload(db, key, range, options = {}) {
   }
 }
 
+async function getSchemePlanExportPayload(db, schemePlanId, options = {}) {
+  const planId = Number(schemePlanId);
+  if (!Number.isInteger(planId) || planId < 1) throw new Error('Choose a valid scheme plan.');
+  const plan = await db.schemePlan.findUnique({ where: { id: planId } });
+  if (!plan) throw new Error('Scheme plan not found.');
+
+  const requestedMonth = String(options.month || '').trim();
+  const month = requestedMonth ? Number(requestedMonth) : null;
+  if (month !== null && (!Number.isInteger(month) || month < 1 || month > plan.durationMonths)) {
+    throw new Error(`Choose a scheme month from 1 to ${plan.durationMonths}.`);
+  }
+
+  const enrollments = await db.schemeEnrollment.findMany({
+    where: { schemePlanId: planId },
+    orderBy: [{ enrollmentNumber: 'asc' }, { id: 'asc' }],
+    include: {
+      customer: true,
+      installments: month === null
+        ? false
+        : { where: { installmentNumber: month }, select: { paidAmount: true } }
+    },
+    take: MAX_SOURCE_ROWS + 1
+  });
+  assertExportRows(enrollments, 'Scheme report');
+
+  const columns = [
+    col.integer('srNo', 'Sr. No.', 9),
+    col.identifier('enrollmentNumber', 'Scheme Doc No.', 22),
+    col.text('customerName', 'Name', 28),
+    col.identifier('customerPhone', 'Mobile Number', 16),
+    col.currency('amount', 'Amount')
+  ];
+  const rows = enrollments.map((enrollment, index) => ({
+    srNo: index + 1,
+    enrollmentNumber: enrollment.enrollmentNumber,
+    customerName: enrollment.customer?.name || 'Unknown customer',
+    customerPhone: enrollment.customer?.phone || '',
+    amount: month === null
+      ? num(enrollment.totalPaid)
+      : num(enrollment.installments?.[0]?.paidAmount)
+  }));
+  const reportLabel = month === null ? 'Consolidated Scheme Report' : `Month ${month} Scheme Report`;
+  return {
+    title: `Kusum ERP - ${plan.name}`,
+    subtitle: `${plan.name} · ${reportLabel}`,
+    filename: `scheme-${planId}-${month === null ? 'consolidated' : `month-${month}`}.xlsx`,
+    columns,
+    rows,
+    sheets: [{
+      name: month === null ? 'Consolidated' : `Month ${month}`,
+      title: reportLabel,
+      subtitle: `${plan.name} · ${reportLabel}`,
+      layout: 'ca-register',
+      columns,
+      rows,
+      totalKeys: ['amount']
+    }]
+  };
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  ARCHIVE (DELETE) DATA
 // ═══════════════════════════════════════════════════════════════
@@ -1037,4 +1059,4 @@ async function archiveData(db, key, range) {
   });
 }
 
-module.exports = { RESOURCE_LIST, resourceFor, parseDateRange, getExportPayload, archiveData };
+module.exports = { RESOURCE_LIST, resourceFor, parseDateRange, getExportPayload, getSchemePlanExportPayload, archiveData };

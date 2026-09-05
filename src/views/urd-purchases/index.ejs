@@ -3,7 +3,7 @@
     <p class="eyebrow">Old gold / silver buying</p>
     <h1>URD Purchases</h1>
   </div>
-  <div class="header-actions"><a class="button ghost" href="/data-management?resource=urd">Export / archive</a><a class="button" href="/urd-purchases/new">+ New purchase</a></div>
+  <div class="header-actions"><button class="button ghost" type="button" data-export-modal-open="urdExportModal">Export Excel</button><a class="button" href="/urd-purchases/new">+ New purchase</a></div>
 </header>
 
 <% const qVal = typeof q !== 'undefined' ? q : ''; const currentState = typeof state !== 'undefined' ? state : 'ACTIVE'; const purchaseList = typeof purchases !== 'undefined' && Array.isArray(purchases) ? purchases : []; %>
@@ -94,3 +94,5 @@
     <% } %>
   <% } %>
 </section>
+
+<%- include('../_export_modal', { exportModalId: 'urdExportModal', exportResource: 'urd', exportTitle: 'URD Purchase', exportFrom: dateInput(), exportTo: dateInput() }) %>

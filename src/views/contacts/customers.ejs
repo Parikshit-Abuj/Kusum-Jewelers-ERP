@@ -4,7 +4,7 @@
     <h1>Customers</h1>
   </div>
   <div class="header-actions">
-    <a class="button ghost" href="/data-management?resource=customers">Export / archive</a>
+    <button class="button ghost" type="button" data-export-modal-open="customersExportModal">Export Excel</button>
     <button type="button" class="button" data-customer-add-open>+ Add Customer</button>
   </div>
 </header>
@@ -113,6 +113,8 @@
     </form>
   </div>
 </div>
+
+<%- include('../_export_modal', { exportModalId: 'customersExportModal', exportResource: 'customers', exportTitle: 'Customer directory', exportFrom: dateInput(), exportTo: dateInput() }) %>
 
 <script>
 // Add Customer modal popup

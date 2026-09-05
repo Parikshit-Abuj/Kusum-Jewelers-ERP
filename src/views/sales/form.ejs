@@ -903,8 +903,10 @@
               </div>
               <div class="pos-field">
                 <label>Purity</label>
-                <select name="urdPurity" data-urd-purity-select><option value="22K" <%= (editingSale && editSale.urd?.purity === '22K') ? 'selected' : '' %>>22K</option><option value="24K" <%= (editingSale && editSale.urd?.purity === '24K') ? 'selected' : '' %>>24K</option></select>
-                <input name="urdPurity" data-urd-purity-manual hidden disabled maxlength="50" placeholder="Enter silver purity" value="<%= (editingSale && editSale.urd?.metal === 'SILVER') ? editSale.urd.purity : '' %>">
+                <% const editUrdPurity = editingSale && editSale.urd?.purity ? String(editSale.urd.purity).toUpperCase() : ''; %>
+                <% const customGoldUrdPurity = editingSale && editSale.urd?.metal === 'GOLD' && !['22K', '24K'].includes(editUrdPurity); %>
+                <select name="urdPurity" data-urd-purity-select><option value="22K" <%= editUrdPurity === '22K' ? 'selected' : '' %>>22K</option><option value="24K" <%= editUrdPurity === '24K' ? 'selected' : '' %>>24K</option><option value="CUSTOM" <%= customGoldUrdPurity ? 'selected' : '' %>>Other / Enter manually</option></select>
+                <input name="urdPurity" data-urd-purity-manual hidden disabled maxlength="50" placeholder="Enter purity" value="<%= (editingSale && (editSale.urd?.metal === 'SILVER' || customGoldUrdPurity)) ? editSale.urd.purity : '' %>">
               </div>
               <div class="pos-field">
                 <label>Gross Wt. (g)</label>

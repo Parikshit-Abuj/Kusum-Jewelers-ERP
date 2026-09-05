@@ -1077,6 +1077,9 @@ document.querySelectorAll('.flash').forEach((el) => {
 
   function updateUrdRate() {
     if (!urdRate || !urdMetal) return;
+    // A custom purity has no reliable daily-rate mapping. Keep the rate
+    // editable instead of silently applying the 22K price to another grade.
+    if (urdMetal.value === 'GOLD' && urdPuritySelect?.value === 'CUSTOM') return;
     const rate = urdMetal.value === 'SILVER' ? n(urdRate.dataset.rateSilver)
       : urdPuritySelect?.value === '24K' ? n(urdRate.dataset.rate24)
         : n(urdRate.dataset.rate22);
@@ -1085,7 +1088,7 @@ document.querySelectorAll('.flash').forEach((el) => {
 
   function syncUrdPurityControl() {
     if (!urdMetal || !urdPuritySelect || !urdPurityManual) return;
-    const isManual = urdMetal.value !== 'GOLD';
+    const isManual = urdMetal.value !== 'GOLD' || urdPuritySelect.value === 'CUSTOM';
     const fieldsEnabled = Boolean(urdEnabled?.checked);
     urdPuritySelect.hidden = isManual;
     urdPuritySelect.disabled = !fieldsEnabled || isManual;

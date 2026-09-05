@@ -1,7 +1,7 @@
 <header class="page-header">
   <div><p class="eyebrow">Stock control</p><h1>Inventory</h1></div>
   <div class="header-actions">
-    <a class="button ghost" href="/data-management?resource=inventory">Export / archive</a>
+    <button class="button ghost" type="button" data-export-modal-open="inventoryExportModal">Export Excel</button>
     <button class="button ghost" type="button" data-printer-setup-open>Printer setup</button>
     <button class="button ghost" type="submit" form="label-test-form">Test TSC</button>
     <button class="button secondary" type="submit" form="label-print-form" data-label-print-button disabled>▥ Send TSPL labels</button>
@@ -81,3 +81,5 @@
     </form>
   </section>
 </div>
+
+<%- include('../_export_modal', { exportModalId: 'inventoryExportModal', exportResource: 'inventory', exportTitle: 'Inventory', exportFrom: dateInput(), exportTo: dateInput() }) %>

@@ -23,7 +23,7 @@ const { buildTsplJob, checkTcpPrinter, sendTsplToPrinter } = require('./lib/tspl
 const { resolveTscPrinter, cachedTscPrinterStatus } = require('./lib/windows-printers');
 const { provisionShopDatabase, enableNetworkSharing, updatePrinterConfiguration, updateLoginConfiguration, parseDatabaseConnection, isLocalHost, runBundledMigrations, verifyClientConnection } = require('./lib/shop-provisioning');
 const { buildExcelExport } = require('./lib/excel-export');
-const { RESOURCE_LIST, resourceFor, parseDateRange, getExportPayload, archiveData } = require('./lib/data-lifecycle');
+const { RESOURCE_LIST, resourceFor, parseDateRange, getExportPayload, getSchemePlanExportPayload, archiveData } = require('./lib/data-lifecycle');
 const { paymentMethodFromComponents, reverseAndDeleteCashbookEntry, deleteSettledUrdPurchase, cancelUrdPurchase, cancelSale } = require('./lib/accounting-reversal');
 const { urdSettlement } = require('./lib/urd-settlement');
 const { productSearchClauses } = require('./lib/product-search-filters');
@@ -691,7 +691,7 @@ app.post('/data/export', async (req, res) => {
   try {
     resource = resourceFor(req.body.resource);
     range = parseDateRange(req.body);
-    const payload = await getExportPayload(prisma, resource.key, range);
+    const payload = await getExportPayload(prisma, resource.key, range, { salesMetal: req.body.salesMetal });
     const workbook = await buildExcelExport(payload);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${payload.filename}"`);
@@ -1170,10 +1170,7 @@ app.delete('/api/inventory/batch-piece/:id', async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid piece ID.' });
-    let batchDocNo = null;
-    const enrolledPlan = await prisma.$transaction(async (tx) => {
-      const prod = await tx.product.findUnique({ where: { id }, select: { batchDocNo: true } });
-      batchDocNo = prod?.batchDocNo || null;
+    await prisma.$transaction(async (tx) => {
       await tx.stockMovement.deleteMany({ where: { productId: id } });
       await tx.product.delete({ where: { id } });
     });
@@ -2841,6 +2838,19 @@ app.get('/schemes/plans/:id', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+app.get('/schemes/plans/:id/export', async (req, res) => {
+  const planId = Number(req.params.id);
+  try {
+    const payload = await getSchemePlanExportPayload(prisma, planId, { month: req.query.month });
+    const workbook = await buildExcelExport(payload);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${payload.filename}"`);
+    res.send(workbook);
+  } catch (error) {
+    redirectWith(res, `/schemes/plans/${planId}`, 'error', error.message || 'Could not create the scheme Excel report.');
+  }
+});
+
 app.get('/schemes/plans/:id/edit', (req, res) => {
   res.redirect(`/schemes/plans/${req.params.id}?edit=1`);
 });
@@ -2910,11 +2920,26 @@ app.post('/schemes/plans/:id/edit', async (req, res, next) => {
 app.post('/schemes/plans/:id/delete', async (req, res, next) => {
   try {
     const id = Number(req.params.id);
-    const plan = await prisma.schemePlan.findUnique({ where: { id }, include: { _count: { select: { enrollments: true } } } });
-    if (!plan) return redirectWith(res, '/schemes', 'error', 'Scheme plan not found.');
-    if (plan._count.enrollments > 0) return redirectWith(res, '/schemes', 'error', 'Cannot delete a plan that has enrollments. Deactivate it instead.');
-    await prisma.schemePlan.delete({ where: { id } });
-    redirectWith(res, '/schemes', 'message', `Scheme plan "${plan.name}" deleted.`);
+    const result = await prisma.$transaction(async (tx) => {
+      const lockedPlans = await tx.$queryRaw`SELECT id FROM \`SchemePlan\` WHERE id = ${id} FOR UPDATE`;
+      if (!lockedPlans.length) throw new Error('Scheme plan not found.');
+      const plan = await tx.schemePlan.findUniqueOrThrow({ where: { id }, select: { id: true, name: true } });
+      const enrollments = await tx.schemeEnrollment.findMany({
+        where: { schemePlanId: id },
+        select: { id: true, installments: { where: { cashbookEntryId: { not: null } }, select: { cashbookEntryId: true } } }
+      });
+      const cashbookEntryIds = [...new Set(enrollments.flatMap((enrollment) => enrollment.installments.map((installment) => installment.cashbookEntryId)).filter(Boolean))];
+      for (const cashbookEntryId of cashbookEntryIds) {
+        await reverseAndDeleteCashbookEntry(tx, cashbookEntryId);
+      }
+      if (enrollments.length) await tx.schemeEnrollment.deleteMany({ where: { schemePlanId: id } });
+      await tx.schemePlan.delete({ where: { id } });
+      return { plan, enrollmentCount: enrollments.length, paymentCount: cashbookEntryIds.length };
+    });
+    const details = result.enrollmentCount
+      ? ` ${result.enrollmentCount} enrollment${result.enrollmentCount === 1 ? '' : 's'} and ${result.paymentCount} Cashbook payment${result.paymentCount === 1 ? '' : 's'} were reversed.`
+      : '';
+    redirectWith(res, '/schemes', 'message', `Scheme plan "${result.plan.name}" deleted.${details}`);
   } catch (error) { redirectWith(res, '/schemes', 'error', error.message || 'Could not delete scheme plan.'); }
 });
 
@@ -2928,7 +2953,7 @@ app.post('/schemes/:planId/enroll', async (req, res, next) => {
     const startDateInput = req.body.startDate || dateInput();
     const startDate = dateTimeFromInput(startDateInput);
 
-    await prisma.$transaction(async (tx) => {
+    const enrolledPlan = await prisma.$transaction(async (tx) => {
       // Lock the plan so a deactivated plan cannot receive a new enrollment
       // from another counter at the same time.
       const lockedPlans = await tx.$queryRaw`SELECT id FROM \`SchemePlan\` WHERE id = ${planId} FOR UPDATE`;

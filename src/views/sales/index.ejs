@@ -1,5 +1,5 @@
-<header class="page-header"><div><p class="eyebrow">Billing desk</p><h1>Sales</h1></div><div class="header-actions"><a class="button ghost" href="/data-management?resource=sales">Export / archive</a><a class="button" href="/sales/new">+ Create invoice</a></div></header>
-<% const f = typeof filters !== 'undefined' && filters ? filters : {}; const pager = typeof pagination !== 'undefined' && pagination ? pagination : { totalItems: sales.length }; %>
+<header class="page-header"><div><p class="eyebrow">Billing desk</p><h1>Sales</h1></div><div class="header-actions"><button class="button ghost" type="button" data-sales-export-open>Export Excel</button><a class="button" href="/sales/new">+ Create invoice</a></div></header>
+<% const f = typeof filters !== 'undefined' && filters ? filters : {}; const pager = typeof pagination !== 'undefined' && pagination ? pagination : { totalItems: sales.length }; const salesExportFrom = f.from || dateInput(); const salesExportTo = f.to || dateInput(); %>
 <section class="panel"><div class="panel-heading"><div><h2>Invoices</h2></div></div>
   <!-- Search / filter bar -->
   <div class="sales-filter">
@@ -71,3 +71,46 @@
     <% } %>
   <% } %>
 </section>
+
+<div class="modal-overlay" id="salesExportModal" style="display:none;" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="salesExportTitle">
+  <section class="modal-card" role="document" style="max-width:440px;">
+    <header class="modal-header">
+      <div><p class="eyebrow">Sales register</p><h2 id="salesExportTitle">Export Excel</h2></div>
+      <button class="modal-close-btn" type="button" data-sales-export-close aria-label="Close export options">×</button>
+    </header>
+    <form method="post" action="/data/export">
+      <input type="hidden" name="resource" value="sales">
+      <div class="modal-body" style="display:grid; gap:14px;">
+        <div class="form-grid two">
+          <label><span>From date</span><input name="from" type="date" required value="<%= salesExportFrom %>"></label>
+          <label><span>To date</span><input name="to" type="date" required value="<%= salesExportTo %>"></label>
+        </div>
+        <p class="muted" style="margin:0; font-size:13px;">Choose the register to download.</p>
+      </div>
+      <footer class="modal-footer" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px;">
+        <button class="button secondary small" type="submit" name="salesMetal" value="ALL">Export All</button>
+        <button class="button secondary small" type="submit" name="salesMetal" value="GOLD">Export Gold</button>
+        <button class="button secondary small" type="submit" name="salesMetal" value="SILVER">Export Silver</button>
+      </footer>
+    </form>
+  </section>
+</div>
+
+<script>
+(() => {
+  const modal = document.getElementById('salesExportModal');
+  const open = document.querySelector('[data-sales-export-open]');
+  if (!modal || !open) return;
+  let trigger = null;
+  const close = () => { modal.style.display = 'none'; modal.setAttribute('aria-hidden', 'true'); trigger?.focus(); };
+  open.addEventListener('click', () => {
+    trigger = open;
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    window.setTimeout(() => modal.querySelector('input[name="from"]')?.focus(), 0);
+  });
+  modal.querySelectorAll('[data-sales-export-close]').forEach((button) => button.addEventListener('click', close));
+  modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && modal.style.display !== 'none') close(); });
+})();
+</script>

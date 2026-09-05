@@ -15,8 +15,8 @@
   </div></section>
   <section class="form-section"><h2>Weight &amp; rate</h2><div class="form-grid four">
     <label>Purity
-      <select name="purity" data-urd-purity-select><option value="22K" selected>22K Gold</option><option value="24K">24K Gold</option><option value="18K">18K Gold</option></select>
-      <input name="purity" data-urd-purity-manual hidden disabled maxlength="50" placeholder="Enter silver purity">
+      <select name="purity" data-urd-purity-select><option value="22K" selected>22K Gold</option><option value="24K">24K Gold</option><option value="CUSTOM">Other / Enter manually</option></select>
+      <input name="purity" data-urd-purity-manual hidden disabled maxlength="50" placeholder="Enter purity">
     </label>
     <label>Gross weight (g)<input name="grossWeight" type="number" step="0.001" min="0" placeholder="0.000" data-urd-gross></label>
     <label>Net weight (g) *<input name="netWeight" type="number" step="0.001" min="0.001" required placeholder="0.000" data-urd-net></label>
@@ -38,6 +38,10 @@
   let payoutEdited = false;
   function recalc() { const total = (parseFloat(netInput.value) || 0) * (parseFloat(rateInput.value) || 0); amountInput.value = total.toFixed(2); if (!payoutEdited) paidInput.value = total.toFixed(2); totalDisplay.textContent = '₹' + total.toLocaleString('en-IN', { minimumFractionDigits: 2 }); }
   function updateRate() {
+    if (metalSel.value === 'GOLD' && puritySel.value === 'CUSTOM') {
+      recalc();
+      return;
+    }
     const rate = metalSel.value === 'SILVER' ? Number(rateInput.dataset.rateSilver)
       : puritySel.value === '24K' ? Number(rateInput.dataset.rate24)
         : Number(rateInput.dataset.rate22);
@@ -45,13 +49,13 @@
     recalc();
   }
   function syncPurityControl() {
-    const isManual = metalSel.value !== 'GOLD';
+    const isManual = metalSel.value !== 'GOLD' || puritySel.value === 'CUSTOM';
     puritySel.hidden = isManual; puritySel.disabled = isManual;
     purityManual.hidden = !isManual; purityManual.disabled = !isManual;
     if (!isManual && !puritySel.value) puritySel.value = '22K';
     updateRate();
   }
-  grossInput.addEventListener('input', () => { netInput.value = grossInput.value; recalc(); }); netInput.addEventListener('input', recalc); rateInput.addEventListener('input', recalc); paidInput.addEventListener('input', () => { payoutEdited = true; }); puritySel.addEventListener('change', updateRate); purityManual.addEventListener('input', recalc); metalSel.addEventListener('change', syncPurityControl); syncPurityControl();
+  grossInput.addEventListener('input', () => { netInput.value = grossInput.value; recalc(); }); netInput.addEventListener('input', recalc); rateInput.addEventListener('input', recalc); paidInput.addEventListener('input', () => { payoutEdited = true; }); puritySel.addEventListener('change', syncPurityControl); purityManual.addEventListener('input', recalc); metalSel.addEventListener('change', syncPurityControl); syncPurityControl();
 
   const customerSearch = document.getElementById('urdCustomerSearch');
   const customerSelect = document.getElementById('urdCustomer');

@@ -3,7 +3,7 @@
     <p class="eyebrow">Daily money log</p>
     <h1>Cashbook</h1>
   </div>
-  <a class="button ghost" href="/data-management?resource=cashbook">Export / archive</a>
+  <button class="button ghost" type="button" data-export-modal-open="cashbookExportModal">Export Excel</button>
 </header>
 
 <%
@@ -166,6 +166,8 @@
   </aside>
 
 </div>
+
+<%- include('../_export_modal', { exportModalId: 'cashbookExportModal', exportResource: 'cashbook', exportTitle: 'Cashbook', exportFrom: fDate, exportTo: tDate }) %>
 
 <script>
 (() => {

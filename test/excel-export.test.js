@@ -42,7 +42,7 @@ test('writes a professional multi-sheet cashbook workbook with typed dates and b
   assert.equal(cash.getCell('A1').value, 'Daily Cashbook - Cash entries');
   assert.equal(cash.getCell('B3').value, 100);
   assert.equal(cash.getCell('B7').value, 150);
-  assert.equal(cash.getCell('A7').numFmt, 'dd-mmm-yyyy');
+  assert.equal(cash.getCell('A7').numFmt, 'd-mmm-yy');
   assert.equal(workbook.getWorksheet('UPI').getCell('B3').value, 25);
 });
 
@@ -91,7 +91,7 @@ test('writes a plain CA register without colours or filter arrows, with working 
     sheets: [{
       name: 'Sales Register',
       title: '01. Sales Register',
-      subtitle: 'From    01/09/2026   To   01/09/2026',
+      subtitle: 'From    1-Sep-26   To   1-Sep-26',
       layout: 'ca-register',
       columns: [
         { key: 'date', label: 'Date', type: 'date', width: 14 },
@@ -112,6 +112,7 @@ test('writes a plain CA register without colours or filter arrows, with working 
   assert.equal(sheet.getCell('A4').value, 'DATE');
   assert.equal(sheet.getCell('D6').value.formula, 'SUM(D5:D5)');
   assert.equal(sheet.getCell('D5').numFmt, '#,##0.00;[Red]-#,##0.00');
+  assert.equal(sheet.getCell('A5').numFmt, 'd-mmm-yy');
   assert.equal(sheet.getCell('A4').fill.fgColor?.argb, undefined);
 });
 
@@ -122,7 +123,7 @@ test('renders the compact customer ledger register without filters or unnecessar
     sheets: [{
       name: 'Customer ledger',
       title: 'Customer Ledger Register',
-      subtitle: 'From    01/09/2026   To   30/09/2026',
+      subtitle: 'From    1-Sep-26   To   30-Sep-26',
       layout: 'ca-register',
       columns: [
         { key: 'srNo', label: 'Sr No.', type: 'integer', width: 9 },
@@ -140,7 +141,8 @@ test('renders the compact customer ledger register without filters or unnecessar
   const sheet = workbook.getWorksheet('Customer ledger');
   assert.equal(sheet.autoFilter, undefined);
   assert.equal(sheet.getCell('A1').value, 'KUSUM JEWELLERS');
-  assert.equal(sheet.getCell('A3').value, 'From    01/09/2026   To   30/09/2026');
+  assert.equal(sheet.getCell('A3').value, 'From    1-Sep-26   To   30-Sep-26');
+  assert.equal(sheet.getCell('B5').numFmt, 'd-mmm-yy');
   assert.deepEqual(['A4', 'B4', 'C4', 'D4', 'E4'].map((cell) => sheet.getCell(cell).value), ['SR NO.', 'DATE', 'CUSTOMER NAME', 'PHONE NO.', 'DUE']);
   assert.equal(sheet.getCell('D5').text, '9876543210');
   assert.equal(sheet.getCell('E5').numFmt, '#,##0.00;[Red]-#,##0.00');
@@ -153,12 +155,12 @@ test('preserves financial-year Sales and URD document numbers in plain CA regist
     columns: [], rows: [],
     sheets: [
       {
-        name: 'Sales Register', title: '01. Sales Register', subtitle: 'From    01/04/2026   To   31/03/2027', layout: 'ca-register',
+        name: 'Sales Register', title: '01. Sales Register', subtitle: 'From    1-Apr-26   To   31-Mar-27', layout: 'ca-register',
         columns: [{ key: 'date', label: 'Date', type: 'date', width: 14 }, documentColumn],
         rows: [{ date: '2026-04-01', documentNumber: 'SB/26-27/00001' }]
       },
       {
-        name: 'URD Purchase Register', title: '03. URD Purchase', subtitle: 'From    01/04/2026   To   31/03/2027', layout: 'ca-register',
+        name: 'URD Purchase Register', title: '03. URD Purchase', subtitle: 'From    1-Apr-26   To   31-Mar-27', layout: 'ca-register',
         columns: [{ key: 'date', label: 'Date', type: 'date', width: 14 }, documentColumn],
         rows: [{ date: '2026-04-01', documentNumber: 'UR/26-27/00001' }]
       }

@@ -49,7 +49,7 @@ function cellValue(value, type) {
 }
 
 function numberFormat(type) {
-  if (type === 'date') return 'dd-mmm-yyyy';
+  if (type === 'date') return 'd-mmm-yy';
   if (type === 'currency') return '[$₹-en-IN]#,##0.00;[Red]-[$₹-en-IN]#,##0.00';
   if (type === 'weight') return '0.000;[Red]-0.000';
   if (type === 'integer') return '#,##0;[Red]-#,##0';
@@ -92,7 +92,7 @@ function mergeAcross(sheet, row, lastColumn) {
 
 function applyCaRegisterCellFormat(cell, type, alignment = 'left') {
   cell.alignment = { vertical: 'middle', horizontal: alignment, wrapText: false };
-  if (type === 'date') cell.numFmt = 'dd/mm/yyyy';
+  if (type === 'date') cell.numFmt = 'd-mmm-yy';
   else if (type === 'currency' || type === 'number') cell.numFmt = '#,##0.00;[Red]-#,##0.00';
   else if (type === 'weight') cell.numFmt = '#,##0.000;[Red]-#,##0.000';
   else if (type === 'integer') cell.numFmt = '#,##0;[Red]-#,##0';

@@ -1933,3 +1933,110 @@ nav a {
   margin-bottom: 18px;
 }
 
+/* ── Savings schemes: calm, task-first workspace ─────────── */
+.scheme-page-header { margin-bottom: 20px; }
+.scheme-page-header .header-actions { gap: 8px; }
+.scheme-title-row { display: flex; align-items: center; gap: 10px; }
+.scheme-title-row h1 { margin: 0; }
+.scheme-summary-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.scheme-summary-grid .stat-card { min-height: 116px; position: relative; overflow: hidden; }
+.scheme-summary-grid .stat-card::after {
+  content: ''; position: absolute; width: 54px; height: 54px; border-radius: 50%;
+  top: -28px; right: -20px; background: rgba(193, 138, 31, .09); pointer-events: none;
+}
+.scheme-plans-panel { padding: 0; overflow: hidden; }
+.scheme-plans-panel > .panel-heading { padding: 21px 22px 16px; margin: 0; border-bottom: 1px solid var(--line); }
+.scheme-plans-list { gap: 0; }
+.scheme-plan-card {
+  position: relative; padding: 19px 22px; border: 0; border-radius: 0;
+  border-bottom: 1px solid var(--line); transition: background .16s ease, box-shadow .16s ease;
+}
+.scheme-plan-card:last-child { border-bottom: 0; }
+.scheme-plan-card::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: transparent; transition: background .16s ease;
+}
+.scheme-plan-card:hover { background: #fffdf9; border-color: var(--line); box-shadow: inset 0 0 0 1px rgba(193,138,31,.13); }
+.scheme-plan-card:hover::before { background: var(--gold); }
+.scheme-plan-header h3 { font-size: 17px; }
+.scheme-plan-actions .button { min-height: 31px; }
+.scheme-plan-details { margin-top: 16px; padding: 13px 0; border-top: 1px solid #eee9e2; border-bottom: 1px solid #eee9e2; }
+.scheme-detail-item { min-width: 0; }
+.scheme-detail-item strong { display: block; margin-top: 3px; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.scheme-plan-desc { max-width: 800px; margin-top: 11px; }
+.scheme-plan-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 15px; flex-wrap: wrap; }
+.scheme-plan-primary-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.scheme-enrollment-count { color: var(--muted); font-size: 12px; font-weight: 700; }
+.scheme-description-card { margin-bottom: 18px; padding: 15px 19px; background: linear-gradient(100deg, #fffaf0, #fffdf9); border-color: #ead8b8; box-shadow: none; }
+.scheme-description-card strong { color: var(--gold-dark); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+.scheme-description-card p { margin: 5px 0 0; color: var(--ink); font-size: 13px; line-height: 1.55; }
+.scheme-enrollments-panel { overflow: hidden; padding: 0; }
+.scheme-enrollments-heading { padding: 20px 22px 15px; margin: 0; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; }
+.scheme-enrollments-heading h2 { margin: 0; }
+.scheme-enrollments-heading p { margin: 3px 0 0; font-size: 12px; color: var(--muted); }
+.scheme-filter-controls { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.scheme-filter-controls input,
+.scheme-filter-controls select { min-height: 36px; margin: 0; padding: 6px 9px; font-size: 12px; border: 1px solid var(--line); border-radius: 7px; background: #fff; }
+.scheme-filter-controls input { width: 170px !important; }
+.scheme-filter-controls select { width: auto !important; min-width: 136px; font-weight: 650; color: var(--ink); }
+.scheme-filter-controls .button { min-height: 36px; }
+.scheme-month-picker {
+  display: inline-flex; align-items: center; justify-content: space-between; gap: 18px;
+  min-width: 130px; min-height: 36px; padding: 6px 10px; border: 1px solid var(--line);
+  border-radius: 7px; background: #fff; color: var(--ink); font: 650 12px inherit; cursor: pointer;
+}
+.scheme-month-picker::after { content: '⌄'; color: var(--gold-dark); font-size: 15px; line-height: 1; }
+.scheme-month-picker:hover { border-color: var(--gold); background: #fffdf9; }
+.scheme-month-modal .modal-card { width: min(440px, calc(100vw - 32px)); max-height: min(620px, calc(100vh - 32px)); }
+.scheme-month-modal-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; max-height: 440px; overflow-y: auto; }
+.scheme-month-option {
+  min-height: 72px; padding: 12px; text-align: left; border: 1px solid var(--line); border-radius: 9px;
+  background: #fff; color: var(--ink); font: 750 13px inherit; cursor: pointer; transition: .15s ease;
+}
+.scheme-month-option small { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; font-weight: 550; }
+.scheme-month-option:hover, .scheme-month-option.is-selected { border-color: var(--gold); background: #fffaf0; box-shadow: 0 0 0 2px rgba(193,138,31,.10); }
+.scheme-enrollments-table { margin: 0; border: 0; border-radius: 0; }
+.scheme-enrollments-table table { width: 100%; min-width: 920px; }
+.scheme-enrollments-table th { background: #fbfaf8; }
+.scheme-enrollments-table td { padding-top: 13px; padding-bottom: 13px; vertical-align: middle; }
+.scheme-enrollments-table tbody tr:hover { background: #fffdf9; }
+.scheme-enrollments-table .whatsapp-icon { width: 30px; height: 30px; }
+.scheme-passbook-panel { padding: 0; overflow: hidden; }
+.scheme-passbook-panel > .panel-heading { padding: 20px 22px 0; }
+.scheme-passbook-panel .scheme-progress-bar { margin: 18px 22px; height: 30px; }
+.scheme-installments-table { margin: 0; border-radius: 0; border-left: 0; border-right: 0; border-bottom: 0; }
+.scheme-installments-table table { width: 100%; min-width: 700px; }
+.scheme-installments-table td { vertical-align: middle; }
+.scheme-pay-form { display: flex; align-items: center; gap: 6px; }
+.scheme-pay-form select,
+.scheme-pay-form input { margin: 0; min-height: 31px; font-size: 12px; }
+.scheme-pay-form select { width: 76px; }
+.scheme-pay-form input[type='date'] { width: 122px; }
+.scheme-pay-form input[name='amount'] { width: 86px; }
+.scheme-pay-form .button { min-height: 31px; }
+
+@media (max-width: 1050px) {
+  .scheme-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 680px) {
+  .scheme-page-header .header-actions { width: 100%; }
+  .scheme-page-header .header-actions .button { flex: 1 1 auto; }
+  .scheme-summary-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .scheme-summary-grid .stat-card { min-height: 105px; }
+  .scheme-plans-panel > .panel-heading,
+  .scheme-enrollments-heading { padding: 16px; }
+  .scheme-plan-card { padding: 16px; }
+  .scheme-plan-header { align-items: flex-start; }
+  .scheme-plan-actions { flex-wrap: wrap; justify-content: flex-end; }
+  .scheme-plan-details { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px 9px; }
+  .scheme-filter-controls { width: 100%; }
+  .scheme-filter-controls input { width: 100%; flex: 1 0 100%; }
+  .scheme-filter-controls select { flex: 1 1 130px; }
+  .scheme-month-picker { flex: 1 1 130px; }
+  .scheme-filter-controls .button { flex: 1 0 auto; }
+  .scheme-plan-primary-actions { width: 100%; }
+  .scheme-plan-primary-actions .button { flex: 1 1 auto; }
+  .scheme-enrollment-count { width: 100%; }
+  .scheme-month-modal-body { grid-template-columns: 1fr; }
+}
+
