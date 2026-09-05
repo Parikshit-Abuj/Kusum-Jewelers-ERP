@@ -240,6 +240,7 @@ model CashbookEntry {
   urdPurchase        UrdPurchase?         @relation(fields: [urdPurchaseId], references: [id], onDelete: Cascade)
   ledgerEntries      CustomerLedger[]
   schemeInstallment  SchemeInstallment?
+  schemeInstallmentPayment SchemeInstallmentPayment?
 
   @@index([entryDate])
   @@index([customerId])
@@ -360,8 +361,24 @@ model SchemeInstallment {
   createdAt         DateTime          @default(now())
   enrollment        SchemeEnrollment  @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
   cashbookEntry     CashbookEntry?    @relation(fields: [cashbookEntryId], references: [id], onDelete: SetNull)
+  payments          SchemeInstallmentPayment[]
 
   @@index([enrollmentId])
   @@index([status])
   @@unique([enrollmentId, installmentNumber])
+}
+
+model SchemeInstallmentPayment {
+  id              Int               @id @default(autoincrement())
+  installmentId   Int
+  cashbookEntryId Int               @unique
+  amount          Decimal           @db.Decimal(12, 2)
+  paymentDate     String            @db.VarChar(10)
+  paymentMethod   PaymentMethod
+  createdAt       DateTime          @default(now())
+  installment     SchemeInstallment @relation(fields: [installmentId], references: [id], onDelete: Cascade)
+  cashbookEntry   CashbookEntry     @relation(fields: [cashbookEntryId], references: [id], onDelete: Cascade)
+
+  @@index([installmentId])
+  @@index([paymentDate])
 }

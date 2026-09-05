@@ -98,14 +98,32 @@ function paymentLabel(value) {
   return labels[value] || enumLabel(value);
 }
 
-function latestSchemePayment(installments = []) {
-  const paid = installments.filter((installment) => Number(installment.paidAmount || 0) > 0 && installment.paymentDate);
+function schemeInstallmentPaymentSummary(installment = {}) {
+  const savedPayments = Array.isArray(installment.payments) && installment.payments.length
+    ? installment.payments
+    : Number(installment.paidAmount || 0) > 0 && installment.paymentDate
+      ? [{ amount: installment.paidAmount, paymentDate: installment.paymentDate, paymentMethod: installment.paymentMethod }]
+      : [];
+  const paid = savedPayments.filter((payment) => Number(payment.amount || 0) > 0 && payment.paymentDate);
   if (!paid.length) return { paidDate: '', paymentType: '' };
-  const latest = [...paid].sort((a, b) => String(a.paymentDate).localeCompare(String(b.paymentDate)) || Number(a.installmentNumber || 0) - Number(b.installmentNumber || 0)).at(-1);
+  const paidDate = [...paid].sort((a, b) => String(a.paymentDate).localeCompare(String(b.paymentDate))).at(-1).paymentDate;
   return {
-    paidDate: latest.paymentDate,
-    paymentType: latest.paymentMethod ? paymentLabel(latest.paymentMethod) : ''
+    paidDate,
+    // Keep the exact split visible to the CA: Cash ₹1,000.00 + Bank transfer ₹4,000.00.
+    paymentType: paid
+      .filter((payment) => payment.paymentDate === paidDate)
+      .map((payment) => `${paymentLabel(payment.paymentMethod)} ₹${num(payment.amount).toFixed(2)}`)
+      .join(' + ')
   };
+}
+
+function latestSchemePayment(installments = []) {
+  const paid = installments
+    .map((installment) => ({ installment, ...schemeInstallmentPaymentSummary(installment) }))
+    .filter((item) => item.paidDate);
+  if (!paid.length) return { paidDate: '', paymentType: '' };
+  const latest = [...paid].sort((a, b) => String(a.paidDate).localeCompare(String(b.paidDate)) || Number(a.installment.installmentNumber || 0) - Number(b.installment.installmentNumber || 0)).at(-1);
+  return { paidDate: latest.paidDate, paymentType: latest.paymentType };
 }
 
 function makingLabel(value) {
@@ -831,11 +849,19 @@ async function getExportPayload(db, key, range, options = {}) {
     // ────────────────────────────────────────────────────────────
     case 'schemes': {
       const enrollments = await db.schemeEnrollment.findMany({
-        where: { startDate: dateTimeRange(range) },
+        // A cancelled enrollment remains safely in the database and
+        // Cashbook history, but it is not an active scheme customer and must
+        // not appear in the normal CA scheme register.
+        where: { startDate: dateTimeRange(range), status: { not: 'CANCELLED' } },
         orderBy: [{ startDate: 'asc' }, { id: 'asc' }],
         include: {
           customer: true,
-          installments: { select: { installmentNumber: true, paidAmount: true, paymentDate: true, paymentMethod: true } }
+          installments: {
+            select: {
+              installmentNumber: true, paidAmount: true, paymentDate: true, paymentMethod: true,
+              payments: { select: { amount: true, paymentDate: true, paymentMethod: true } }
+            }
+          }
         },
         take: MAX_SOURCE_ROWS + 1
       });
@@ -846,7 +872,7 @@ async function getExportPayload(db, key, range, options = {}) {
         col.text('customerName', 'Name', 28),
         col.identifier('customerPhone', 'Mobile No.', 18),
         col.date('paidDate', 'Paid Date'),
-        col.text('paymentType', 'Payment Type', 18),
+        col.text('paymentType', 'Payment Type', 34),
         col.currency('amount', 'Amount')
       ];
       const rows = enrollments.map((enrollment, index) => ({
@@ -972,13 +998,26 @@ async function getSchemePlanExportPayload(db, schemePlanId, options = {}) {
   }
 
   const enrollments = await db.schemeEnrollment.findMany({
-    where: { schemePlanId: planId },
+    // Plan exports are operational registers, so exclude cancelled customers
+    // consistently from consolidated and per-month reports.
+    where: { schemePlanId: planId, status: { not: 'CANCELLED' } },
     orderBy: [{ enrollmentNumber: 'asc' }, { id: 'asc' }],
     include: {
       customer: true,
       installments: month === null
-        ? { select: { installmentNumber: true, paidAmount: true, paymentDate: true, paymentMethod: true } }
-        : { where: { installmentNumber: month }, select: { installmentNumber: true, paidAmount: true, paymentDate: true, paymentMethod: true } }
+        ? {
+            select: {
+              installmentNumber: true, paidAmount: true, paymentDate: true, paymentMethod: true,
+              payments: { select: { amount: true, paymentDate: true, paymentMethod: true } }
+            }
+          }
+        : {
+            where: { installmentNumber: month },
+            select: {
+              installmentNumber: true, paidAmount: true, paymentDate: true, paymentMethod: true,
+              payments: { select: { amount: true, paymentDate: true, paymentMethod: true } }
+            }
+          }
     },
     take: MAX_SOURCE_ROWS + 1
   });
@@ -990,7 +1029,7 @@ async function getSchemePlanExportPayload(db, schemePlanId, options = {}) {
     col.text('customerName', 'Name', 28),
     col.identifier('customerPhone', 'Mobile No.', 18),
     col.date('paidDate', 'Paid Date'),
-    col.text('paymentType', 'Payment Type', 18),
+    col.text('paymentType', 'Payment Type', 34),
     col.currency('amount', 'Amount')
   ];
   const rows = enrollments.map((enrollment, index) => {

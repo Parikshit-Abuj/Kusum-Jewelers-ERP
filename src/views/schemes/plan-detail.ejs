@@ -123,12 +123,24 @@
               unpaidMonths.push(inst.installmentNumber);
               if (isOverdue) overdueMonths.push(inst.installmentNumber);
             }
+            const paymentParts = Array.isArray(inst.payments) && inst.payments.length
+              ? inst.payments
+              : (Number(inst.paidAmount || 0) > 0 && inst.paymentDate
+                ? [{ amount: inst.paidAmount, paymentDate: inst.paymentDate, paymentMethod: inst.paymentMethod }]
+                : []);
+            const paymentSummary = paymentParts
+              .filter(part => Number(part.amount || 0) > 0)
+              .map(part => {
+                const labels = { CASH: 'Cash', UPI: 'UPI', CARD: 'Card', BANK_TRANSFER: 'Bank transfer' };
+                return `${labels[part.paymentMethod] || part.paymentMethod || 'Payment'} ₹${Number(part.amount).toFixed(2)}`;
+              })
+              .join(' + ');
             instMap[inst.installmentNumber] = {
               status: inst.status,
               dueDate: inst.dueDate,
               paidAmount: Number(inst.paidAmount || 0),
               paymentDate: inst.paymentDate || '',
-              paymentMethod: inst.paymentMethod || '',
+              paymentMethod: paymentSummary || inst.paymentMethod || '',
               isOverdue
             };
           });

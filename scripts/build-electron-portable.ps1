@@ -123,6 +123,16 @@ foreach ($developmentNamespace in @('@electron', '@types')) {
 $packageCache = Join-Path $applicationNodeModules '.cache'
 if (Test-Path -LiteralPath $packageCache) { Remove-Item -LiteralPath $packageCache -Recurse -Force }
 
+# npm packages sometimes retain their upstream unit-test and coverage folders
+# even after Electron Packager prunes development dependencies. They are not
+# loaded by the ERP at runtime, so remove only these verified dependency
+# artifacts from the delivered application.
+$dependencyTestArtifacts = @(Get-ChildItem -LiteralPath $applicationNodeModules -Recurse -Directory -Force |
+  Where-Object { $_.Name -in @('test', 'tests', 'coverage') })
+foreach ($artifact in $dependencyTestArtifacts) {
+  Remove-Item -LiteralPath $artifact.FullName -Recurse -Force
+}
+
 $copiedEnv = Join-Path $applicationDirectory 'resources\app\.env'
 if (Test-Path -LiteralPath $copiedEnv) { Remove-Item -LiteralPath $copiedEnv -Force }
 

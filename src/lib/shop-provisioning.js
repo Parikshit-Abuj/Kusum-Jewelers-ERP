@@ -141,6 +141,20 @@ async function migrationStatementAlreadyApplied(connection, statement, error) {
     return columns.every((column) => found.has(column.toLowerCase()));
   }
 
+  // MySQL DDL is not transactional. If a first-time setup is interrupted
+  // immediately after adding a foreign key, the next safe retry must accept
+  // that already-created constraint instead of treating the empty setup as a
+  // permanently failed migration.
+  if (error.code === 'ER_FK_DUP_NAME' && /^ALTER TABLE/i.test(compact)) {
+    const constraintMatch = compact.match(/ADD CONSTRAINT\s+`([^`]+)`\s+FOREIGN KEY/i);
+    if (!constraintMatch || !table) return false;
+    const [rows] = await connection.query(
+      'SELECT 1 FROM information_schema.referential_constraints WHERE constraint_schema = DATABASE() AND LOWER(table_name) = LOWER(?) AND LOWER(constraint_name) = LOWER(?) LIMIT 1',
+      [table, constraintMatch[1]]
+    );
+    return rows.length === 1;
+  }
+
   if (error.code === 'ER_DUP_KEYNAME') {
     const indexMatch = compact.match(/^CREATE(?: UNIQUE)? INDEX\s+`([^`]+)`/i);
     const index = indexMatch?.[1];
@@ -203,6 +217,7 @@ const REQUIRED_RUNTIME_SCHEMA = {
   SchemePlan: ['id', 'name', 'durationMonths', 'monthlyAmount', 'maturityAmount', 'isActive'],
   SchemeEnrollment: ['id', 'enrollmentNumber', 'schemePlanId', 'customerId', 'startDate', 'endDate', 'status', 'totalPaid', 'installmentsPaid'],
   SchemeInstallment: ['id', 'enrollmentId', 'installmentNumber', 'dueDate', 'paidAmount', 'paymentDate', 'paymentMethod', 'cashbookEntryId', 'status'],
+  SchemeInstallmentPayment: ['id', 'installmentId', 'cashbookEntryId', 'amount', 'paymentDate', 'paymentMethod'],
   StockMovement: ['id', 'productId', 'productBarcode', 'type', 'quantity', 'createdAt'],
   CashbookEntry: ['id', 'entryDate', 'paymentMethod', 'customerId', 'saleId', 'urdPurchaseId', 'syncLedger'],
   CustomerLedger: ['id', 'customerId', 'saleId', 'cashbookEntryId', 'amount'],

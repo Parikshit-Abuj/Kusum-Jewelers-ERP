@@ -6,6 +6,13 @@
   const pendingCount = installments.filter(i => i.status === 'PENDING' || i.status === 'OVERDUE').length;
   const progressPct = plan.durationMonths > 0 ? Math.round((paidCount / plan.durationMonths) * 100) : 0;
   const todayStr = dateInput();
+  const installmentPayments = (installment) => {
+    if (Array.isArray(installment.payments) && installment.payments.length) return installment.payments;
+    return Number(installment.paidAmount || 0) > 0 && installment.paymentDate
+      ? [{ amount: installment.paidAmount, paymentDate: installment.paymentDate, paymentMethod: installment.paymentMethod }]
+      : [];
+  };
+  const paymentMethodLabel = (method) => ({ CASH: 'Cash', UPI: 'UPI', CARD: 'Card', BANK_TRANSFER: 'Bank transfer' }[method] || method || '—');
 %>
 
 <header class="page-header scheme-page-header">
@@ -91,6 +98,18 @@
           <% installments.forEach(inst => {
             const isOverdue = inst.status === 'PENDING' && inst.dueDate < todayStr;
             const displayStatus = isOverdue ? 'OVERDUE' : inst.status;
+            const paidParts = installmentPayments(inst);
+            const latestPaidDate = paidParts.map(part => part.paymentDate).filter(Boolean).sort().at(-1) || '';
+            const paymentDisplay = paidParts
+              .filter(part => part.paymentDate === latestPaidDate)
+              .map(part => `${paymentMethodLabel(part.paymentMethod)} ${money(part.amount)}`)
+              .join(' + ');
+            const paidByMethod = paidParts.reduce((totals, part) => {
+              if (part.paymentMethod && Object.hasOwn(totals, part.paymentMethod)) {
+                totals[part.paymentMethod] += Number(part.amount || 0);
+              }
+              return totals;
+            }, { CASH: 0, UPI: 0, CARD: 0, BANK_TRANSFER: 0 });
           %>
           <tr class="<%= displayStatus === 'OVERDUE' ? 'row-overdue' : '' %>">
             <td><strong><%= inst.installmentNumber %></strong></td>
@@ -107,22 +126,39 @@
                 <%- money(plan.monthlyAmount) %>
               <% } %>
             </td>
-            <td><%= inst.paymentDate || '—' %></td>
-            <td><%= inst.paymentMethod ? inst.paymentMethod.replace('_', ' ') : '—' %></td>
+            <td><%= latestPaidDate || '—' %></td>
+            <td><%= paymentDisplay || '—' %></td>
             <td>
               <% if ((inst.status === 'PENDING' || displayStatus === 'OVERDUE') && enrollment.status === 'ACTIVE') { %>
-              <form method="post" action="/schemes/enrollments/<%= enrollment.id %>/pay" class="scheme-pay-form">
+              <form method="post" action="/schemes/enrollments/<%= enrollment.id %>/pay" class="scheme-pay-form" data-scheme-split-payment data-monthly-amount="<%= Number(plan.monthlyAmount) %>">
                 <input type="hidden" name="installmentId" value="<%= inst.id %>">
-                <select name="paymentMethod" style="font-size:12px; padding:3px 6px; border-radius:4px; border:1px solid #d5c9b1;">
-                  <option value="CASH">Cash</option>
-                  <option value="UPI">UPI</option>
-                  <option value="CARD">Card</option>
-                  <option value="BANK_TRANSFER">Bank</option>
-                </select>
+                <input type="hidden" name="paymentMethod" value="MIXED">
                 <input name="paymentDate" type="date" required value="<%= todayStr %>" title="Payment date" style="width:118px; font-size:12px; padding:3px 6px; border-radius:4px; border:1px solid #d5c9b1;">
-                <input name="amount" type="number" min="1" step="0.01" readonly value="<%= Number(plan.monthlyAmount) %>" title="Monthly installment amount" style="width:80px; font-size:12px; padding:3px 6px; border-radius:4px; border:1px solid #d5c9b1; background:#f7f3ed;">
-                <button type="submit" class="button small" style="padding:3px 10px; font-size:12px;">Pay</button>
+                <input name="cashPaid" type="number" min="0" step="0.01" placeholder="Cash" title="Cash amount" style="width:78px; font-size:12px; padding:3px 6px; border-radius:4px; border:1px solid #d5c9b1;">
+                <input name="upiPaid" type="number" min="0" step="0.01" placeholder="UPI" title="UPI amount" style="width:78px; font-size:12px; padding:3px 6px; border-radius:4px; border:1px solid #d5c9b1;">
+                <input name="cardPaid" type="number" min="0" step="0.01" placeholder="Card" title="Card amount" style="width:78px; font-size:12px; padding:3px 6px; border-radius:4px; border:1px solid #d5c9b1;">
+                <input name="bankPaid" type="number" min="0" step="0.01" placeholder="Bank" title="Bank transfer amount" style="width:78px; font-size:12px; padding:3px 6px; border-radius:4px; border:1px solid #d5c9b1;">
+                <span data-scheme-split-total style="font-size:12px; white-space:nowrap; color:var(--muted);">Total ₹0.00</span>
+                <button type="submit" class="button small" style="padding:3px 10px; font-size:12px;">Record</button>
               </form>
+              <% } else if (inst.status === 'PAID' && enrollment.status !== 'CANCELLED') { %>
+                <button type="button" class="button ghost small" onclick="document.getElementById('scheme-payment-edit-<%= inst.id %>').showModal()">Edit payment</button>
+                <dialog id="scheme-payment-edit-<%= inst.id %>" class="scheme-payment-dialog">
+                  <form method="dialog" class="dialog-close-row"><button type="submit" class="icon-button" aria-label="Close">×</button></form>
+                  <h3>Edit Month <%= inst.installmentNumber %> payment</h3>
+                  <p class="muted">Enter payment parts totaling <strong><%- money(plan.monthlyAmount) %></strong>.</p>
+                  <form method="post" action="/schemes/enrollments/<%= enrollment.id %>/installments/<%= inst.id %>/edit-payment" data-scheme-split-payment data-monthly-amount="<%= Number(plan.monthlyAmount) %>" onsubmit="return confirm('Update this scheme payment and its Cashbook entries?')">
+                    <input type="hidden" name="paymentMethod" value="MIXED">
+                    <label>Payment date<input name="paymentDate" type="date" required value="<%= latestPaidDate || todayStr %>"></label>
+                    <div class="scheme-payment-input-grid">
+                      <label>Cash<input name="cashPaid" type="number" min="0" step="0.01" value="<%= paidByMethod.CASH || '' %>"></label>
+                      <label>UPI<input name="upiPaid" type="number" min="0" step="0.01" value="<%= paidByMethod.UPI || '' %>"></label>
+                      <label>Card<input name="cardPaid" type="number" min="0" step="0.01" value="<%= paidByMethod.CARD || '' %>"></label>
+                      <label>Bank transfer<input name="bankPaid" type="number" min="0" step="0.01" value="<%= paidByMethod.BANK_TRANSFER || '' %>"></label>
+                    </div>
+                    <div class="dialog-actions"><span data-scheme-split-total class="muted">Total ₹0.00</span><button type="submit" class="button">Save payment</button></div>
+                  </form>
+                </dialog>
               <% } %>
             </td>
           </tr>
@@ -138,3 +174,26 @@
     <% } %>
   </section>
 </div>
+
+<script>
+document.querySelectorAll('[data-scheme-split-payment]').forEach((form) => {
+  const inputs = Array.from(form.querySelectorAll('input[name="cashPaid"], input[name="upiPaid"], input[name="cardPaid"], input[name="bankPaid"]'));
+  const total = form.querySelector('[data-scheme-split-total]');
+  const monthly = Number(form.dataset.monthlyAmount || 0);
+  const updateTotal = () => {
+    const value = inputs.reduce((sum, input) => sum + (Number(input.value) || 0), 0);
+    const valid = Math.abs(value - monthly) < 0.01;
+    total.textContent = `Total ₹${value.toFixed(2)} / ₹${monthly.toFixed(2)}`;
+    total.style.color = valid ? 'var(--success, #26734d)' : 'var(--muted)';
+  };
+  inputs.forEach((input) => input.addEventListener('input', updateTotal));
+  form.addEventListener('submit', (event) => {
+    const value = inputs.reduce((sum, input) => sum + (Number(input.value) || 0), 0);
+    if (Math.abs(value - monthly) >= 0.01) {
+      event.preventDefault();
+      window.alert(`Enter payment parts totaling ₹${monthly.toFixed(2)}.`);
+    }
+  });
+  updateTotal();
+});
+</script>

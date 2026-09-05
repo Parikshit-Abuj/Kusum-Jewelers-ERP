@@ -235,6 +235,16 @@ function salePaymentBreakdown(body) {
   };
 }
 
+function schemePaymentBreakdown(body) {
+  // Scheme screens always submit the four receipt boxes. Keep support for the
+  // earlier single-method form too, so a bookmarked or interrupted old page
+  // cannot create an invalid payment after the ERP is upgraded.
+  const componentKeys = ['cashPaid', 'upiPaid', 'cardPaid', 'bankPaid'];
+  const usesSplitFields = componentKeys.some((key) => Object.prototype.hasOwnProperty.call(body, key));
+  if (usesSplitFields) return salePaymentBreakdown({ ...body, paymentMethod: 'MIXED' });
+  return salePaymentBreakdown({ ...body, paid: body.amount });
+}
+
 function receiptMethodAmounts(paymentMethod, amount) {
   const paymentData = {};
   if (paymentMethod === 'CASH') paymentData.cashPaid = { increment: amount };
@@ -2867,7 +2877,10 @@ app.get('/schemes/plans/:id', async (req, res, next) => {
           customer: true,
           installments: {
             orderBy: { installmentNumber: 'asc' },
-            select: { installmentNumber: true, dueDate: true, paidAmount: true, paymentDate: true, paymentMethod: true, status: true }
+            select: {
+              installmentNumber: true, dueDate: true, paidAmount: true, paymentDate: true, paymentMethod: true, status: true,
+              payments: { select: { amount: true, paymentDate: true, paymentMethod: true } }
+            }
           }
         },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
@@ -2993,9 +3006,20 @@ app.post('/schemes/plans/:id/delete', async (req, res, next) => {
       const plan = await tx.schemePlan.findUniqueOrThrow({ where: { id }, select: { id: true, name: true } });
       const enrollments = await tx.schemeEnrollment.findMany({
         where: { schemePlanId: id },
-        select: { id: true, installments: { where: { cashbookEntryId: { not: null } }, select: { cashbookEntryId: true } } }
+        select: {
+          id: true,
+          installments: {
+            select: {
+              cashbookEntryId: true,
+              payments: { select: { cashbookEntryId: true } }
+            }
+          }
+        }
       });
-      const cashbookEntryIds = [...new Set(enrollments.flatMap((enrollment) => enrollment.installments.map((installment) => installment.cashbookEntryId)).filter(Boolean))];
+      const cashbookEntryIds = [...new Set(enrollments.flatMap((enrollment) => enrollment.installments.flatMap((installment) => [
+        installment.cashbookEntryId,
+        ...installment.payments.map((payment) => payment.cashbookEntryId)
+      ])).filter(Boolean))];
       for (const cashbookEntryId of cashbookEntryIds) {
         await reverseAndDeleteCashbookEntry(tx, cashbookEntryId);
       }
@@ -3081,7 +3105,10 @@ app.get('/schemes/enrollments/:id', async (req, res, next) => {
       include: {
         schemePlan: true,
         customer: true,
-        installments: { orderBy: { installmentNumber: 'asc' } }
+        installments: {
+          orderBy: { installmentNumber: 'asc' },
+          include: { payments: { orderBy: [{ paymentDate: 'asc' }, { id: 'asc' }] } }
+        }
       }
     });
     if (!enrollment) return res.status(404).render('not-found', { title: 'Enrollment not found' });
@@ -3093,8 +3120,8 @@ app.post('/schemes/enrollments/:id/pay', async (req, res, next) => {
   const enrollmentId = Number(req.params.id);
   try {
     const installmentId = Number(req.body.installmentId);
-    const paymentMethod = receiptPaymentMethod(req.body.paymentMethod);
-    const amount = roundedMoney(number(req.body.amount));
+    const payment = schemePaymentBreakdown(req.body);
+    const amount = payment.paid;
     const paymentDate = dateInput(dateTimeFromInput(req.body.paymentDate || dateInput()));
     if (amount <= 0) return redirectWith(res, `/schemes/enrollments/${enrollmentId}`, 'error', 'Enter a valid payment amount.');
 
@@ -3117,19 +3144,33 @@ app.post('/schemes/enrollments/:id/pay', async (req, res, next) => {
       }
 
       // A scheme payment is a cashbook receipt, but it is not a loan/credit
-      // collection and must not change the customer's sales ledger.
-      const reference = generatedReference('SCH-PAY');
-      const cashbookEntry = await tx.cashbookEntry.create({
-        data: {
-          entryDate: paymentDate,
-          type: 'IN',
-          paymentMethod,
-          amount,
-          description: `Scheme payment — ${enrollment.enrollmentNumber} — Installment ${installment.installmentNumber}`,
-          reference,
-          customerId: enrollment.customerId,
-          notes: `${enrollment.schemePlan.name} · Installment ${installment.installmentNumber} of ${enrollment.schemePlan.durationMonths}`
-        }
+      // collection and must not change the customer's sales ledger. Each
+      // non-zero split becomes its own receipt and payment record.
+      const cashbookEntries = [];
+      for (const component of payment.cashbookPayments) {
+        const cashbookEntry = await tx.cashbookEntry.create({
+          data: {
+            entryDate: paymentDate,
+            type: 'IN',
+            paymentMethod: component.method,
+            amount: component.amount,
+            description: `Scheme payment — ${enrollment.enrollmentNumber} — Installment ${installment.installmentNumber}`,
+            reference: generatedReference('SCH-PAY'),
+            customerId: enrollment.customerId,
+            notes: `${enrollment.schemePlan.name} · Installment ${installment.installmentNumber} of ${enrollment.schemePlan.durationMonths}`
+          }
+        });
+        cashbookEntries.push({ ...component, id: cashbookEntry.id });
+      }
+
+      await tx.schemeInstallmentPayment.createMany({
+        data: cashbookEntries.map((entry) => ({
+          installmentId,
+          cashbookEntryId: entry.id,
+          amount: entry.amount,
+          paymentDate,
+          paymentMethod: entry.method
+        }))
       });
 
       // Mark installment as paid
@@ -3138,8 +3179,8 @@ app.post('/schemes/enrollments/:id/pay', async (req, res, next) => {
         data: {
           paidAmount: amount,
           paymentDate,
-          paymentMethod,
-          cashbookEntryId: cashbookEntry.id,
+          paymentMethod: payment.paymentMethod,
+          cashbookEntryId: cashbookEntries.length === 1 ? cashbookEntries[0].id : null,
           status: 'PAID'
         }
       });
@@ -3165,6 +3206,91 @@ app.post('/schemes/enrollments/:id/pay', async (req, res, next) => {
 
     redirectWith(res, `/schemes/enrollments/${enrollmentId}`, 'message', 'Installment payment recorded and synced to cashbook.');
   } catch (error) { redirectWith(res, `/schemes/enrollments/${enrollmentId}`, 'error', error.message || 'Could not record payment.'); }
+});
+
+// Correct an already-recorded scheme installment without creating duplicate
+// Cashbook receipts. Every existing payment part is replaced atomically by
+// the edited split, so Cashbook and the scheme passbook always agree.
+app.post('/schemes/enrollments/:id/installments/:installmentId/edit-payment', async (req, res) => {
+  const enrollmentId = Number(req.params.id);
+  const installmentId = Number(req.params.installmentId);
+  try {
+    const payment = schemePaymentBreakdown(req.body);
+    const amount = payment.paid;
+    const paymentDate = dateInput(dateTimeFromInput(req.body.paymentDate || dateInput()));
+    if (amount <= 0) throw new Error('Enter a valid payment amount.');
+
+    await prisma.$transaction(async (tx) => {
+      const lockedEnrollments = await tx.$queryRaw`SELECT id FROM \`SchemeEnrollment\` WHERE id = ${enrollmentId} FOR UPDATE`;
+      if (!lockedEnrollments.length) throw new Error('Scheme enrollment not found.');
+      const enrollment = await tx.schemeEnrollment.findUnique({
+        where: { id: enrollmentId },
+        include: { schemePlan: true }
+      });
+      if (!enrollment || enrollment.status === 'CANCELLED') throw new Error('A cancelled scheme enrollment cannot be edited.');
+
+      const lockedInstallments = await tx.$queryRaw`SELECT id FROM \`SchemeInstallment\` WHERE id = ${installmentId} FOR UPDATE`;
+      if (!lockedInstallments.length) throw new Error('Installment not found.');
+      const installment = await tx.schemeInstallment.findUnique({
+        where: { id: installmentId },
+        include: { payments: { select: { cashbookEntryId: true } } }
+      });
+      if (!installment || installment.enrollmentId !== enrollmentId || installment.status !== 'PAID') {
+        throw new Error('Only a recorded installment payment can be edited.');
+      }
+      if (!isFullInstallmentPayment(amount, enrollment.schemePlan.monthlyAmount)) {
+        throw new Error(`Enter the exact monthly installment amount of ${money(enrollment.schemePlan.monthlyAmount)}.`);
+      }
+
+      const oldCashbookEntryIds = [...new Set([
+        installment.cashbookEntryId,
+        ...installment.payments.map((record) => record.cashbookEntryId)
+      ].filter(Boolean))];
+      await tx.schemeInstallmentPayment.deleteMany({ where: { installmentId } });
+      if (oldCashbookEntryIds.length) {
+        await tx.cashbookEntry.deleteMany({ where: { id: { in: oldCashbookEntryIds } } });
+      }
+
+      const cashbookEntries = [];
+      for (const component of payment.cashbookPayments) {
+        const cashbookEntry = await tx.cashbookEntry.create({
+          data: {
+            entryDate: paymentDate,
+            type: 'IN',
+            paymentMethod: component.method,
+            amount: component.amount,
+            description: `Scheme payment — ${enrollment.enrollmentNumber} — Installment ${installment.installmentNumber}`,
+            reference: generatedReference('SCH-PAY'),
+            customerId: enrollment.customerId,
+            notes: `${enrollment.schemePlan.name} · Installment ${installment.installmentNumber} of ${enrollment.schemePlan.durationMonths}`
+          }
+        });
+        cashbookEntries.push({ ...component, id: cashbookEntry.id });
+      }
+      await tx.schemeInstallmentPayment.createMany({
+        data: cashbookEntries.map((entry) => ({
+          installmentId,
+          cashbookEntryId: entry.id,
+          amount: entry.amount,
+          paymentDate,
+          paymentMethod: entry.method
+        }))
+      });
+      await tx.schemeInstallment.update({
+        where: { id: installmentId },
+        data: {
+          paidAmount: amount,
+          paymentDate,
+          paymentMethod: payment.paymentMethod,
+          cashbookEntryId: cashbookEntries.length === 1 ? cashbookEntries[0].id : null,
+          status: 'PAID'
+        }
+      });
+    });
+    redirectWith(res, `/schemes/enrollments/${enrollmentId}`, 'message', 'Scheme installment payment updated and synced to cashbook.');
+  } catch (error) {
+    redirectWith(res, `/schemes/enrollments/${enrollmentId}`, 'error', error.message || 'Could not update the scheme payment.');
+  }
 });
 
 app.post('/schemes/enrollments/:id/cancel', async (req, res, next) => {

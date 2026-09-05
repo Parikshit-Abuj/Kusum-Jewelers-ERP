@@ -88,6 +88,69 @@ async function reverseUrdPayment(tx, entry) {
 // them. Deleting that receipt must put the installment back to pending rather
 // than leaving a false paid installment in the customer scheme record.
 async function reverseSchemeInstallmentPayment(tx, entry) {
+  // New split-payment records are authoritative. If one part of a completed
+  // installment is removed, remove the remaining parts of that same monthly
+  // payment too; leaving a partial scheme receipt in Cashbook would make the
+  // installment impossible to pay again cleanly.
+  if (tx.schemeInstallmentPayment) {
+    const splitLink = await tx.schemeInstallmentPayment.findUnique({
+      where: { cashbookEntryId: entry.id },
+      select: { id: true, installmentId: true }
+    });
+    if (splitLink) {
+      const installmentId = splitLink.installmentId;
+      // Read the parent first, then lock in the same order used when a scheme
+      // payment is posted: enrollment, then installment. This avoids a
+      // cross-PC deadlock between a receipt being posted and cancelled.
+      const linkedInstallment = await tx.schemeInstallment.findUnique({
+        where: { id: installmentId },
+        select: { enrollmentId: true }
+      });
+      if (!linkedInstallment) return;
+      const enrollmentId = Number(linkedInstallment.enrollmentId);
+      const lockedEnrollments = await tx.$queryRaw`SELECT id FROM \`SchemeEnrollment\` WHERE id = ${enrollmentId} FOR UPDATE`;
+      if (!lockedEnrollments.length) return;
+      const lockedInstallments = await tx.$queryRaw`SELECT id FROM \`SchemeInstallment\` WHERE id = ${installmentId} FOR UPDATE`;
+      if (!lockedInstallments.length) return;
+      const [enrollment, installment] = await Promise.all([
+        tx.schemeEnrollment.findUniqueOrThrow({ where: { id: enrollmentId }, include: { schemePlan: true } }),
+        tx.schemeInstallment.findUniqueOrThrow({
+          where: { id: installmentId },
+          include: { payments: { select: { cashbookEntryId: true } } }
+        })
+      ]);
+      const siblingCashbookIds = installment.payments
+        .map((payment) => payment.cashbookEntryId)
+        .filter((id) => id && id !== entry.id);
+      await tx.schemeInstallmentPayment.deleteMany({ where: { installmentId } });
+      if (siblingCashbookIds.length) {
+        await tx.cashbookEntry.deleteMany({ where: { id: { in: siblingCashbookIds } } });
+      }
+      await tx.schemeInstallment.update({
+        where: { id: installmentId },
+        data: { paidAmount: 0, paymentDate: null, paymentMethod: null, cashbookEntryId: null, status: 'PENDING' }
+      });
+      const [paidAggregate, paidCount] = await Promise.all([
+        tx.schemeInstallment.aggregate({ where: { enrollmentId, status: 'PAID' }, _sum: { paidAmount: true } }),
+        tx.schemeInstallment.count({ where: { enrollmentId, status: 'PAID' } })
+      ]);
+      await tx.schemeEnrollment.update({
+        where: { id: enrollmentId },
+        data: {
+          totalPaid: roundedMoney(paidAggregate._sum.paidAmount || 0),
+          installmentsPaid: paidCount,
+          status: enrollment.status === 'CANCELLED'
+            ? 'CANCELLED'
+            : paidCount >= enrollment.schemePlan.durationMonths ? 'COMPLETED' : 'ACTIVE'
+        }
+      });
+      return;
+    }
+  }
+
+  // Fallback for a database restored from a release that predates split
+  // payments. The upgrade migration backfills those rows, but retaining this
+  // path makes deletion safe during recovery as well.
   const linked = await tx.schemeInstallment.findUnique({
     where: { cashbookEntryId: entry.id },
     select: { id: true, enrollmentId: true }
