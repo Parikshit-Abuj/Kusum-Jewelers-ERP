@@ -114,11 +114,13 @@ function schemeInstallmentPaymentSummary(installment = {}) {
   // beside only the latest receipt details.
   const dates = [...new Set(paid.map((payment) => exportDate(payment.paymentDate)))];
   return {
-    paidDates: dates.map(displayDate).join('; '),
-    // Keep the exact split visible to the CA, including the date when an
-    // installment was collected across multiple receipts.
+    // Dates have their own column in the scheme register. Keep this compact
+    // so a normal payment remains one clean value such as "21-Aug-26".
+    paidDates: dates.map(displayDate).join(', '),
+    // Keep split amounts visible, but never repeat dates here: that made the
+    // payment-method column difficult to read beside the Paid Date column.
     paymentType: paid
-      .map((payment) => `${paymentLabel(payment.paymentMethod)} ₹${num(payment.amount).toFixed(2)} (${displayDate(exportDate(payment.paymentDate))})`)
+      .map((payment) => `${paymentLabel(payment.paymentMethod)} ₹${num(payment.amount).toFixed(2)}`)
       .join(' + ')
   };
 }
@@ -1035,13 +1037,13 @@ async function getSchemePlanExportPayload(db, schemePlanId, options = {}) {
   const columns = [
     col.integer('srNo', 'Sr. No.', 9),
     col.identifier('enrollmentNumber', 'Scheme Doc No.', 22),
-    col.text('customerName', 'Name', 28),
-    col.identifier('customerPhone', 'Mobile No.', 18),
+    { ...col.text('customerName', 'Name', 32), wrap: true },
+    col.identifier('customerPhone', 'Mobile No.', 16),
     ...(month === null ? [] : [
-      col.text('paidDates', 'Paid Date', 26),
-      col.text('paymentType', 'Payment Type', 48)
+      col.text('paidDates', 'Paid Date', 20),
+      { ...col.text('paymentType', 'Payment Type', 34), wrap: true }
     ]),
-    col.currency('amount', 'Amount')
+    { ...col.currency('amount', 'Amount'), width: 16 }
   ];
   const rows = enrollments.map((enrollment, index) => {
     const payment = month === null ? {} : latestSchemePayment(enrollment.installments);
@@ -1068,6 +1070,7 @@ async function getSchemePlanExportPayload(db, schemePlanId, options = {}) {
       title: reportLabel,
       subtitle: `${plan.name} · ${reportLabel}`,
       layout: 'ca-register',
+      landscape: month !== null,
       columns,
       rows,
       totalKeys: ['amount']

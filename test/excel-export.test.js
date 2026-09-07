@@ -117,6 +117,35 @@ test('writes a plain CA register without colours or filter arrows, with working 
   assert.equal(sheet.getCell('A4').fill.fgColor?.argb, undefined);
 });
 
+test('wraps long scheme customer and payment details without allowing text to overlap adjacent cells', async () => {
+  const workbookBytes = await buildExcelExport({
+    title: 'Scheme report validation', columns: [], rows: [],
+    sheets: [{
+      name: 'Month 1', title: 'Month 1 Scheme Report', subtitle: 'Monthly collection status', layout: 'ca-register', landscape: true,
+      columns: [
+        { key: 'name', label: 'Name', type: 'text', width: 32, wrap: true },
+        { key: 'mobile', label: 'Mobile No.', type: 'identifier', width: 16 },
+        { key: 'paidDate', label: 'Paid Date', type: 'text', width: 20 },
+        { key: 'paymentType', label: 'Payment Type', type: 'text', width: 34, wrap: true },
+        { key: 'amount', label: 'Amount', type: 'currency', width: 16 }
+      ],
+      rows: [{
+        name: 'A Very Long Customer Name That Must Stay Inside Its Own Cell', mobile: '', paidDate: '5-Sep-26, 8-Sep-26',
+        paymentType: 'Cash ₹1,000.00 + Bank transfer ₹1,500.00', amount: 2500
+      }]
+    }]
+  });
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(workbookBytes);
+  const sheet = workbook.getWorksheet('Month 1');
+  assert.equal(sheet.pageSetup.orientation, 'landscape');
+  assert.equal(sheet.getColumn(1).width, 32);
+  assert.equal(sheet.getColumn(2).width, 16);
+  assert.equal(sheet.getCell('A5').alignment.wrapText, true);
+  assert.equal(sheet.getCell('D5').alignment.wrapText, true);
+  assert.ok(sheet.getRow(5).height > 18);
+});
+
 test('renders the compact customer ledger register without filters or unnecessary columns', async () => {
   const workbookBytes = await buildExcelExport({
     title: 'Kusum ERP - Customer ledger validation',

@@ -90,13 +90,26 @@ function mergeAcross(sheet, row, lastColumn) {
   if (lastColumn > 1) sheet.mergeCells(row, 1, row, lastColumn);
 }
 
-function applyCaRegisterCellFormat(cell, type, alignment = 'left') {
-  cell.alignment = { vertical: 'middle', horizontal: alignment, wrapText: false };
+function applyCaRegisterCellFormat(cell, type, alignment = 'left', wrapText = false) {
+  cell.alignment = { vertical: 'middle', horizontal: alignment, wrapText };
   if (type === 'date') cell.numFmt = 'd-mmm-yy';
   else if (type === 'currency' || type === 'number') cell.numFmt = '#,##0.00;[Red]-#,##0.00';
   else if (type === 'weight') cell.numFmt = '#,##0.000;[Red]-#,##0.000';
   else if (type === 'integer') cell.numFmt = '#,##0;[Red]-#,##0';
   else cell.numFmt = ['text', 'identifier'].includes(type) ? '@' : 'General';
+}
+
+function caRegisterRowHeight(row, columns) {
+  const lines = columns.reduce((maximum, column) => {
+    if (!column.wrap) return maximum;
+    const value = String(row[column.key] || '');
+    const estimatedLines = value.split(/\r?\n/).reduce(
+      (total, line) => total + Math.max(1, Math.ceil(line.length / Math.max(8, (column.width || 16) - 2))),
+      0
+    );
+    return Math.max(maximum, estimatedLines);
+  }, 1);
+  return Math.min(54, Math.max(18, lines * 16));
 }
 
 function addCaRegisterWorksheet(workbook, spec, index, usedNames) {
@@ -153,9 +166,9 @@ function addCaRegisterWorksheet(workbook, spec, index, usedNames) {
         const cell = excelRow.getCell(columnIndex + 1);
         cell.value = cellValue(row[column.key], column.type);
         cell.font = { name: 'Arial', color: { argb: 'FF000000' } };
-        applyCaRegisterCellFormat(cell, column.type, ['currency', 'number', 'integer', 'weight'].includes(column.type) ? 'right' : 'left');
+        applyCaRegisterCellFormat(cell, column.type, ['currency', 'number', 'integer', 'weight'].includes(column.type) ? 'right' : 'left', Boolean(column.wrap));
       });
-      excelRow.height = 18;
+      excelRow.height = caRegisterRowHeight(row, columns);
     });
 
     const totals = new Set(spec.totalKeys || []);
@@ -193,7 +206,7 @@ function addCaRegisterWorksheet(workbook, spec, index, usedNames) {
 
   sheet.pageSetup = {
     paperSize: 9,
-    orientation: lastColumn > 8 ? 'landscape' : 'portrait',
+    orientation: spec.landscape || lastColumn > 8 ? 'landscape' : 'portrait',
     fitToPage: true,
     fitToWidth: 1,
     fitToHeight: 0,

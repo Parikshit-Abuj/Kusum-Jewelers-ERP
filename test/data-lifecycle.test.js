@@ -294,7 +294,7 @@ test('scheme plan monthly reports use that month payment instead of cumulative p
   assert.equal(monthTwo.sheets[0].name, 'Month 2');
   assert.equal(monthTwo.rows[0].amount, 5000);
   assert.equal(monthTwo.rows[0].paidDates, '4-Oct-26');
-  assert.equal(monthTwo.rows[0].paymentType, 'Cash ₹5000.00 (4-Oct-26)');
+  assert.equal(monthTwo.rows[0].paymentType, 'Cash ₹5000.00');
   assert.equal(consolidated.sheets[0].name, 'Consolidated');
   assert.equal(consolidated.rows[0].amount, 10000);
   assert.deepEqual(consolidated.columns.map((column) => column.label), ['Sr. No.', 'Scheme Doc No.', 'Name', 'Mobile No.', 'Amount']);
@@ -325,7 +325,7 @@ test('scheme monthly export clearly shows each split payment part', async () => 
   const payload = await getSchemePlanExportPayload(db, 9, { month: 1 });
   assert.equal(payload.rows[0].amount, 5000);
   assert.equal(payload.rows[0].paidDates, '5-Sep-26');
-  assert.equal(payload.rows[0].paymentType, 'Cash ₹1000.00 (5-Sep-26) + Bank transfer ₹4000.00 (5-Sep-26)');
+  assert.equal(payload.rows[0].paymentType, 'Cash ₹1000.00 + Bank transfer ₹4000.00');
 });
 
 test('scheme monthly export includes unpaid, partly paid and fully paid active customers', async () => {
@@ -349,8 +349,8 @@ test('scheme monthly export includes unpaid, partly paid and fully paid active c
   const payload = await getSchemePlanExportPayload(db, 10, { month: 1 });
   assert.deepEqual(payload.rows.map((row) => [row.customerName, row.amount, row.paidDates]), [
     ['Not Paid', 0, ''],
-    ['Part Paid', 2500, '5-Sep-26; 8-Sep-26'],
+    ['Part Paid', 2500, '5-Sep-26, 8-Sep-26'],
     ['Fully Paid', 5000, '9-Sep-26']
   ]);
-  assert.equal(payload.rows[1].paymentType, 'Cash ₹1000.00 (5-Sep-26) + UPI ₹1500.00 (8-Sep-26)');
+  assert.equal(payload.rows[1].paymentType, 'Cash ₹1000.00 + UPI ₹1500.00');
 });
