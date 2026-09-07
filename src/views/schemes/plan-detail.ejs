@@ -280,12 +280,12 @@
     <form method="post" action="/schemes/<%= plan.id %>/enroll" id="enrollCustomerForm">
       <div class="modal-body" style="padding: 20px; display: flex; flex-direction: column; gap: 14px;">
         <div class="pos-field">
-          <label>Customer Mobile *</label>
-          <input name="customerPhone" inputmode="numeric" maxlength="15" required placeholder="10-digit mobile" data-scheme-phone autofocus autocomplete="off">
+          <label>Customer Name *</label>
+          <input name="customerName" data-uppercase required placeholder="Full name" data-scheme-name autofocus>
         </div>
         <div class="pos-field">
-          <label>Customer Name *</label>
-          <input name="customerName" data-uppercase required placeholder="Full name" data-scheme-name>
+          <label>Customer Mobile</label>
+          <input name="customerPhone" inputmode="numeric" maxlength="15" placeholder="Optional mobile number" data-scheme-phone autocomplete="off">
         </div>
         <div class="form-grid two compact-fields">
           <div class="pos-field">
@@ -367,14 +367,14 @@
 
   const openButtons = document.querySelectorAll('[data-scheme-enroll-open]');
   const closeButtons = modal.querySelectorAll('[data-scheme-enroll-close]');
-  const phoneInput = modal.querySelector('input[name="customerPhone"]');
+  const nameInput = modal.querySelector('input[name="customerName"]');
   let previousFocus = null;
 
   function openModal() {
     previousFocus = document.activeElement;
     modal.style.display = 'flex';
     modal.setAttribute('aria-hidden', 'false');
-    setTimeout(() => phoneInput?.focus(), 60);
+    setTimeout(() => nameInput?.focus(), 60);
   }
 
   function closeModal() {

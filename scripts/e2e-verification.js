@@ -4,7 +4,6 @@ const express = require('express');
 const { createPrisma } = require('../src/lib/prisma');
 const { getExportPayload, RESOURCE_LIST, resourceFor, parseDateRange } = require('../src/lib/data-lifecycle');
 const { buildExcelExport } = require('../src/lib/excel-export');
-const { generateSqlBackup, importSqlBackup } = require('../src/lib/sql-backup-restore');
 const { dateInput, startOfToday, money, grams } = require('../src/lib/helpers');
 const { nextBarcode } = require('../src/lib/barcode-sequence');
 
@@ -345,8 +344,9 @@ async function runEndToEndVerification() {
 
       if (res.key === 'sales') {
         const sheetNames = (payload.sheets || []).map(s => s.name);
-        if (!sheetNames.includes('Invoice summary')) throw new Error('Sales export missing Invoice summary sheet');
-        if (!sheetNames.includes('Item-wise details')) throw new Error('Sales export missing Item-wise details sheet');
+        for (const requiredSheet of ['All', 'Gold', 'Silver']) {
+          if (!sheetNames.includes(requiredSheet)) throw new Error(`Sales export missing ${requiredSheet} CA register sheet`);
+        }
       }
       if (res.key === 'cashbook') {
         const sheetNames = (payload.sheets || []).map(s => s.name);
@@ -361,16 +361,8 @@ async function runEndToEndVerification() {
       }
     }
 
-    // 6. SQL Backup and Restore
-    console.log('\n6. Testing Full Database SQL Backup & Restore cycle...');
-    const sqlBackup = await generateSqlBackup(process.env.DATABASE_URL);
-    console.log(`   ✔ Generated SQL backup (${sqlBackup.sql.length} characters, filename: ${sqlBackup.filename}, tables: ${sqlBackup.tableCount})`);
-    const appRoot = path.join(__dirname, '..');
-    const restoreResult = await importSqlBackup(process.env.DATABASE_URL, sqlBackup.sql, appRoot);
-    console.log(`   ✔ Restored SQL backup successfully! Tables: ${restoreResult.tableCount}, Executed SQL statements: ${restoreResult.executedStatements}`);
-
-    // 7. EJS Template Rendering Test (All Views)
-    console.log('\n7. Testing All EJS Views for Rendering Integrity...');
+    // 6. EJS Template Rendering Test (All Views)
+    console.log('\n6. Testing All EJS Views for Rendering Integrity...');
     const app = express();
     app.set('view engine', 'ejs');
     app.set('views', path.join(__dirname, '..', 'src', 'views'));

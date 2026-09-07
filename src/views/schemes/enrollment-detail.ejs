@@ -2,6 +2,7 @@
   const plan = enrollment.schemePlan;
   const cust = enrollment.customer;
   const installments = enrollment.installments || [];
+  const payableInstallments = installments.filter((installment) => installment.status === 'PENDING');
   const paidCount = installments.filter(i => i.status === 'PAID').length;
   const pendingCount = installments.filter(i => i.status === 'PENDING' || i.status === 'OVERDUE').length;
   const progressPct = plan.durationMonths > 0 ? Math.round((paidCount / plan.durationMonths) * 100) : 0;
@@ -62,6 +63,9 @@
         </p>
       </div>
       <% if (enrollment.status === 'ACTIVE') { %>
+      <% if (payableInstallments.length) { %>
+      <button type="button" class="button secondary small" onclick="document.getElementById('scheme-record-payment').showModal()">Record Payment</button>
+      <% } %>
       <form method="post" action="/schemes/enrollments/<%= enrollment.id %>/cancel" onsubmit="return confirm('Cancel this enrollment? This cannot be undone. Payments already recorded will remain in the cashbook.')">
         <button type="submit" class="button ghost small" style="color:#c0392b;">Cancel Enrollment</button>
       </form>
@@ -130,17 +134,7 @@
             <td><%= paymentDisplay || '—' %></td>
             <td>
               <% if ((inst.status === 'PENDING' || displayStatus === 'OVERDUE') && enrollment.status === 'ACTIVE') { %>
-              <form method="post" action="/schemes/enrollments/<%= enrollment.id %>/pay" class="scheme-pay-form" data-scheme-split-payment data-monthly-amount="<%= Number(plan.monthlyAmount) %>">
-                <input type="hidden" name="installmentId" value="<%= inst.id %>">
-                <input type="hidden" name="paymentMethod" value="MIXED">
-                <input name="paymentDate" type="date" required value="<%= todayStr %>" title="Payment date" style="width:118px; font-size:12px; padding:3px 6px; border-radius:4px; border:1px solid #d5c9b1;">
-                <input name="cashPaid" type="number" min="0" step="0.01" placeholder="Cash" title="Cash amount" style="width:78px; font-size:12px; padding:3px 6px; border-radius:4px; border:1px solid #d5c9b1;">
-                <input name="upiPaid" type="number" min="0" step="0.01" placeholder="UPI" title="UPI amount" style="width:78px; font-size:12px; padding:3px 6px; border-radius:4px; border:1px solid #d5c9b1;">
-                <input name="cardPaid" type="number" min="0" step="0.01" placeholder="Card" title="Card amount" style="width:78px; font-size:12px; padding:3px 6px; border-radius:4px; border:1px solid #d5c9b1;">
-                <input name="bankPaid" type="number" min="0" step="0.01" placeholder="Bank" title="Bank transfer amount" style="width:78px; font-size:12px; padding:3px 6px; border-radius:4px; border:1px solid #d5c9b1;">
-                <span data-scheme-split-total style="font-size:12px; white-space:nowrap; color:var(--muted);">Total ₹0.00</span>
-                <button type="submit" class="button small" style="padding:3px 10px; font-size:12px;">Record</button>
-              </form>
+              <button type="button" class="button ghost small" onclick="document.getElementById('scheme-installment-id').value='<%= inst.id %>'; document.getElementById('scheme-installment-label').textContent='Month <%= inst.installmentNumber %>'; document.getElementById('scheme-record-payment').showModal()">Record</button>
               <% } else if (inst.status === 'PAID' && enrollment.status !== 'CANCELLED') { %>
                 <button type="button" class="button ghost small" onclick="document.getElementById('scheme-payment-edit-<%= inst.id %>').showModal()">Edit payment</button>
                 <dialog id="scheme-payment-edit-<%= inst.id %>" class="scheme-payment-dialog">
@@ -166,6 +160,30 @@
         </tbody>
       </table>
     </div>
+
+    <% if (enrollment.status === 'ACTIVE' && payableInstallments.length) { %>
+    <dialog id="scheme-record-payment" class="scheme-payment-dialog">
+      <form method="dialog" class="dialog-close-row"><button type="submit" class="icon-button" aria-label="Close">×</button></form>
+      <h3>Record scheme payment</h3>
+      <p class="muted"><span id="scheme-installment-label">Choose a month</span> · Total <strong><%- money(plan.monthlyAmount) %></strong></p>
+      <form method="post" action="/schemes/enrollments/<%= enrollment.id %>/pay" data-scheme-split-payment data-monthly-amount="<%= Number(plan.monthlyAmount) %>">
+        <input type="hidden" name="paymentMethod" value="MIXED">
+        <label>Installment
+          <select name="installmentId" id="scheme-installment-id" required onchange="document.getElementById('scheme-installment-label').textContent=this.options[this.selectedIndex].text">
+            <% payableInstallments.forEach((installment) => { %><option value="<%= installment.id %>">Month <%= installment.installmentNumber %> · due <%= formatDateDisplay(installment.dueDate) %></option><% }) %>
+          </select>
+        </label>
+        <label>Payment date<input name="paymentDate" type="date" required value="<%= todayStr %>"></label>
+        <div class="scheme-payment-input-grid">
+          <label>Cash<input name="cashPaid" type="number" min="0" step="0.01" placeholder="0.00"></label>
+          <label>UPI<input name="upiPaid" type="number" min="0" step="0.01" placeholder="0.00"></label>
+          <label>Card<input name="cardPaid" type="number" min="0" step="0.01" placeholder="0.00"></label>
+          <label>Bank transfer<input name="bankPaid" type="number" min="0" step="0.01" placeholder="0.00"></label>
+        </div>
+        <div class="dialog-actions"><span data-scheme-split-total class="muted">Total ₹0.00</span><button type="submit" class="button">Save payment</button></div>
+      </form>
+    </dialog>
+    <% } %>
 
     <% if (enrollment.notes) { %>
     <div style="margin-top:16px; padding:10px 14px; background:#faf7f2; border-radius:8px; font-size:13px; color:#5a4933;">

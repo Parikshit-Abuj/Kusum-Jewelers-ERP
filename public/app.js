@@ -198,27 +198,6 @@ document.querySelectorAll('.flash').forEach((el) => {
   const makingValueInput = form.querySelector('[data-making-value]');
   const sellingPriceInput = form.querySelector('[data-selling-price]');
 
-  // Purity options per metal
-  const purityOptions = {
-    GOLD: [
-      { value: '22K', label: '22K Gold' },
-      { value: '24K', label: '24K Gold' },
-    ],
-    SILVER: [
-      { value: '', label: 'Not specified' },
-    ],
-    PLATINUM: [
-      { value: 'PT950', label: 'Platinum 950' },
-    ],
-    DIAMOND: [
-      { value: '18K', label: '18K Gold (Diamond)' },
-      { value: '22K', label: '22K Gold (Diamond)' },
-    ],
-    OTHER: [
-      { value: 'OTHER', label: 'Other' },
-    ],
-  };
-
   function getBarcodePrefixPreview(metal, purity) {
     if (metal === 'GOLD') return 'G';
     if (metal === 'SILVER') return 'S';
@@ -238,20 +217,6 @@ document.querySelectorAll('.flash').forEach((el) => {
     if (type === 'FIXED') return v;
     if (type === 'PERCENTAGE') return metalAmount * v / 100;
     return v * n(weight); // PER_GRAM
-  }
-
-  function updatePurityOptions() {
-    if (!metalSel || !puritySel) return;
-    const metal = metalSel.value;
-    const opts = purityOptions[metal] || [{ value: 'OTHER', label: 'Other' }];
-    const current = puritySel.value;
-    puritySel.replaceChildren(...opts.map((option) => {
-      const element = document.createElement('option');
-      element.value = option.value;
-      element.textContent = option.label;
-      element.selected = option.value === current;
-      return element;
-    }));
   }
 
   function updateReadouts() {
@@ -307,16 +272,15 @@ document.querySelectorAll('.flash').forEach((el) => {
     }
     if (targetMetal && metalSel.value !== targetMetal) {
       metalSel.value = targetMetal;
-      updatePurityOptions();
       updateReadouts();
     }
   }
 
   if (metalSel) {
-    metalSel.addEventListener('change', () => { updatePurityOptions(); updateReadouts(); });
+    metalSel.addEventListener('change', updateReadouts);
   }
   if (puritySel) {
-    puritySel.addEventListener('change', updateReadouts);
+    puritySel.addEventListener('input', updateReadouts);
   }
   if (nameInput) {
     nameInput.addEventListener('input', () => {
@@ -330,7 +294,6 @@ document.querySelectorAll('.flash').forEach((el) => {
   if (makingValueInput) makingValueInput.addEventListener('input', updateReadouts);
 
   // Run on load
-  updatePurityOptions();
   updateReadouts();
   if (nameInput && nameInput.value) {
     autoDetectMetal(nameInput.value);
@@ -384,7 +347,9 @@ document.querySelectorAll('.flash').forEach((el) => {
     newFields.hidden = false;
     [nameInput, panInput, emailInput, addressInput].filter(Boolean).forEach((input) => { input.disabled = false; });
     nameInput.required = true;
-    status.textContent = `${phone} is new. Enter the name to create this customer automatically when the bill is saved.`;
+    status.textContent = phone
+      ? `${phone} is new. Enter the name to create this customer automatically when the bill is saved.`
+      : 'Mobile number is optional. Enter the customer name to create their ledger when the bill is saved.';
     status.className = 'customer-lookup-status is-new';
   }
 
@@ -461,6 +426,10 @@ document.querySelectorAll('.flash').forEach((el) => {
   async function lookupCustomer() {
     const phone = normalizedPhone();
     phoneInput.value = phone;
+    if (!phone) {
+      showNewCustomer('');
+      return;
+    }
     if (phone.length < 10 || phone.length > 15) {
       clearLookup('Enter a valid 10 to 15 digit customer mobile number.');
       return;
@@ -483,7 +452,8 @@ document.querySelectorAll('.flash').forEach((el) => {
     clearTimeout(lookupTimer);
     const digits = normalizedPhone();
     if (digits.length >= 10) lookupTimer = setTimeout(lookupCustomer, 350);
-    else clearLookup('Enter the customer’s mobile number to load their ledger details.');
+    else if (!digits) showNewCustomer('');
+    else clearLookup('Enter a valid 10 to 15 digit mobile number, or leave it blank.');
   });
   phoneInput.addEventListener('blur', lookupCustomer);
   phoneInput.addEventListener('keydown', async (event) => {
@@ -499,7 +469,7 @@ document.querySelectorAll('.flash').forEach((el) => {
       existingPanInput.focus();
     }
   });
-  clearLookup('Enter the customer’s mobile number to load their ledger details.');
+  showNewCustomer('');
 })();
 
 /* ═══════════════════════════════════════════════════════════════
@@ -546,7 +516,6 @@ document.querySelectorAll('.flash').forEach((el) => {
   const urdEnabled = form.querySelector('[data-urd-enabled]');
   const urdFields = form.querySelector('[data-urd-fields]');
   const urdMetal = form.querySelector('[data-urd-metal]');
-  const urdPuritySelect = form.querySelector('[data-urd-purity-select]');
   const urdPurityManual = form.querySelector('[data-urd-purity-manual]');
   const urdGrossWeight = form.querySelector('[data-urd-gross-weight]');
   const urdNetWeight = form.querySelector('[data-urd-net-weight]');
@@ -1077,24 +1046,14 @@ document.querySelectorAll('.flash').forEach((el) => {
 
   function updateUrdRate() {
     if (!urdRate || !urdMetal) return;
-    // A custom purity has no reliable daily-rate mapping. Keep the rate
-    // editable instead of silently applying the 22K price to another grade.
-    if (urdMetal.value === 'GOLD' && urdPuritySelect?.value === 'CUSTOM') return;
+    // A manually entered purity maps automatically only for the two daily
+    // gold rates. Any other grade keeps the cashier-entered rate unchanged.
+    const purity = String(urdPurityManual?.value || '').trim().toUpperCase();
+    if (urdMetal.value === 'GOLD' && purity && purity !== '22K' && purity !== '24K') return;
     const rate = urdMetal.value === 'SILVER' ? n(urdRate.dataset.rateSilver)
-      : urdPuritySelect?.value === '24K' ? n(urdRate.dataset.rate24)
+      : purity === '24K' ? n(urdRate.dataset.rate24)
         : n(urdRate.dataset.rate22);
     if (rate > 0) urdRate.value = rate.toFixed(2);
-  }
-
-  function syncUrdPurityControl() {
-    if (!urdMetal || !urdPuritySelect || !urdPurityManual) return;
-    const isManual = urdMetal.value !== 'GOLD' || urdPuritySelect.value === 'CUSTOM';
-    const fieldsEnabled = Boolean(urdEnabled?.checked);
-    urdPuritySelect.hidden = isManual;
-    urdPuritySelect.disabled = !fieldsEnabled || isManual;
-    urdPurityManual.hidden = !isManual;
-    urdPurityManual.disabled = !fieldsEnabled || !isManual;
-    if (!isManual && !urdPuritySelect.value) urdPuritySelect.value = '22K';
   }
 
   function recalcUrdAmount() {
@@ -1108,7 +1067,6 @@ document.querySelectorAll('.flash').forEach((el) => {
     const enabled = urdEnabled.checked;
     urdFields.hidden = !enabled;
     urdFields.querySelectorAll('input, select, textarea').forEach((input) => { input.disabled = !enabled; });
-    syncUrdPurityControl();
     // Existing invoices must retain their recorded URD rate and valuation
     // when the edit form first opens. New invoices and cashier changes still
     // calculate from the current selected rate exactly as before.
@@ -1118,11 +1076,9 @@ document.querySelectorAll('.flash').forEach((el) => {
 
   if (urdEnabled) urdEnabled.addEventListener('change', toggleUrdFields);
   if (urdMetal) urdMetal.addEventListener('change', () => {
-    syncUrdPurityControl();
     updateUrdRate(); recalcUrdAmount();
   });
-  if (urdPuritySelect) urdPuritySelect.addEventListener('change', () => { updateUrdRate(); recalcUrdAmount(); });
-  if (urdPurityManual) urdPurityManual.addEventListener('input', recalcUrdAmount);
+  if (urdPurityManual) urdPurityManual.addEventListener('input', () => { updateUrdRate(); recalcUrdAmount(); });
   if (urdGrossWeight && urdNetWeight) urdGrossWeight.addEventListener('input', () => { urdNetWeight.value = urdGrossWeight.value; recalcUrdAmount(); });
   if (urdNetWeight) urdNetWeight.addEventListener('input', recalcUrdAmount);
   if (urdRate) urdRate.addEventListener('input', recalcUrdAmount);
@@ -1273,9 +1229,9 @@ document.querySelectorAll('.flash').forEach((el) => {
 
     const phoneInput = form.querySelector('[data-customer-phone]');
     const phoneDigits = (phoneInput?.value || '').replace(/\D/g, '');
-    if (!phoneDigits || phoneDigits.length < 10 || phoneDigits.length > 15) {
+    if (phoneDigits && (phoneDigits.length < 10 || phoneDigits.length > 15)) {
       event.preventDefault();
-      alert('Enter a valid customer mobile number (10 to 15 digits).');
+      alert('Enter a valid customer mobile number (10 to 15 digits), or leave it blank.');
       phoneInput?.focus();
       return;
     }
@@ -1647,23 +1603,6 @@ function updateInventoryLabelBatchState() {
   const printBtn = document.getElementById('batchPrintBtn');
   const tbody = modal.querySelector('[data-batch-items-tbody]');
 
-  // Purity options
-  const purityOptions = {
-    GOLD: [
-      { value: '22K', label: '22K Gold' },
-      { value: '24K', label: '24K Gold' },
-    ],
-    SILVER: [
-      { value: '', label: 'Not specified' },
-    ],
-    PLATINUM: [
-      { value: 'PT950', label: 'Platinum 950' },
-    ],
-    OTHER: [
-      { value: '', label: 'Standard / None' },
-    ],
-  };
-
   let sessionPieces = [];
   let liveRates = null;
   let isSelectingAutocomplete = false;
@@ -1706,20 +1645,6 @@ function updateInventoryLabelBatchState() {
     docNoInput.title = 'A unique batch document number is assigned when the first piece is saved.';
   }
 
-  function updatePurities() {
-    const metal = metalSel.value;
-    const opts = purityOptions[metal] || purityOptions.OTHER;
-    puritySel.innerHTML = '';
-    opts.forEach((o, i) => {
-      const opt = document.createElement('option');
-      opt.value = o.value;
-      opt.textContent = o.label;
-      if (i === 0) opt.selected = true;
-      puritySel.appendChild(opt);
-    });
-    updateRateDisplay();
-  }
-
   function updateRateDisplay() {
     if (!rateTextEl) return;
     if (!liveRates) {
@@ -1745,17 +1670,17 @@ function updateInventoryLabelBatchState() {
     if (lower.includes('silver') || lower.includes('chandi')) {
       if (metalSel.value !== 'SILVER') {
         metalSel.value = 'SILVER';
-        updatePurities();
+        updateRateDisplay();
       }
     } else if (lower.includes('gold') || lower.includes('sona')) {
       if (metalSel.value !== 'GOLD') {
         metalSel.value = 'GOLD';
-        updatePurities();
+        updateRateDisplay();
       }
     } else if (lower.includes('platinum')) {
       if (metalSel.value !== 'PLATINUM') {
         metalSel.value = 'PLATINUM';
-        updatePurities();
+        updateRateDisplay();
       }
     }
   }
@@ -1831,8 +1756,8 @@ function updateInventoryLabelBatchState() {
     });
   }
 
-  metalSel?.addEventListener('change', updatePurities);
-  puritySel?.addEventListener('change', updateRateDisplay);
+  metalSel?.addEventListener('change', updateRateDisplay);
+  puritySel?.addEventListener('input', updateRateDisplay);
 
   // Weight auto-sync
   function syncWeights() {
@@ -1889,7 +1814,7 @@ function updateInventoryLabelBatchState() {
     modal.style.display = 'flex';
     modal.setAttribute('aria-hidden', 'false');
     fetchLiveRates();
-    updatePurities();
+    updateRateDisplay();
     if (!docNoInput.value) clearNewBatchDocument();
     setTimeout(() => {
       if (nameInput && !nameInput.value) {
@@ -2013,7 +1938,7 @@ function updateInventoryLabelBatchState() {
         if (categoryInput && first.category) categoryInput.value = first.category;
         if (metalSel && first.metal) {
           metalSel.value = first.metal;
-          updatePurities();
+          updateRateDisplay();
           if (puritySel && first.purity) puritySel.value = first.purity;
         }
         if (makingTypeSel && first.makingChargeType) makingTypeSel.value = first.makingChargeType;

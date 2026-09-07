@@ -18,14 +18,15 @@ test('invalid weight does not accidentally filter available stock', () => {
   assert.equal(weightClause(''), null);
 });
 
-test('URD Silver purity controls use manual input instead of preset Silver choices', () => {
+test('all URD purity controls are handwritten fields, without preset purity dropdowns', () => {
   const files = [
     path.join(__dirname, '..', 'src', 'views', 'urd-purchases', 'form.ejs'),
     path.join(__dirname, '..', 'src', 'views', 'sales', 'form.ejs')
   ];
   for (const file of files) {
     const source = fs.readFileSync(file, 'utf8');
-    assert.match(source, /data-urd-purity-manual/);
+    assert.match(source, /data-urd-purity(?:-manual)?/);
+    assert.doesNotMatch(source, /data-urd-purity-select/);
     assert.doesNotMatch(source, /Silver 925|Pure Silver/);
   }
 });

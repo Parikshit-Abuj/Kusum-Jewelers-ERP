@@ -59,16 +59,12 @@ New-Item -ItemType Directory -Path $outputPath -Force | Out-Null
 # Use an allowlist-oriented set of filters. Only runtime application files and
 # production dependencies may enter the shop package; development/audit scripts
 # are deliberately unreachable from a client installation.
-# SQL backup/restore is retained for isolated QA only. The shop ERP uses
-# MySQL Workbench or the MySQL command line for manual backups, and no
-# production route imports this helper.
 & node $packager $projectRoot 'Kusum ERP' --platform=win32 --arch=x64 --out=$outputPath --overwrite --prune=true --asar=false --electron-zip-dir=$electronZipDirectory `
   --ignore='^/(?!electron-main\.js$|package\.json$|public(?:/|$)|src(?:/|$)|prisma(?:/|$)|scripts(?:/|$)|node_modules(?:/|$)).*' `
   --ignore='^/scripts/(?!print-tspl\.ps1$|list-printers\.ps1$).*' `
   --ignore='^/prisma/(?!schema\.prisma$|migrations(?:/|$)).*' `
   --ignore='^/src/excel-runtime/node_modules(?:/|$)' `
-  --ignore='^/src/excel-runtime/verify-export\.mjs$' `
-  --ignore='^/src/lib/sql-backup-restore\.js$'
+  --ignore='^/src/excel-runtime/verify-export\.mjs$'
 if ($LASTEXITCODE -ne 0) { throw 'Could not package the Electron desktop ERP.' }
 
 $applicationDirectory = Join-Path $outputPath 'Kusum ERP-win32-x64'
@@ -123,18 +119,32 @@ foreach ($developmentNamespace in @('@electron', '@types')) {
 $packageCache = Join-Path $applicationNodeModules '.cache'
 if (Test-Path -LiteralPath $packageCache) { Remove-Item -LiteralPath $packageCache -Recurse -Force }
 
-# npm packages sometimes retain their upstream unit-test and coverage folders
-# even after Electron Packager prunes development dependencies. They are not
-# loaded by the ERP at runtime, so remove only these verified dependency
-# artifacts from the delivered application.
-$dependencyTestArtifacts = @(Get-ChildItem -LiteralPath $applicationNodeModules -Recurse -Directory -Force |
-  Where-Object { $_.Name -in @('test', 'tests', 'coverage') })
-foreach ($artifact in $dependencyTestArtifacts) {
-  Remove-Item -LiteralPath $artifact.FullName -Recurse -Force
-}
+# Do not recursively delete folders called test, tests or coverage from
+# production dependencies. A package may legitimately load a file beneath
+# one of those paths; deleting it can turn a valid release into a
+# "Cannot find module" failure on the shop PC. Electron Packager's
+# --prune=true already excludes declared development dependencies.
 
 $copiedEnv = Join-Path $applicationDirectory 'resources\app\.env'
 if (Test-Path -LiteralPath $copiedEnv) { Remove-Item -LiteralPath $copiedEnv -Force }
+
+# Load the core production modules from the packaged application's own
+# node_modules folder. This catches incomplete dependency copies before a
+# release folder is handed to the shop, without starting the ERP or touching
+# MySQL data.
+$moduleSmokeTest = @'
+const path = require('path');
+const { createRequire } = require('module');
+const appDirectory = process.argv[1];
+const requireFromPackage = createRequire(path.join(appDirectory, 'package.json'));
+for (const dependency of [
+  'express', 'body-parser', 'ejs', 'express-session', 'mysql2',
+  '@prisma/client', 'exceljs', 'pdfkit', 'qrcode', 'dotenv'
+]) requireFromPackage(dependency);
+console.log('Packaged ERP production dependencies loaded successfully.');
+'@
+& node -e $moduleSmokeTest (Join-Path $applicationDirectory 'resources\app')
+if ($LASTEXITCODE -ne 0) { throw 'Unsafe build: a required production dependency could not be loaded from the packaged ERP.' }
 
 $instructions = @'
 Kusum ERP - Portable desktop package

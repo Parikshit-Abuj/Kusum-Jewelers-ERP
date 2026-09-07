@@ -104,15 +104,21 @@ function schemeInstallmentPaymentSummary(installment = {}) {
     : Number(installment.paidAmount || 0) > 0 && installment.paymentDate
       ? [{ amount: installment.paidAmount, paymentDate: installment.paymentDate, paymentMethod: installment.paymentMethod }]
       : [];
-  const paid = savedPayments.filter((payment) => Number(payment.amount || 0) > 0 && payment.paymentDate);
-  if (!paid.length) return { paidDate: '', paymentType: '' };
-  const paidDate = [...paid].sort((a, b) => String(a.paymentDate).localeCompare(String(b.paymentDate))).at(-1).paymentDate;
+  const paid = savedPayments
+    .filter((payment) => Number(payment.amount || 0) > 0 && payment.paymentDate)
+    .sort((a, b) => String(a.paymentDate).localeCompare(String(b.paymentDate)));
+  if (!paid.length) return { paidDates: '', paymentType: '' };
+
+  // An installment may be paid in parts on different dates. Keep every
+  // payment date and component visible so its Amount total is never shown
+  // beside only the latest receipt details.
+  const dates = [...new Set(paid.map((payment) => exportDate(payment.paymentDate)))];
   return {
-    paidDate,
-    // Keep the exact split visible to the CA: Cash ₹1,000.00 + Bank transfer ₹4,000.00.
+    paidDates: dates.map(displayDate).join('; '),
+    // Keep the exact split visible to the CA, including the date when an
+    // installment was collected across multiple receipts.
     paymentType: paid
-      .filter((payment) => payment.paymentDate === paidDate)
-      .map((payment) => `${paymentLabel(payment.paymentMethod)} ₹${num(payment.amount).toFixed(2)}`)
+      .map((payment) => `${paymentLabel(payment.paymentMethod)} ₹${num(payment.amount).toFixed(2)} (${displayDate(exportDate(payment.paymentDate))})`)
       .join(' + ')
   };
 }
@@ -120,10 +126,10 @@ function schemeInstallmentPaymentSummary(installment = {}) {
 function latestSchemePayment(installments = []) {
   const paid = installments
     .map((installment) => ({ installment, ...schemeInstallmentPaymentSummary(installment) }))
-    .filter((item) => item.paidDate);
-  if (!paid.length) return { paidDate: '', paymentType: '' };
-  const latest = [...paid].sort((a, b) => String(a.paidDate).localeCompare(String(b.paidDate)) || Number(a.installment.installmentNumber || 0) - Number(b.installment.installmentNumber || 0)).at(-1);
-  return { paidDate: latest.paidDate, paymentType: latest.paymentType };
+    .filter((item) => item.paidDates);
+  if (!paid.length) return { paidDates: '', paymentType: '' };
+  const latest = [...paid].sort((a, b) => Number(a.installment.installmentNumber || 0) - Number(b.installment.installmentNumber || 0)).at(-1);
+  return { paidDates: latest.paidDates, paymentType: latest.paymentType };
 }
 
 function makingLabel(value) {
@@ -871,8 +877,9 @@ async function getExportPayload(db, key, range, options = {}) {
         col.identifier('enrollmentNumber', 'Scheme Doc No.', 22),
         col.text('customerName', 'Name', 28),
         col.identifier('customerPhone', 'Mobile No.', 18),
-        col.date('paidDate', 'Paid Date'),
-        col.text('paymentType', 'Payment Type', 34),
+        // This is a consolidated lifetime register. It intentionally omits
+        // payment date and method: either one beside the accumulated amount
+        // could falsely imply that the whole total was paid that way/on that day.
         col.currency('amount', 'Amount')
       ];
       const rows = enrollments.map((enrollment, index) => ({
@@ -880,8 +887,7 @@ async function getExportPayload(db, key, range, options = {}) {
         enrollmentNumber: enrollment.enrollmentNumber,
         customerName: enrollment.customer?.name || 'Unknown customer',
         customerPhone: enrollment.customer?.phone || '',
-        amount: num(enrollment.totalPaid),
-        ...latestSchemePayment(enrollment.installments)
+        amount: num(enrollment.totalPaid)
       }));
       return exportEnvelope(resource, range, columns, rows, {
         sheets: [{
@@ -1023,17 +1029,22 @@ async function getSchemePlanExportPayload(db, schemePlanId, options = {}) {
   });
   assertExportRows(enrollments, 'Scheme report');
 
+  // A consolidated report carries a lifetime total, so it deliberately shows
+  // no payment date or method beside that total. A month report lists every
+  // active enrollment, including unpaid and partly paid installments.
   const columns = [
     col.integer('srNo', 'Sr. No.', 9),
     col.identifier('enrollmentNumber', 'Scheme Doc No.', 22),
     col.text('customerName', 'Name', 28),
     col.identifier('customerPhone', 'Mobile No.', 18),
-    col.date('paidDate', 'Paid Date'),
-    col.text('paymentType', 'Payment Type', 34),
+    ...(month === null ? [] : [
+      col.text('paidDates', 'Paid Date', 26),
+      col.text('paymentType', 'Payment Type', 48)
+    ]),
     col.currency('amount', 'Amount')
   ];
   const rows = enrollments.map((enrollment, index) => {
-    const payment = latestSchemePayment(enrollment.installments);
+    const payment = month === null ? {} : latestSchemePayment(enrollment.installments);
     return {
       srNo: index + 1,
       enrollmentNumber: enrollment.enrollmentNumber,

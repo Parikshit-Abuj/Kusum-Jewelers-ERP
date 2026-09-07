@@ -800,8 +800,8 @@
             <input name="saleDate" type="date" value="<%= editingSale ? editSale.saleDate : dateInput() %>" data-sale-date required>
           </div>
           <div class="pos-field">
-            <label>Customer Mobile Number *</label>
-            <input name="customerPhone" inputmode="numeric" autocomplete="tel" maxlength="15" required placeholder="Type 10-digit mobile number" data-customer-phone autofocus value="<%= (editingSale && editSale.customer?.phone) ? editSale.customer.phone : '' %>">
+            <label>Customer Mobile Number</label>
+            <input name="customerPhone" inputmode="numeric" autocomplete="tel" maxlength="15" placeholder="Optional mobile number" data-customer-phone autofocus value="<%= (editingSale && editSale.customer?.phone) ? editSale.customer.phone : '' %>">
           </div>
         </div>
 
@@ -829,7 +829,7 @@
         <section class="customer-lookup" data-customer-lookup>
           <input type="hidden" name="customerId" data-customer-id>
           <div class="cust-status-badge" data-customer-status>
-            Enter customer mobile number above to load their ledger or register a new customer.
+            Enter a customer name. A mobile number is optional and can be used to load an existing ledger.
           </div>
 
           <!-- Existing Customer Found -->
@@ -903,10 +903,7 @@
               </div>
               <div class="pos-field">
                 <label>Purity</label>
-                <% const editUrdPurity = editingSale && editSale.urd?.purity ? String(editSale.urd.purity).toUpperCase() : ''; %>
-                <% const customGoldUrdPurity = editingSale && editSale.urd?.metal === 'GOLD' && !['22K', '24K'].includes(editUrdPurity); %>
-                <select name="urdPurity" data-urd-purity-select><option value="22K" <%= editUrdPurity === '22K' ? 'selected' : '' %>>22K</option><option value="24K" <%= editUrdPurity === '24K' ? 'selected' : '' %>>24K</option><option value="CUSTOM" <%= customGoldUrdPurity ? 'selected' : '' %>>Other / Enter manually</option></select>
-                <input name="urdPurity" data-urd-purity-manual hidden disabled maxlength="50" placeholder="Enter purity" value="<%= (editingSale && (editSale.urd?.metal === 'SILVER' || customGoldUrdPurity)) ? editSale.urd.purity : '' %>">
+                <input name="urdPurity" data-urd-purity-manual maxlength="50" placeholder="e.g. 22K, 24K, 925, 99.9" value="<%= (editingSale && editSale.urd?.purity) ? editSale.urd.purity : '' %>">
               </div>
               <div class="pos-field">
                 <label>Gross Wt. (g)</label>

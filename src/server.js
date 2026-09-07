@@ -388,9 +388,11 @@ function validCustomerPhone(phone) {
 
 async function resolveBillingCustomer(tx, body) {
   const phone = normalizePhone(body.customerPhone);
-  if (!validCustomerPhone(phone)) throw new Error('Enter a valid customer mobile number (10 to 15 digits) before billing.');
+  if (phone && !validCustomerPhone(phone)) throw new Error('Enter a valid customer mobile number (10 to 15 digits), or leave it blank.');
   const panNumber = String(body.customerPan || body.existingCustomerPan || '').trim().toUpperCase() || null;
-  const existing = await tx.customer.findUnique({ where: { phone } });
+  // A blank mobile number is valid for a walk-in customer. Never look up an
+  // empty value: otherwise unrelated walk-in customers could be merged.
+  const existing = phone ? await tx.customer.findUnique({ where: { phone } }) : null;
   if (existing) {
     if (panNumber && existing.panNumber !== panNumber) {
       await tx.customer.update({ where: { id: existing.id }, data: { panNumber } });
@@ -401,9 +403,9 @@ async function resolveBillingCustomer(tx, body) {
   // Billing customer details are stored in a consistent print-ready form even
   // when a request is submitted without the browser's title-case formatting.
   const name = titleCase(body.customerName);
-  if (!name) throw new Error('This mobile number is new. Enter the customer name to create their customer ledger.');
+  if (!name) throw new Error('Enter the customer name to create their customer ledger.');
   return tx.customer.create({ data: {
-    phone, name, email: String(body.customerEmail || '').trim() || null,
+    phone: phone || null, name, email: String(body.customerEmail || '').trim() || null,
     address: titleCase(body.customerAddress) || null,
     panNumber
   } });
@@ -1039,7 +1041,7 @@ app.post('/api/inventory/batch-piece', express.json(), async (req, res, next) =>
     const name = titleCase(req.body.name);
     const category = titleCase(req.body.category);
     const metal = ['GOLD', 'SILVER', 'PLATINUM', 'DIAMOND', 'OTHER'].includes(req.body.metal) ? req.body.metal : 'SILVER';
-    const purity = metal === 'SILVER' ? null : (req.body.purity || null);
+    const purity = String(req.body.purity || '').trim().toUpperCase() || null;
     const grossWeight = Math.max(0, number(req.body.grossWeight));
     const stoneWeight = Math.max(0, number(req.body.stoneWeight));
     const netWeight = number(req.body.netWeight) > 0 ? number(req.body.netWeight) : Math.max(0, grossWeight - stoneWeight);
@@ -1134,7 +1136,7 @@ app.put('/api/inventory/batch-piece/:id', express.json(), async (req, res, next)
         throw new Error(`Metal cannot be changed after barcode ${existing.barcode || 'generation'}. Delete the unsold item and add it again so its barcode remains correct.`);
       }
       const requestedPurity = req.body.purity !== undefined ? req.body.purity : existing.purity;
-      const purity = metal === 'SILVER' ? null : requestedPurity;
+      const purity = String(requestedPurity || '').trim().toUpperCase() || null;
       const name = req.body.name ? titleCase(req.body.name) : existing.name;
       const category = req.body.category ? titleCase(req.body.category) : existing.category;
       const makingChargeType = ['FIXED', 'PER_GRAM', 'PERCENTAGE'].includes(req.body.makingChargeType) ? req.body.makingChargeType : existing.makingChargeType;
@@ -1206,7 +1208,7 @@ app.post('/inventory', async (req, res, next) => {
     const product = await prisma.$transaction(async (tx) => {
       const rateInfo = await getRateForDate(tx);
       const metal = ['GOLD', 'SILVER', 'PLATINUM', 'DIAMOND', 'OTHER'].includes(req.body.metal) ? req.body.metal : 'GOLD';
-      const purity = metal === 'SILVER' ? null : (req.body.purity || null);
+      const purity = String(req.body.purity || '').trim().toUpperCase() || null;
       const itemName = titleCase(req.body.name);
       const category = titleCase(req.body.category);
       const netWeight = number(req.body.netWeight);
@@ -1265,7 +1267,7 @@ app.post('/inventory/:id', async (req, res, next) => {
       if (metal !== existing.metal) {
         throw new Error(`Metal cannot be changed after barcode ${existing.barcode || 'generation'}. Delete the unsold item and add it again so its barcode remains correct.`);
       }
-      const purity = metal === 'SILVER' ? null : (req.body.purity || null);
+      const purity = String(req.body.purity || '').trim().toUpperCase() || null;
       const itemName = titleCase(req.body.name);
       const category = titleCase(req.body.category);
       const netWeight = number(req.body.netWeight);
@@ -1348,8 +1350,8 @@ app.get('/customers', async (req, res, next) => {
 app.post('/customers', async (req, res, next) => {
   try {
     const phone = normalizePhone(req.body.phone);
-    if (!validCustomerPhone(phone)) return redirectWith(res, '/customers', 'error', 'Enter a valid customer mobile number (10 to 15 digits).');
-    const customer = await prisma.customer.create({ data: { name: titleCase(req.body.name), phone, email: req.body.email || null, address: titleCase(req.body.address) || null, panNumber: String(req.body.panNumber || '').trim().toUpperCase() || null } });
+    if (phone && !validCustomerPhone(phone)) return redirectWith(res, '/customers', 'error', 'Enter a valid customer mobile number (10 to 15 digits), or leave it blank.');
+    const customer = await prisma.customer.create({ data: { name: titleCase(req.body.name), phone: phone || null, email: req.body.email || null, address: titleCase(req.body.address) || null, panNumber: String(req.body.panNumber || '').trim().toUpperCase() || null } });
     redirectWith(res, '/customers', 'message', 'Customer added.');
   } catch (error) {
     if (error.code === 'P2002') return redirectWith(res, '/customers', 'error', 'That phone number already belongs to a customer.');
@@ -1363,9 +1365,9 @@ app.post('/customers/:id', async (req, res, next) => {
     const phone = normalizePhone(req.body.phone);
     const name = titleCase(req.body.name);
     if (!name) return redirectWith(res, `/customers/${customerId}`, 'error', 'Enter the customer name.');
-    if (!validCustomerPhone(phone)) return redirectWith(res, `/customers/${customerId}`, 'error', 'Enter a valid customer mobile number (10 to 15 digits).');
+    if (phone && !validCustomerPhone(phone)) return redirectWith(res, `/customers/${customerId}`, 'error', 'Enter a valid customer mobile number (10 to 15 digits), or leave it blank.');
     await prisma.customer.update({ where: { id: customerId }, data: {
-      name, phone, email: String(req.body.email || '').trim() || null,
+      name, phone: phone || null, email: String(req.body.email || '').trim() || null,
       address: titleCase(req.body.address) || null, panNumber: String(req.body.panNumber || '').trim().toUpperCase() || null
     } });
     redirectWith(res, `/customers/${customerId}`, 'message', 'Customer details updated across linked invoices and registers.');
@@ -1905,14 +1907,14 @@ app.post('/sales/:id/edit', async (req, res, next) => {
       const name = titleCase(req.body.customerName);
       const phone = normalizePhone(req.body.customerPhone);
       if (!name) throw new Error('Enter the customer name.');
-      if (!validCustomerPhone(phone)) throw new Error('Enter a valid customer mobile number (10 to 15 digits).');
+      if (phone && !validCustomerPhone(phone)) throw new Error('Enter a valid customer mobile number (10 to 15 digits), or leave it blank.');
       const panNumber = String(req.body.customerPan || '').trim().toUpperCase() || null;
       const email = String(req.body.customerEmail || '').trim() || null;
       const address = titleCase(req.body.customerAddress) || null;
 
       // Resolve customer by phone to avoid P2002 conflict and support reassigning/assigning customer
       let finalCustomerId = sale.customerId;
-      const existingCustomerWithPhone = await tx.customer.findUnique({ where: { phone } });
+      const existingCustomerWithPhone = phone ? await tx.customer.findUnique({ where: { phone } }) : null;
       if (existingCustomerWithPhone) {
         finalCustomerId = existingCustomerWithPhone.id;
         await tx.customer.update({
@@ -1927,11 +1929,11 @@ app.post('/sales/:id/edit', async (req, res, next) => {
       } else if (sale.customerId && sale.customer) {
         await tx.customer.update({
           where: { id: sale.customerId },
-          data: { name, phone, email, address, panNumber }
+          data: { name, phone: phone || null, email, address, panNumber }
         });
       } else {
         const newCustomer = await tx.customer.create({
-          data: { name, phone, email, address, panNumber }
+          data: { name, phone: phone || null, email, address, panNumber }
         });
         finalCustomerId = newCustomer.id;
       }
@@ -2841,12 +2843,12 @@ app.get('/schemes', async (req, res, next) => {
     const [schemePlans, activePlans, totalEnrollments, activeEnrollments, collected] = await Promise.all([
       prisma.schemePlan.findMany({
         orderBy: { createdAt: 'desc' },
-        include: { _count: { select: { enrollments: true } } }
+        include: { _count: { select: { enrollments: { where: { status: { not: 'CANCELLED' } } } } } }
       }),
       prisma.schemePlan.count({ where: { isActive: true } }),
-      prisma.schemeEnrollment.count(),
+      prisma.schemeEnrollment.count({ where: { status: { not: 'CANCELLED' } } }),
       prisma.schemeEnrollment.count({ where: { status: 'ACTIVE' } }),
-      prisma.schemeEnrollment.aggregate({ _sum: { totalPaid: true } })
+      prisma.schemeEnrollment.aggregate({ where: { status: { not: 'CANCELLED' } }, _sum: { totalPaid: true } })
     ]);
     const schemeStats = {
       activePlans,
@@ -2863,11 +2865,13 @@ app.get('/schemes/plans/:id', async (req, res, next) => {
     const id = Number(req.params.id);
     const plan = await prisma.schemePlan.findUnique({
       where: { id },
-      include: { _count: { select: { enrollments: true } } }
+      include: { _count: { select: { enrollments: { where: { status: { not: 'CANCELLED' } } } } } }
     });
     if (!plan) return res.status(404).render('not-found', { title: 'Scheme plan not found' });
 
-    const enrollmentWhere = { schemePlanId: id };
+    // Cancelled customers remain in the audit trail and Cashbook, but are not
+    // shown in operational scheme screens or counts.
+    const enrollmentWhere = { schemePlanId: id, status: { not: 'CANCELLED' } };
     const totalItems = await prisma.schemeEnrollment.count({ where: enrollmentWhere });
     const pagination = paginationFor(req, totalItems, req.query.page, 50);
     const [enrollments, enrollmentSummary] = await Promise.all([
@@ -2897,14 +2901,13 @@ app.get('/schemes/plans/:id', async (req, res, next) => {
     const summaryByStatus = new Map(enrollmentSummary.map((row) => [row.status, row]));
     const activeEnrollments = Number(summaryByStatus.get('ACTIVE')?._count._all || 0);
     const completedEnrollments = Number(summaryByStatus.get('COMPLETED')?._count._all || 0);
-    const cancelledEnrollments = Number(summaryByStatus.get('CANCELLED')?._count._all || 0);
     const totalCollected = enrollmentSummary.reduce((sum, row) => sum + Number(row._sum.totalPaid || 0), 0);
 
     const stats = {
       totalEnrollments: totalItems,
       activeEnrollments,
       completedEnrollments,
-      cancelledEnrollments,
+      cancelledEnrollments: 0,
       totalCollected
     };
 
@@ -3040,7 +3043,7 @@ app.post('/schemes/:planId/enroll', async (req, res, next) => {
     const name = titleCase(req.body.customerName);
     const phone = normalizePhone(req.body.customerPhone);
     if (!name) return redirectWith(res, '/schemes', 'error', 'Enter the customer name.');
-    if (!validCustomerPhone(phone)) return redirectWith(res, '/schemes', 'error', 'Enter a valid customer mobile number (10 to 15 digits).');
+    if (phone && !validCustomerPhone(phone)) return redirectWith(res, '/schemes', 'error', 'Enter a valid customer mobile number (10 to 15 digits), or leave it blank.');
     const startDateInput = req.body.startDate || dateInput();
     const startDate = dateTimeFromInput(startDateInput);
 
@@ -3054,9 +3057,9 @@ app.post('/schemes/:planId/enroll', async (req, res, next) => {
 
       // Find or create the one shared customer profile. Do not silently
       // overwrite established customer details while enrolling a scheme.
-      let customer = await tx.customer.findUnique({ where: { phone } });
+      let customer = phone ? await tx.customer.findUnique({ where: { phone } }) : null;
       if (!customer) {
-        customer = await tx.customer.create({ data: { name, phone } });
+        customer = await tx.customer.create({ data: { name, phone: phone || null } });
       }
 
       // Reserve a compact, atomic scheme number. Two PCs cannot receive the
@@ -3111,7 +3114,9 @@ app.get('/schemes/enrollments/:id', async (req, res, next) => {
         }
       }
     });
-    if (!enrollment) return res.status(404).render('not-found', { title: 'Enrollment not found' });
+    // Cancelled enrollments remain only in the financial audit trail; they
+    // must not be reachable as normal scheme customer screens.
+    if (!enrollment || enrollment.status === 'CANCELLED') return res.status(404).render('not-found', { title: 'Enrollment not found' });
     res.render('schemes/enrollment-detail', { title: `${enrollment.enrollmentNumber}`, enrollment });
   } catch (error) { next(error); }
 });
@@ -3303,8 +3308,8 @@ app.post('/schemes/enrollments/:id/cancel', async (req, res, next) => {
       where: { id: enrollmentId },
       data: { status: 'CANCELLED' }
     });
-    redirectWith(res, `/schemes/enrollments/${enrollmentId}`, 'message', 'Enrollment cancelled. Payments already recorded remain in the cashbook.');
-  } catch (error) { redirectWith(res, `/schemes/enrollments/${enrollmentId}`, 'error', error.message || 'Could not cancel enrollment.'); }
+    redirectWith(res, `/schemes/plans/${enrollment.schemePlanId}`, 'message', 'Enrollment cancelled. Payments already recorded remain in the cashbook.');
+  } catch (error) { redirectWith(res, `/schemes`, 'error', error.message || 'Could not cancel enrollment.'); }
 });
 
 // Keep fall-through and error handlers last. Reports registered after either

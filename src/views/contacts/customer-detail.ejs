@@ -60,7 +60,7 @@
       <div class="modal-body">
         <div class="form-grid customer-edit-fields">
           <label>Full name *<input name="name" data-uppercase required value="<%= customer.name %>"></label>
-          <label>Mobile number / ID *<input name="phone" inputmode="numeric" minlength="10" maxlength="15" required value="<%= customer.phone || '' %>"></label>
+          <label>Mobile number / ID<input name="phone" inputmode="numeric" maxlength="15" value="<%= customer.phone || '' %>"></label>
           <label>Email<input name="email" type="email" value="<%= customer.email || '' %>"></label>
           <label>PAN<input name="panNumber" maxlength="20" data-uppercase value="<%= customer.panNumber || '' %>"></label>
           <label class="full">Address<textarea name="address" data-uppercase rows="3"><%= customer.address || '' %></textarea></label>

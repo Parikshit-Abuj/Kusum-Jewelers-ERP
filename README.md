@@ -2,11 +2,11 @@
 
 Lightweight local ERP for jewellery inventory, daily gold and silver rates, barcode billing, customer credit, cashbook, URD purchases, exports and archive management.
 
-## Shop PC installer
+## Shop PC portable package
 
-Use the generated `KusumJewelersERP-Setup.exe` on the shop PC. It installs the ERP under the current Windows user's local application data folder, adds a Desktop shortcut, and opens a one-time setup page. That page asks for the **local** MySQL administrator password just once, creates or upgrades `kusum_erp`, applies the Prisma database schema, and creates one shared ERP MySQL account restricted to this ERP database. The MySQL administrator password is never saved.
+Use the generated `Kusum ERP-win32-x64` folder on the shop PC. Copy the entire folder and run `Kusum ERP.exe`; do not copy only the EXE. On first start, the ERP opens its one-time setup page. It uses the local MySQL administrator password only for setup, creates or upgrades the selected ERP database, applies the bundled schema migrations, and creates the limited shared ERP database account. The MySQL administrator password is never saved.
 
-Before running the installer, install and start **MySQL Server** on the shop PC. For barcode labels, install the Windows driver for the **TSC TTP-244 Pro** and use the exact Windows printer name on the setup page. Re-running the installer updates program files while leaving the local ERP configuration and database intact; it deliberately never deletes existing shop data.
+Before first use, install and start **MySQL Server** on the main database PC. For barcode labels, install the Windows driver for the **TSC TTP-244 Pro** and select its exact Windows printer name in the ERP. To update an installation, close the ERP and replace the entire old application folder; do not delete the MySQL database or `%LOCALAPPDATA%\Kusum Jewelers ERP` configuration folder.
 
 ## Local setup
 

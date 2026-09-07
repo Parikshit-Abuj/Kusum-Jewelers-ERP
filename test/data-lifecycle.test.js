@@ -133,6 +133,26 @@ test('sales and URD CA registers keep URD settlement figures accurate', async ()
   assert.equal(urdRegister.rows[0].remark, 'SB/26-27/00001');
 });
 
+test('a silver sale with a higher gold URD valuation never exports the refund as a sales URD adjustment', async () => {
+  const sale = {
+    saleDate: new Date(2026, 8, 2, 10, 0), invoiceNumber: 'SB/26-27/00009', subtotal: 97.09, discount: 0,
+    gstAmount: 2.91, total: 100, urdOffset: 150, customer: { name: 'Asha' },
+    items: [{ quantity: 1, grossWeight: 10, weight: 10, taxableAmount: 97.09, productMetal: 'SILVER' }]
+  };
+  const purchase = {
+    purchaseDate: new Date(2026, 8, 2, 10, 0), purchaseNumber: 'UR/26-27/00009', grossWeight: 2, netWeight: 2,
+    totalAmount: 150, customer: { name: 'Asha' }, sale: { invoiceNumber: 'SB/26-27/00009' }
+  };
+  const db = { sale: { findMany: async () => [sale] }, urdPurchase: { findMany: async () => [purchase] } };
+  const sales = await getExportPayload(db, 'sales', { from: '2026-09-02', to: '2026-09-02' });
+  const silver = sales.sheets.find((sheet) => sheet.name === 'Silver').rows[0];
+  const urd = await getExportPayload(db, 'urd', { from: '2026-09-02', to: '2026-09-02' });
+  assert.equal(silver.urdAdjustment, 100);
+  assert.equal(silver.netAmount, 0);
+  assert.equal(urd.rows[0].totalAmount, 150);
+  assert.equal(urd.rows[0].remark, 'SB/26-27/00009');
+});
+
 test('Gold and Silver sales sheets allocate a mixed invoice instead of duplicating it', async () => {
   const sale = {
     id: 1, saleDate: new Date(2026, 8, 2, 10, 0), invoiceNumber: 'SB/26-27/00002', subtotal: 300, discount: 0,
@@ -250,10 +270,9 @@ test('scheme export is a simple CA register', async () => {
   const payload = await getExportPayload(db, 'schemes', { from: '2026-09-01', to: '2026-09-30' });
   const register = payload.sheets[0];
   assert.equal(register.layout, 'ca-register');
-  assert.deepEqual(register.columns.map((column) => column.label), ['Sr. No.', 'Scheme Doc No.', 'Name', 'Mobile No.', 'Paid Date', 'Payment Type', 'Amount']);
+  assert.deepEqual(register.columns.map((column) => column.label), ['Sr. No.', 'Scheme Doc No.', 'Name', 'Mobile No.', 'Amount']);
   assert.deepEqual(register.rows[0], {
-    srNo: 1, enrollmentNumber: 'SCH-20260904-0001', customerName: 'Asha', customerPhone: '9999999999', amount: 5000,
-    paidDate: '2026-09-04', paymentType: 'UPI ₹5000.00'
+    srNo: 1, enrollmentNumber: 'SCH-20260904-0001', customerName: 'Asha', customerPhone: '9999999999', amount: 5000
   });
   assert.deepEqual(exportWhere.status, { not: 'CANCELLED' });
 });
@@ -274,10 +293,15 @@ test('scheme plan monthly reports use that month payment instead of cumulative p
   const consolidated = await getSchemePlanExportPayload(db, 8, {});
   assert.equal(monthTwo.sheets[0].name, 'Month 2');
   assert.equal(monthTwo.rows[0].amount, 5000);
-  assert.equal(monthTwo.rows[0].paidDate, '2026-10-04');
-  assert.equal(monthTwo.rows[0].paymentType, 'Cash ₹5000.00');
+  assert.equal(monthTwo.rows[0].paidDates, '4-Oct-26');
+  assert.equal(monthTwo.rows[0].paymentType, 'Cash ₹5000.00 (4-Oct-26)');
   assert.equal(consolidated.sheets[0].name, 'Consolidated');
   assert.equal(consolidated.rows[0].amount, 10000);
+  assert.deepEqual(consolidated.columns.map((column) => column.label), ['Sr. No.', 'Scheme Doc No.', 'Name', 'Mobile No.', 'Amount']);
+  assert.equal(consolidated.columns.some((column) => column.key === 'paymentType'), false);
+  assert.equal(consolidated.columns.some((column) => column.key === 'paidDates'), false);
+  assert.equal(Object.hasOwn(consolidated.rows[0], 'paymentType'), false);
+  assert.equal(Object.hasOwn(consolidated.rows[0], 'paidDates'), false);
   assert.deepEqual(planExportWhere.status, { not: 'CANCELLED' });
 });
 
@@ -300,6 +324,33 @@ test('scheme monthly export clearly shows each split payment part', async () => 
   };
   const payload = await getSchemePlanExportPayload(db, 9, { month: 1 });
   assert.equal(payload.rows[0].amount, 5000);
-  assert.equal(payload.rows[0].paidDate, '2026-09-05');
-  assert.equal(payload.rows[0].paymentType, 'Cash ₹1000.00 + Bank transfer ₹4000.00');
+  assert.equal(payload.rows[0].paidDates, '5-Sep-26');
+  assert.equal(payload.rows[0].paymentType, 'Cash ₹1000.00 (5-Sep-26) + Bank transfer ₹4000.00 (5-Sep-26)');
+});
+
+test('scheme monthly export includes unpaid, partly paid and fully paid active customers', async () => {
+  const plan = { id: 10, name: 'Monthly Savings', durationMonths: 12 };
+  const active = (id, enrollmentNumber, customerName, paidAmount, payments = []) => ({
+    id, enrollmentNumber, totalPaid: paidAmount, customer: { name: customerName, phone: `900000000${id}` },
+    installments: [{ installmentNumber: 1, paidAmount, paymentDate: payments.at(-1)?.paymentDate || null, paymentMethod: payments.at(-1)?.paymentMethod || null, payments }]
+  });
+  const db = {
+    schemePlan: { findUnique: async () => plan },
+    schemeEnrollment: { findMany: async ({ where }) => {
+      assert.deepEqual(where.status, { not: 'CANCELLED' });
+      return [
+        active(1, 'SCH-0001', 'Not Paid', 0),
+        active(2, 'SCH-0002', 'Part Paid', 2500, [{ amount: 1000, paymentDate: '2026-09-05', paymentMethod: 'CASH' }, { amount: 1500, paymentDate: '2026-09-08', paymentMethod: 'UPI' }]),
+        active(3, 'SCH-0003', 'Fully Paid', 5000, [{ amount: 5000, paymentDate: '2026-09-09', paymentMethod: 'BANK_TRANSFER' }])
+      ];
+    } }
+  };
+
+  const payload = await getSchemePlanExportPayload(db, 10, { month: 1 });
+  assert.deepEqual(payload.rows.map((row) => [row.customerName, row.amount, row.paidDates]), [
+    ['Not Paid', 0, ''],
+    ['Part Paid', 2500, '5-Sep-26; 8-Sep-26'],
+    ['Fully Paid', 5000, '9-Sep-26']
+  ]);
+  assert.equal(payload.rows[1].paymentType, 'Cash ₹1000.00 (5-Sep-26) + UPI ₹1500.00 (8-Sep-26)');
 });
