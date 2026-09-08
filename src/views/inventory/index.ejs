@@ -1,10 +1,14 @@
 <header class="page-header">
   <div><p class="eyebrow">Stock control</p><h1>Inventory</h1></div>
   <div class="header-actions">
-    <button class="button ghost" type="button" data-export-modal-open="inventoryExportModal">Export Excel</button>
-    <button class="button ghost" type="button" data-printer-setup-open>Printer setup</button>
-    <button class="button ghost" type="submit" form="label-test-form">Test TSC</button>
-    <button class="button secondary" type="submit" form="label-print-form" data-label-print-button disabled>▥ Send TSPL labels</button>
+    <details class="action-menu">
+      <summary class="button ghost">More <span aria-hidden="true">⌄</span></summary>
+      <div class="action-menu-panel">
+        <button class="action-menu-item" type="button" data-export-modal-open="inventoryExportModal">Export Excel</button>
+        <button class="action-menu-item" type="button" data-printer-setup-open>Printer setup</button>
+        <button class="action-menu-item" type="submit" form="label-test-form">Test TSC printer</button>
+      </div>
+    </details>
     <button type="button" class="button accent" data-open-batch-modal style="background:#b47a21;color:#fff;border:none;box-shadow:0 2px 6px rgba(180,122,33,.3);">⚡ Batch Add Pieces</button>
     <a class="button" href="/inventory/new">+ Add single item</a>
   </div>
@@ -19,7 +23,7 @@
   if (inventoryFilters.barcode) printerCheckParams.set('barcode', inventoryFilters.barcode);
   printerCheckParams.set('checkPrinter', '1');
 %>
-<section class="panel">
+<section class="panel register-panel">
   <form class="search-bar inventory-filter-form" method="get">
     <label>Item name<input name="itemName" value="<%= inventoryFilters.itemName %>" placeholder="Ring, chain, payal…"></label>
     <label>Weight (g)<input name="weight" type="number" min="0" step="0.001" value="<%= inventoryFilters.weight %>" placeholder="18.250"></label>
@@ -28,7 +32,23 @@
     <% if (hasInventoryFilters) { %><a class="button ghost" href="/inventory">Clear</a><% } %>
   </form>
   <div data-inventory-live-content>
-  <% if (products.length) { %><form id="label-print-form" class="label-batch-toolbar" method="post" action="/labels/print"><div><strong data-label-count>0 selected</strong><% if (typeof printerStatus !== 'undefined' && printerStatus) { %><div class="printer-status <%= printerStatus.available === true ? 'is-ready' : (printerStatus.available === false ? '!' : '•') %>"><span><%= printerStatus.available === true ? '●' : (printerStatus.available === false ? '!' : '•') %></span><%= printerStatus.message %><a href="/inventory?<%= printerCheckParams.toString() %>">Check printer</a></div><% } %></div><label class="printer-name"><%= (typeof printerTransport !== 'undefined' && printerTransport?.mode === 'TCP') ? 'Direct TCP printer' : 'Windows printer queue' %><input name="printerName" readonly value="<%= typeof printerName !== 'undefined' ? printerName : '' %>"></label><button class="button small" type="submit" data-label-print-button disabled>Send to TSC TTP-244 Pro</button></form><div class="table-wrap"><table class="inventory-table"><thead><tr><th class="label-select"><input type="checkbox" data-label-select-all title="Select all visible items"></th><th>Barcode / item</th><th>Metal / purity</th><th>Weight</th><th>Stock</th><th>Making</th><th>Location</th><th></th></tr></thead><tbody>
+  <% if (products.length) { %><form id="label-print-form" class="label-batch-toolbar" method="post" action="/labels/print"><div><strong data-label-count>0 selected</strong><% if (typeof printerStatus !== 'undefined' && printerStatus) { %><div class="printer-status <%= printerStatus.available === true ? 'is-ready' : (printerStatus.available === false ? '!' : '•') %>"><span><%= printerStatus.available === true ? '●' : (printerStatus.available === false ? '!' : '•') %></span><%= printerStatus.message %><a href="/inventory?<%= printerCheckParams.toString() %>">Check printer</a></div><% } %></div><label class="printer-name"><%= (typeof printerTransport !== 'undefined' && printerTransport?.mode === 'TCP') ? 'Direct TCP printer' : 'Windows printer queue' %><input name="printerName" readonly value="<%= typeof printerName !== 'undefined' ? printerName : '' %>"></label><button class="button small" type="submit" data-label-print-button disabled>Send to TSC TTP-244 Pro</button></form>
+  <div class="inventory-view-switch" data-inventory-view-switch aria-label="Inventory view">
+    <button type="button" class="button ghost small" data-inventory-view="list" aria-pressed="true">List</button>
+    <button type="button" class="button ghost small" data-inventory-view="cards" aria-pressed="false">Cards</button>
+  </div>
+  <div class="inventory-card-grid" data-inventory-cards hidden>
+    <% products.forEach((product) => { %>
+    <article class="inventory-product-card">
+      <div class="inventory-card-top"><span class="metal-dot <%= product.metal.toLowerCase() %>"></span><span class="pill <%= product.quantity <= product.reorderLevel ? 'warning' : 'success' %>"><%= product.quantity %> piece<%= product.quantity === 1 ? '' : 's' %></span></div>
+      <strong class="inventory-card-name"><%= product.name %></strong>
+      <small class="inventory-card-category"><%= product.category %></small>
+      <div class="inventory-card-specs"><span><b>Barcode</b><%= product.barcode || 'No barcode' %></span><span><b>Weight</b><%= grams(product.netWeight) %></span><span><b>Purity</b><%= product.purity || '—' %></span><span><b>Location</b><%= product.location || '—' %></span></div>
+      <div class="inventory-card-actions"><button type="button" class="button secondary small" data-inventory-card-select="<%= product.id %>" <%= product.barcode ? '' : 'disabled' %>>Select label</button><a class="button ghost small" href="/inventory/<%= product.id %>/edit">Edit</a></div>
+    </article>
+    <% }) %>
+  </div>
+  <div class="table-wrap inventory-list-view"><table class="inventory-table"><thead><tr><th class="label-select"><input type="checkbox" data-label-select-all title="Select all visible items"></th><th>Barcode / item</th><th>Metal / purity</th><th>Weight</th><th>Stock</th><th>Making</th><th>Location</th><th></th></tr></thead><tbody>
   <% products.forEach((product) => { %><tr>
     <td class="label-select"><input form="label-print-form" type="checkbox" name="productId" value="<%= product.id %>" data-label-select <%= product.barcode ? '' : 'disabled' %>></td>
     <td><strong class="barcode-label"><%= product.barcode || 'No barcode' %></strong><small><%= product.name %> · <%= product.category %></small></td>

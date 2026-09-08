@@ -877,8 +877,8 @@ async function getExportPayload(db, key, range, options = {}) {
       const columns = [
         col.integer('srNo', 'Sr. No.', 9),
         col.identifier('enrollmentNumber', 'Scheme Doc No.', 22),
-        col.text('customerName', 'Name', 28),
-        col.identifier('customerPhone', 'Mobile No.', 18),
+        { ...col.text('customerName', 'Name', 40), wrap: true },
+        col.identifier('customerPhone', 'Mobile No.', 16),
         // This is a consolidated lifetime register. It intentionally omits
         // payment date and method: either one beside the accumulated amount
         // could falsely imply that the whole total was paid that way/on that day.
@@ -1037,7 +1037,10 @@ async function getSchemePlanExportPayload(db, schemePlanId, options = {}) {
   const columns = [
     col.integer('srNo', 'Sr. No.', 9),
     col.identifier('enrollmentNumber', 'Scheme Doc No.', 22),
-    { ...col.text('customerName', 'Name', 32), wrap: true },
+    // Scheme registers are often reviewed on-screen before printing. Give
+    // customer names enough room to remain readable instead of forcing short
+    // names to appear crowded beside the mobile-number column.
+    { ...col.text('customerName', 'Name', 40), wrap: true },
     col.identifier('customerPhone', 'Mobile No.', 16),
     ...(month === null ? [] : [
       col.text('paidDates', 'Paid Date', 20),

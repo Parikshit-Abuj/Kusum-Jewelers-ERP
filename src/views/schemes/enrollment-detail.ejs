@@ -7,6 +7,7 @@
   const pendingCount = installments.filter(i => i.status === 'PENDING' || i.status === 'OVERDUE').length;
   const progressPct = plan.durationMonths > 0 ? Math.round((paidCount / plan.durationMonths) * 100) : 0;
   const todayStr = dateInput();
+  const backTo = typeof returnTo === 'string' && returnTo.startsWith(`/schemes/plans/${plan.id}`) ? returnTo : `/schemes/plans/${plan.id}`;
   const installmentPayments = (installment) => {
     if (Array.isArray(installment.payments) && installment.payments.length) return installment.payments;
     return Number(installment.paidAmount || 0) > 0 && installment.paymentDate
@@ -22,7 +23,7 @@
     <h1><%= enrollment.enrollmentNumber %></h1>
   </div>
   <div class="header-actions">
-    <a class="button ghost" href="/schemes/plans/<%= plan.id %>">← Back to <%= plan.name %></a>
+    <a class="button ghost" href="<%= backTo %>">← Back to <%= plan.name %></a>
     <a class="button ghost" href="/schemes">All Schemes</a>
   </div>
 </header>

@@ -3,7 +3,10 @@
     <p class="eyebrow">Daily money log</p>
     <h1>Cashbook</h1>
   </div>
-  <button class="button ghost" type="button" data-export-modal-open="cashbookExportModal">Export Excel</button>
+  <div class="header-actions">
+    <button class="button ghost" type="button" data-export-modal-open="cashbookExportModal">Export Excel</button>
+    <button class="button" type="button" data-cashbook-entry-open>+ Add entry</button>
+  </div>
 </header>
 
 <%
@@ -35,7 +38,7 @@
 <div class="content-grid cashbook-layout">
 
   <!-- Left: entries table -->
-  <section class="panel">
+  <section class="panel register-panel">
     <!-- Date filter -->
     <form class="cashbook-filter" method="get">
       <label>From
@@ -113,64 +116,98 @@
     <div class="empty-state compact">
       <span>⊟</span>
       <h3>No entries for this period</h3>
-      <p>Add a cash-in or cash-out entry using the form on the right.</p>
+      <p>Add the first cash-in or cash-out entry when ready.</p>
     </div>
     <% } %>
   </section>
-
-  <!-- Right: add entry form -->
-  <aside class="panel side-form cashbook-form">
-    <h2>Add entry</h2>
-    <form method="post" action="/cashbook">
-      <label>Date *
-        <input name="entryDate" type="date" required value="<%= dateInput() %>">
-      </label>
-      <label>Type *
-        <select name="type" id="cbType">
-          <option value="IN">↑ Cash IN — received money</option>
-          <option value="OUT">↓ Cash OUT — spent / paid</option>
-        </select>
-      </label>
-      <label>Payment method *
-        <select name="paymentMethod" data-payment-method>
-          <option value="CASH">Cash</option>
-          <option value="UPI">UPI</option>
-          <option value="CARD">Card</option>
-          <option value="BANK_TRANSFER">Bank Transfer</option>
-        </select>
-      </label>
-      <label>Description *
-        <input name="description" required placeholder="e.g. Gold sale cash payment, Shop rent…">
-      </label>
-      <label>Amount (₹) *
-        <input name="amount" type="number" min="0.01" step="0.01" required placeholder="0.00">
-      </label>
-
-      <hr style="margin:12px 0;border:0;border-top:1px solid var(--line);">
-
-      <label>Customer (optional)
-        <input id="cbCustomerSearch" type="search" autocomplete="off" placeholder="Search name or mobile number…">
-        <select name="customerId" id="cbCustomer">
-          <option value="">No customer — general entry</option>
-          <% customers.forEach(c => { %>
-          <option value="<%= c.id %>"><%= c.name %><%= c.phone ? ` · ${c.phone}` : '' %></option>
-          <% }); %>
-        </select>
-      </label>
-
-      <label>Notes
-        <textarea name="notes" rows="2" placeholder="Any additional details…"></textarea>
-      </label>
-      <button class="button full" type="submit">Save entry</button>
-    </form>
-  </aside>
 
 </div>
 
 <%- include('../_export_modal', { exportModalId: 'cashbookExportModal', exportResource: 'cashbook', exportTitle: 'Cashbook', exportFrom: fDate, exportTo: tDate }) %>
 
+<div class="modal-overlay" id="cashbookEntryModal" style="display:none;" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="cashbookEntryTitle">
+  <section class="modal-card cashbook-entry-modal" role="document">
+    <header class="modal-header">
+      <div><p class="eyebrow">Cashbook</p><h2 id="cashbookEntryTitle">Add entry</h2></div>
+      <button class="modal-close-btn" type="button" data-cashbook-entry-close aria-label="Close add entry">×</button>
+    </header>
+    <form method="post" action="/cashbook" data-enter-scope>
+      <div class="modal-body cashbook-entry-fields">
+        <div class="form-grid two compact-fields">
+          <label>Date *
+            <input name="entryDate" type="date" required value="<%= dateInput() %>">
+          </label>
+          <label>Type *
+            <select name="type" id="cbType">
+              <option value="IN">Money in</option>
+              <option value="OUT">Money out</option>
+            </select>
+          </label>
+          <label>Payment method *
+            <select name="paymentMethod" data-payment-method>
+              <option value="CASH">Cash</option>
+              <option value="UPI">UPI</option>
+              <option value="CARD">Card</option>
+              <option value="BANK_TRANSFER">Bank Transfer</option>
+            </select>
+          </label>
+          <label>Amount (₹) *
+            <input name="amount" type="number" min="0.01" step="0.01" required placeholder="0.00">
+          </label>
+        </div>
+        <label>Description *
+          <input name="description" required placeholder="e.g. Gold sale cash payment, shop rent">
+        </label>
+        <label>Customer (optional)
+          <input id="cbCustomerSearch" type="search" autocomplete="off" placeholder="Search name or mobile number…">
+          <select name="customerId" id="cbCustomer">
+            <option value="">No customer — general entry</option>
+            <% customers.forEach(c => { %>
+            <option value="<%= c.id %>"><%= c.name %><%= c.phone ? ` · ${c.phone}` : '' %></option>
+            <% }); %>
+          </select>
+        </label>
+        <label>Notes
+          <textarea name="notes" rows="2" placeholder="Any additional details…"></textarea>
+        </label>
+      </div>
+      <footer class="modal-footer">
+        <button class="button ghost" type="button" data-cashbook-entry-close>Cancel</button>
+        <button class="button" type="submit">Save entry</button>
+      </footer>
+    </form>
+  </section>
+</div>
+
 <script>
 (() => {
+  const entryModal = document.getElementById('cashbookEntryModal');
+  const entryOpen = document.querySelector('[data-cashbook-entry-open]');
+  if (entryModal && entryOpen) {
+    let entryTrigger = null;
+    const closeEntryModal = () => {
+      entryModal.style.display = 'none';
+      entryModal.setAttribute('aria-hidden', 'true');
+      entryTrigger?.focus();
+    };
+    const openEntryModal = (trigger = entryOpen) => {
+      entryTrigger = trigger;
+      entryModal.style.display = 'flex';
+      entryModal.setAttribute('aria-hidden', 'false');
+      setTimeout(() => entryModal.querySelector('[name="description"]')?.focus(), 0);
+    };
+    entryOpen.addEventListener('click', () => openEntryModal(entryOpen));
+    if (new URLSearchParams(window.location.search).get('addEntry') === '1') {
+      openEntryModal();
+      const cleanUrl = new URL(window.location.href);
+      cleanUrl.searchParams.delete('addEntry');
+      window.history.replaceState({}, '', cleanUrl);
+    }
+    entryModal.querySelectorAll('[data-cashbook-entry-close]').forEach((button) => button.addEventListener('click', closeEntryModal));
+    entryModal.addEventListener('click', (event) => { if (event.target === entryModal) closeEntryModal(); });
+    document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && entryModal.style.display === 'flex') closeEntryModal(); });
+  }
+
   const search = document.getElementById('cbCustomerSearch');
   const select = document.getElementById('cbCustomer');
   if (!search || !select) return;

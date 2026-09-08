@@ -756,6 +756,7 @@
     </div>
 
     <div class="billing-rate-pills">
+      <button class="button ghost small" type="button" data-billing-focus-toggle aria-pressed="false" style="border-radius:20px; font-size:11px; padding:3px 8px;">Focus mode</button>
       <% if (!rateInfo.rate) { %>
         <span class="rate-tag" style="border-color:#f5c2c7; background:#fff5f5; color:#842029;">
           Rates not set · <a href="/rates" style="color:#842029; font-weight:750;">Set Daily Rates →</a>
@@ -829,7 +830,7 @@
         <section class="customer-lookup" data-customer-lookup>
           <input type="hidden" name="customerId" data-customer-id>
           <div class="cust-status-badge" data-customer-status>
-            Enter a customer name. A mobile number is optional and can be used to load an existing ledger.
+            Enter a customer name. Mobile number is optional.
           </div>
 
           <!-- Existing Customer Found -->

@@ -1,6 +1,6 @@
 <header class="page-header"><div><p class="eyebrow">Billing desk</p><h1>Sales</h1></div><div class="header-actions"><button class="button ghost" type="button" data-sales-export-open>Export Excel</button><a class="button" href="/sales/new">+ Create invoice</a></div></header>
 <% const f = typeof filters !== 'undefined' && filters ? filters : {}; const pager = typeof pagination !== 'undefined' && pagination ? pagination : { totalItems: sales.length }; const salesExportFrom = f.from || dateInput(); const salesExportTo = f.to || dateInput(); %>
-<section class="panel"><div class="panel-heading"><div><h2>Invoices</h2></div></div>
+<section class="panel register-panel"><div class="panel-heading"><div><h2>Invoices</h2></div></div>
   <!-- Search / filter bar -->
   <div class="sales-filter">
     <form method="get" action="/sales" id="salesFilterForm">

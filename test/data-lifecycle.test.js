@@ -271,6 +271,9 @@ test('scheme export is a simple CA register', async () => {
   const register = payload.sheets[0];
   assert.equal(register.layout, 'ca-register');
   assert.deepEqual(register.columns.map((column) => column.label), ['Sr. No.', 'Scheme Doc No.', 'Name', 'Mobile No.', 'Amount']);
+  assert.deepEqual(register.columns.find((column) => column.key === 'customerName'), {
+    key: 'customerName', label: 'Name', type: 'text', width: 40, wrap: true
+  });
   assert.deepEqual(register.rows[0], {
     srNo: 1, enrollmentNumber: 'SCH-20260904-0001', customerName: 'Asha', customerPhone: '9999999999', amount: 5000
   });

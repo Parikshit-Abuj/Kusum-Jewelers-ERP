@@ -123,7 +123,7 @@ test('wraps long scheme customer and payment details without allowing text to ov
     sheets: [{
       name: 'Month 1', title: 'Month 1 Scheme Report', subtitle: 'Monthly collection status', layout: 'ca-register', landscape: true,
       columns: [
-        { key: 'name', label: 'Name', type: 'text', width: 32, wrap: true },
+        { key: 'name', label: 'Name', type: 'text', width: 40, wrap: true },
         { key: 'mobile', label: 'Mobile No.', type: 'identifier', width: 16 },
         { key: 'paidDate', label: 'Paid Date', type: 'text', width: 20 },
         { key: 'paymentType', label: 'Payment Type', type: 'text', width: 34, wrap: true },
@@ -139,7 +139,7 @@ test('wraps long scheme customer and payment details without allowing text to ov
   await workbook.xlsx.load(workbookBytes);
   const sheet = workbook.getWorksheet('Month 1');
   assert.equal(sheet.pageSetup.orientation, 'landscape');
-  assert.equal(sheet.getColumn(1).width, 32);
+  assert.equal(sheet.getColumn(1).width, 40);
   assert.equal(sheet.getColumn(2).width, 16);
   assert.equal(sheet.getCell('A5').alignment.wrapText, true);
   assert.equal(sheet.getCell('D5').alignment.wrapText, true);

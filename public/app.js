@@ -144,6 +144,102 @@ document.querySelectorAll('.flash').forEach((el) => {
   }, 4000);
 });
 
+/* ── Workspace search ──────────────────────────────────────────
+   A compact command palette for counter use. Results are created with DOM
+   APIs (not HTML strings) so customer-entered names and notes stay text.
+*/
+(function initGlobalSearch() {
+  const modal = document.getElementById('globalSearchModal');
+  const input = document.getElementById('globalSearchInput');
+  const resultsEl = document.querySelector('[data-global-search-results]');
+  const helpEl = document.querySelector('[data-global-search-help]');
+  const openButtons = document.querySelectorAll('[data-global-search-open]');
+  const closeButton = modal?.querySelector('[data-global-search-close]');
+  if (!modal || !input || !resultsEl || !helpEl || !openButtons.length) return;
+
+  let requestTimer;
+  let requestNumber = 0;
+  const uiText = (value) => typeof window.kusumUiText === 'function' ? window.kusumUiText(value) : value;
+
+  function clearResults(message = 'Type at least 2 characters to search available stock and recent records.') {
+    resultsEl.replaceChildren();
+    helpEl.textContent = uiText(message);
+    helpEl.hidden = false;
+  }
+
+  function close() {
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+    clearTimeout(requestTimer);
+  }
+
+  function open() {
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    clearResults();
+    requestAnimationFrame(() => input.focus());
+  }
+
+  function renderResults(results) {
+    resultsEl.replaceChildren();
+    if (!results.length) {
+      clearResults('No matching stock or records found.');
+      return;
+    }
+    helpEl.hidden = true;
+    results.forEach((result) => {
+      const link = document.createElement('a');
+      link.className = 'global-search-result';
+      link.href = result.href;
+      const type = document.createElement('span');
+      type.className = 'global-search-type';
+      type.textContent = result.type;
+      const copy = document.createElement('span');
+      copy.className = 'global-search-copy';
+      const label = document.createElement('strong');
+      label.textContent = result.label;
+      const detail = document.createElement('small');
+      detail.textContent = result.detail;
+      copy.append(label, detail);
+      link.append(type, copy);
+      resultsEl.append(link);
+    });
+  }
+
+  async function search() {
+    const q = input.value.trim();
+    const currentRequest = ++requestNumber;
+    if (q.length < 2) return clearResults();
+    helpEl.textContent = uiText('Searching…');
+    helpEl.hidden = false;
+    resultsEl.replaceChildren();
+    try {
+      const response = await fetch(`/api/search?q=${encodeURIComponent(q)}`, { headers: { Accept: 'application/json' } });
+      if (!response.ok) throw new Error('Search unavailable');
+      const payload = await response.json();
+      if (currentRequest !== requestNumber) return;
+      renderResults(Array.isArray(payload.results) ? payload.results : []);
+    } catch (_) {
+      if (currentRequest === requestNumber) clearResults('Search is temporarily unavailable. Try again.');
+    }
+  }
+
+  openButtons.forEach((button) => button.addEventListener('click', open));
+  closeButton?.addEventListener('click', close);
+  modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
+  input.addEventListener('input', () => {
+    clearTimeout(requestTimer);
+    requestTimer = setTimeout(search, 180);
+  });
+  document.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+      event.preventDefault();
+      if (modal.style.display === 'flex') input.focus(); else open();
+    }
+    if (event.key === 'Escape' && modal.style.display === 'flex') close();
+  });
+})();
+
 /* ═══════════════════════════════════════════════════════════════
    1. RATES PAGE — tab switching
    ═══════════════════════════════════════════════════════════════ */
@@ -470,6 +566,29 @@ document.querySelectorAll('.flash').forEach((el) => {
     }
   });
   showNewCustomer('');
+})();
+
+/* ── Billing focus mode ────────────────────────────────────────
+   Keeps the same sale form and calculations, but removes surrounding ERP
+   chrome so the counter can work only with customer, items and payment. */
+(function initBillingFocusMode() {
+  const button = document.querySelector('[data-billing-focus-toggle]');
+  const billing = document.querySelector('.billing-wrapper');
+  if (!button || !billing) return;
+
+  const apply = (enabled) => {
+    document.body.classList.toggle('billing-focus-mode', enabled);
+    button.setAttribute('aria-pressed', String(enabled));
+    button.textContent = enabled ? 'Exit focus mode' : 'Focus mode';
+    try { sessionStorage.setItem('kusum-erp-billing-focus', enabled ? '1' : '0'); } catch (_) {}
+  };
+  let saved = '0';
+  try { saved = sessionStorage.getItem('kusum-erp-billing-focus') || '0'; } catch (_) {}
+  apply(saved === '1');
+  button.addEventListener('click', () => apply(!document.body.classList.contains('billing-focus-mode')));
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && document.body.classList.contains('billing-focus-mode') && !document.querySelector('.modal-overlay[style*="flex"]')) apply(false);
+  });
 })();
 
 /* ═══════════════════════════════════════════════════════════════
@@ -1389,6 +1508,46 @@ function updateInventoryLabelBatchState() {
   updateInventoryLabelBatchState();
 })();
 
+/* ── Inventory list / card view ──────────────────────────────── */
+(function initInventoryView() {
+  const cardGrid = document.querySelector('[data-inventory-cards]');
+  const listView = document.querySelector('.inventory-list-view');
+  const switches = document.querySelectorAll('[data-inventory-view]');
+  if (!cardGrid || !listView || !switches.length) return;
+
+  const applyView = (view) => {
+    const cards = view === 'cards';
+    cardGrid.hidden = !cards;
+    listView.hidden = cards;
+    switches.forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.inventoryView === view)));
+    try { localStorage.setItem('kusum-erp-inventory-view', view); } catch (_) {}
+  };
+  let saved = 'list';
+  try { saved = localStorage.getItem('kusum-erp-inventory-view') || 'list'; } catch (_) {}
+  applyView(saved === 'cards' ? 'cards' : 'list');
+  switches.forEach((button) => button.addEventListener('click', () => applyView(button.dataset.inventoryView)));
+
+  document.querySelectorAll('[data-inventory-card-select]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const target = document.querySelector(`[data-label-select][value="${CSS.escape(button.dataset.inventoryCardSelect)}"]`);
+      if (!target || target.disabled) return;
+      target.checked = !target.checked;
+      updateInventoryLabelBatchState();
+      button.classList.toggle('is-selected', target.checked);
+      button.textContent = target.checked ? 'Label selected' : 'Select label';
+    });
+  });
+  document.addEventListener('change', (event) => {
+    if (!event.target.matches('[data-label-select], [data-label-select-all]')) return;
+    document.querySelectorAll('[data-inventory-card-select]').forEach((button) => {
+      const target = document.querySelector(`[data-label-select][value="${CSS.escape(button.dataset.inventoryCardSelect)}"]`);
+      const selected = Boolean(target?.checked);
+      button.classList.toggle('is-selected', selected);
+      button.textContent = selected ? 'Label selected' : 'Select label';
+    });
+  });
+})();
+
 /* ═══════════════════════════════════════════════════════════════
    ITEM NAME AUTOCOMPLETE — inventory form
    ═══════════════════════════════════════════════════════════════ */
@@ -1834,6 +1993,12 @@ function updateInventoryLabelBatchState() {
   document.addEventListener('click', (event) => {
     if (event.target.closest('[data-open-batch-modal]')) openModal();
   });
+  if (new URLSearchParams(window.location.search).get('openBatch') === '1') {
+    openModal();
+    const cleanUrl = new URL(window.location.href);
+    cleanUrl.searchParams.delete('openBatch');
+    window.history.replaceState({}, '', cleanUrl);
+  }
   closeBtns.forEach((btn) => btn.addEventListener('click', closeModal));
 
   closeRefreshBtn?.addEventListener('click', () => {

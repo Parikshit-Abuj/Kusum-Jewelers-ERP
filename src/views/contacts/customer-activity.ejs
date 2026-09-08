@@ -1,0 +1,27 @@
+<header class="page-header customer-activity-header">
+  <div class="customer-profile-identity">
+    <span class="customer-avatar" aria-hidden="true"><%= String(customer.name || '?').trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase() %></span>
+    <div><p class="eyebrow">Customer activity</p><h1><%= customer.name %></h1><p class="muted"><%= customer.phone || 'No phone saved' %></p></div>
+  </div>
+  <div class="header-actions"><a class="button ghost" href="/customers/<%= customer.id %>">← Credit sheet</a><a class="button secondary" href="/sales/new">New sale</a></div>
+</header>
+
+<section class="panel customer-activity-screen">
+  <div class="panel-heading"><div><h2>All recent activity</h2></div><span class="pill neutral"><%= activity.length %> records</span></div>
+  <% if (activity.length) { %>
+  <ol class="customer-timeline customer-timeline-full">
+    <% activity.forEach((event) => { %>
+    <li class="timeline-event timeline-<%= event.kind.toLowerCase() %>">
+      <span class="timeline-dot" aria-hidden="true"><%= event.kind === 'SALE' ? '₹' : event.kind === 'PAYMENT' ? '✓' : event.kind === 'URD' ? '⇣' : '◇' %></span>
+      <div class="timeline-copy">
+        <% if (event.href) { %><a href="<%= event.href %>"><strong><%= event.title %></strong></a><% } else { %><strong><%= event.title %></strong><% } %>
+        <small><%= event.detail %></small>
+      </div>
+      <div class="timeline-meta"><time><%= formatDateDisplay(event.occurredAt) %></time><% if (event.amount !== undefined) { %><strong><%= money(event.amount) %></strong><% } %></div>
+    </li>
+    <% }) %>
+  </ol>
+  <% } else { %>
+  <div class="empty-state compact"><span>◷</span><h3>No activity yet</h3><p>Bills, received payments, URD purchases and scheme enrollments will appear here.</p></div>
+  <% } %>
+</section>

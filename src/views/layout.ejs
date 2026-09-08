@@ -41,16 +41,37 @@
         </nav>
         <div class="sidebar-foot">
           Signed in as <strong><%= loggedInUser %></strong>
+          <button class="sidebar-language" type="button" data-ui-language-toggle aria-label="Switch ERP interface language">मराठी</button>
           <a class="sidebar-logout" href="/change-password">Change password</a>
           <form method="post" action="/logout"><button class="sidebar-logout" type="submit">Sign out</button></form>
         </div>
       </aside>
       <main class="main-content">
+        <div class="workspace-toolbar" aria-label="Workspace tools">
+          <button class="global-search-trigger" type="button" data-global-search-open aria-haspopup="dialog">
+            <span class="global-search-icon" aria-hidden="true">⌕</span>
+            <span>Search barcode, invoice, customer…</span>
+            <kbd>Ctrl K</kbd>
+          </button>
+        </div>
         <% if (message) { %><div class="flash success"><span>✓</span><%= message %></div><% } %>
         <% if (error) { %><div class="flash error"><span>!</span><%= error %></div><% } %>
         <%- body %>
       </main>
     </div>
+    <div class="modal-overlay global-search-modal" id="globalSearchModal" style="display:none;" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="globalSearchTitle">
+      <section class="modal-card global-search-card" role="document">
+        <header class="global-search-header">
+          <label id="globalSearchTitle" class="sr-only" for="globalSearchInput">Search ERP records</label>
+          <span aria-hidden="true">⌕</span>
+          <input id="globalSearchInput" type="search" autocomplete="off" spellcheck="false" placeholder="Search barcode, invoice, customer, URD or scheme">
+          <button class="modal-close-btn" type="button" data-global-search-close aria-label="Close search">×</button>
+        </header>
+        <div class="global-search-help" data-global-search-help>Type at least 2 characters to search available stock and recent records.</div>
+        <div class="global-search-results" data-global-search-results aria-live="polite"></div>
+      </section>
+    </div>
+    <script src="/i18n.js"></script>
     <script src="/app.js"></script>
   </body>
 </html>

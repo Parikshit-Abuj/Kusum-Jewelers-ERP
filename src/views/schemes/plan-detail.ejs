@@ -3,6 +3,16 @@
   const planStats = typeof stats !== 'undefined' && stats ? stats : { totalEnrollments: enrolls.length, activeEnrollments: 0, completedEnrollments: 0, cancelledEnrollments: 0, totalCollected: 0 };
   const termsLocked = (plan._count?.enrollments || 0) > 0;
   const today = dateInput();
+  const schemeFilters = typeof filters !== 'undefined' && filters ? filters : { q: '', month: 'ALL', status: 'ALL' };
+  const selectedSchemeMonth = Number(schemeFilters.month) || null;
+  const hasVisibleEnrollmentRecords = typeof hasEnrollments !== 'undefined' ? hasEnrollments : enrolls.length > 0;
+  const returnQuery = [
+    schemeFilters.q ? `q=${encodeURIComponent(schemeFilters.q)}` : '',
+    selectedSchemeMonth ? `month=${selectedSchemeMonth}` : '',
+    schemeFilters.status && schemeFilters.status !== 'ALL' ? `status=${encodeURIComponent(schemeFilters.status)}` : '',
+    pagination?.page > 1 ? `page=${pagination.page}` : ''
+  ].filter(Boolean).join('&');
+  const planReturnPath = `/schemes/plans/${plan.id}${returnQuery ? `?${returnQuery}` : ''}`;
 %>
 
 <header class="page-header scheme-page-header">
@@ -15,8 +25,13 @@
   </div>
   <div class="header-actions">
     <a class="button ghost" href="/schemes">← All Schemes</a>
-    <button type="button" class="button ghost" data-scheme-export-open>Export Excel</button>
-    <button type="button" class="button secondary" data-edit-plan-open>Edit Plan</button>
+    <details class="action-menu">
+      <summary class="button ghost">More <span aria-hidden="true">⌄</span></summary>
+      <div class="action-menu-panel">
+        <button type="button" class="action-menu-item" data-scheme-export-open>Export Excel</button>
+        <button type="button" class="action-menu-item" data-edit-plan-open>Edit plan</button>
+      </div>
+    </details>
     <% if (plan.isActive) { %>
     <button type="button" class="button" data-scheme-enroll-open>+ Enroll Customer</button>
     <% } %>
@@ -54,7 +69,7 @@
 </div>
 <% } %>
 
-<section class="panel scheme-enrollments-panel" data-duration="<%= plan.durationMonths %>">
+<section class="panel register-panel scheme-enrollments-panel" data-duration="<%= plan.durationMonths %>">
   <div class="panel-heading scheme-enrollments-heading">
     <div>
       <h2>Enrolled Customers</h2>
@@ -62,21 +77,21 @@
     </div>
 
     <div class="scheme-filter-controls">
-      <% if (enrolls.length) { %>
-      <!-- Simple Search -->
-      <input type="search" id="filterSearch" placeholder="Search customer…" autocomplete="off">
+      <% if (hasVisibleEnrollmentRecords) { %>
+      <form method="get" action="/schemes/plans/<%= plan.id %>" id="schemeFiltersForm" class="scheme-filter-controls">
+        <input type="search" id="filterSearch" name="q" value="<%= schemeFilters.q %>" placeholder="Search customer…" autocomplete="off">
 
-      <input type="hidden" id="filterMonth" value="ALL">
-      <button type="button" class="scheme-month-picker" id="filterMonthOpen" aria-haspopup="dialog" aria-controls="schemeMonthModal">All Months</button>
+        <input type="hidden" id="filterMonth" name="month" value="<%= schemeFilters.month %>">
+        <button type="button" class="scheme-month-picker" id="filterMonthOpen" aria-haspopup="dialog" aria-controls="schemeMonthModal"><%= selectedSchemeMonth ? `Month ${selectedSchemeMonth}` : 'All Months' %></button>
 
-      <!-- Paid or Not Paid Dropdown -->
-      <select id="filterStatus">
-        <option value="ALL">Paid & Not Paid</option>
-        <option value="PAID">✓ Paid</option>
-        <option value="NOT_PAID">❌ Not Paid</option>
-      </select>
+        <select id="filterStatus" name="status">
+          <option value="ALL" <%= schemeFilters.status === 'ALL' ? 'selected' : '' %>>Paid &amp; Not Paid</option>
+          <option value="PAID" <%= schemeFilters.status === 'PAID' ? 'selected' : '' %>>✓ Paid</option>
+          <option value="NOT_PAID" <%= schemeFilters.status === 'NOT_PAID' ? 'selected' : '' %>>❌ Not Paid</option>
+        </select>
 
-      <button type="button" class="button ghost small" id="resetFiltersBtn" title="Reset filters">Reset</button>
+        <a class="button ghost small" href="/schemes/plans/<%= plan.id %>" title="Reset filters">Reset</a>
+      </form>
       <% } %>
 
       <% if (plan.isActive) { %>
@@ -90,18 +105,17 @@
     <table id="enrollmentsTable">
       <thead>
         <tr>
-          <th style="width:130px;">Enrollment #</th>
+          <th style="width:118px;">Enrollment #</th>
           <th>Customer</th>
           <th style="width:100px;">Start Date</th>
-          <th style="width:130px;">Paid / Total</th>
-          <th style="min-width:280px;">
+          <th style="width:116px;">Paid / Total</th>
+          <th style="min-width:240px;">
             <div style="display:flex; align-items:center; justify-content:space-between; gap:6px;">
               <span>Monthly Timeline (M1 to M<%= plan.durationMonths %>)</span>
-              <span id="colActiveFilterLabel" style="font-size:11.5px; color:var(--gold-dark); font-weight:700;"></span>
+              <span id="colActiveFilterLabel" style="font-size:11.5px; color:var(--gold-dark); font-weight:700;"><%= selectedSchemeMonth ? `[Month ${selectedSchemeMonth}${schemeFilters.status === 'PAID' ? ' · ✓ Paid' : (schemeFilters.status === 'NOT_PAID' ? ' · ❌ Not Paid' : '')}]` : (schemeFilters.status === 'PAID' ? '[✓ Has Paid]' : (schemeFilters.status === 'NOT_PAID' ? '[❌ Has Unpaid]' : '')) %></span>
             </div>
           </th>
           <th style="width:90px;">Status</th>
-          <th style="width:120px;"></th>
         </tr>
       </thead>
       <tbody id="enrollmentsTbody">
@@ -149,21 +163,16 @@
           const pct = plan.durationMonths > 0 ? Math.round((paidCount / plan.durationMonths) * 100) : 0;
           const phoneDigits = (enr.customer?.phone || '').replace(/\D/g, '');
         %>
-        <tr data-enr-row
-            data-customer-name="<%= (enr.customer?.name || '').toLowerCase() %>"
-            data-customer-phone="<%= (enr.customer?.phone || '') %>"
-            data-enrollment-number="<%= enr.enrollmentNumber.toLowerCase() %>"
-            data-status="<%= enr.status %>"
-            data-has-overdue="<%= hasOverdue ? 'true' : 'false' %>"
-            data-paid-months="<%= paidMonths.join(',') %>"
-            data-unpaid-months="<%= unpaidMonths.join(',') %>"
-            data-overdue-months="<%= overdueMonths.join(',') %>">
+        <tr id="enrollment-<%= enr.id %>" data-enr-row>
           <td><strong><%= enr.enrollmentNumber %></strong></td>
           <td>
             <div style="display:flex; align-items:center; justify-content:space-between; gap:6px;">
               <div>
                 <strong><%= enr.customer?.name || '—' %></strong><br>
-                <small style="color:var(--muted);"><%= enr.customer?.phone || '' %></small>
+                <div class="scheme-customer-meta">
+                  <small><%= enr.customer?.phone || '' %></small>
+                  <a class="scheme-passbook-link" href="/schemes/enrollments/<%= enr.id %>?returnTo=<%= encodeURIComponent(`${planReturnPath}#enrollment-${enr.id}`) %>">View passbook →</a>
+                </div>
               </div>
               <% if (phoneDigits.length >= 10) { %>
               <% const schemeWaText = encodeURIComponent(`Namaste ${enr.customer?.name || 'Customer'},\n\nThis is regarding your ${plan.name} savings scheme with Kusum ERP.`); %>
@@ -183,13 +192,13 @@
               <% for (let m = 1; m <= plan.durationMonths; m++) { %>
               <% const inst = instMap[m]; %>
               <% if (inst && inst.status === 'PAID') { %>
-                <span class="inst-chip paid" data-month-chip="<%= m %>" title="Month <%= m %>: Paid ₹<%= inst.paidAmount %> on <%= formatDateDisplay(inst.paymentDate) %> (<%= inst.paymentMethod || 'Cash' %>)">M<%= m %> ✓</span>
+                <span class="inst-chip paid <%= selectedSchemeMonth === m ? 'highlighted' : '' %>" data-month-chip="<%= m %>" title="Month <%= m %>: Paid ₹<%= inst.paidAmount %> on <%= formatDateDisplay(inst.paymentDate) %> (<%= inst.paymentMethod || 'Cash' %>)">M<%= m %> ✓</span>
               <% } else if (inst && inst.isOverdue) { %>
-                <span class="inst-chip overdue" data-month-chip="<%= m %>" title="Month <%= m %>: OVERDUE! Due <%= formatDateDisplay(inst.dueDate) %>">M<%= m %> !</span>
+                <span class="inst-chip overdue <%= selectedSchemeMonth === m ? 'highlighted' : '' %>" data-month-chip="<%= m %>" title="Month <%= m %>: OVERDUE! Due <%= formatDateDisplay(inst.dueDate) %>">M<%= m %> !</span>
               <% } else if (inst) { %>
-                <span class="inst-chip pending" data-month-chip="<%= m %>" title="Month <%= m %>: Due <%= formatDateDisplay(inst.dueDate) %>">M<%= m %></span>
+                <span class="inst-chip pending <%= selectedSchemeMonth === m ? 'highlighted' : '' %>" data-month-chip="<%= m %>" title="Month <%= m %>: Due <%= formatDateDisplay(inst.dueDate) %>">M<%= m %></span>
               <% } else { %>
-                <span class="inst-chip pending" data-month-chip="<%= m %>">M<%= m %></span>
+                <span class="inst-chip pending <%= selectedSchemeMonth === m ? 'highlighted' : '' %>" data-month-chip="<%= m %>">M<%= m %></span>
               <% } %>
               <% } %>
             </div>
@@ -199,30 +208,28 @@
               <%= enr.status %>
             </span>
           </td>
-          <td>
-            <a class="button secondary small" href="/schemes/enrollments/<%= enr.id %>">View Passbook →</a>
-          </td>
         </tr>
         <% }) %>
       </tbody>
     </table>
 
-    <div id="noFilterMatchMessage" style="display:none; text-align:center; padding:36px 16px; color:var(--muted);">
-      <p style="font-size:15px; font-weight:600; color:var(--ink); margin:0 0 4px;">No customers match the selected filter</p>
-      <p style="font-size:13px; margin:0 0 12px;">Try adjusting the month, payment status or search query.</p>
-      <button type="button" class="button small ghost" id="resetFilterFromEmptyBtn">Reset Filters</button>
-    </div>
   </div>
   <%- include('../_pagination', { pagination: typeof pagination !== 'undefined' ? pagination : null }) %>
   <% } else { %>
-  <div class="empty-state compact">
-    <span>◎</span>
-    <h3>No customers enrolled in this scheme yet</h3>
-    <p>Enroll customers into <%= plan.name %> to start tracking monthly installments and cashbook receipts.</p>
-    <% if (plan.isActive) { %>
-    <button type="button" class="button" data-scheme-enroll-open style="margin-top:12px;">+ Enroll First Customer</button>
-    <% } %>
-  </div>
+    <div class="empty-state compact">
+      <span>◎</span>
+      <% if (hasVisibleEnrollmentRecords) { %>
+      <h3>No customers match these filters</h3>
+      <p>Try another customer name, month, or payment status.</p>
+      <a class="button ghost" href="/schemes/plans/<%= plan.id %>">Clear filters</a>
+      <% } else { %>
+      <h3>No customers enrolled in this scheme yet</h3>
+      <p>Enroll customers into <%= plan.name %> to start tracking monthly installments and cashbook receipts.</p>
+      <% if (plan.isActive) { %>
+      <button type="button" class="button" data-scheme-enroll-open style="margin-top:12px;">+ Enroll First Customer</button>
+      <% } %>
+      <% } %>
+    </div>
   <% } %>
 </section>
 
@@ -514,125 +521,21 @@
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && modal.style.display === 'flex') close(); });
 })();
 
-// Real-time Simple Customer & Installment Filtering
-(function initSimpleFilters() {
+// Filters are submitted to the server before pagination. This ensures a
+// search finds matching customers across every page, not only page one.
+(function initSchemeFilters() {
+  const form = document.getElementById('schemeFiltersForm');
   const searchInput = document.getElementById('filterSearch');
   const monthSelect = document.getElementById('filterMonth');
   const statusSelect = document.getElementById('filterStatus');
-  const resetBtn = document.getElementById('resetFiltersBtn');
-  const resetEmptyBtn = document.getElementById('resetFilterFromEmptyBtn');
-
-  const rows = Array.from(document.querySelectorAll('[data-enr-row]'));
-  const totalCount = rows.length;
-  if (!totalCount) return;
-
-  const countEl = document.getElementById('enrolledCustomerCount');
-  const colFilterLabel = document.getElementById('colActiveFilterLabel');
-  const noMatchBox = document.getElementById('noFilterMatchMessage');
-  const tableEl = document.getElementById('enrollmentsTable');
-
-  function applyFilters() {
-    const q = (searchInput?.value || '').trim().toLowerCase();
-    const selectedMonth = monthSelect?.value || 'ALL';
-    const selectedStatus = statusSelect?.value || 'ALL';
-
-    let matched = 0;
-
-    rows.forEach(row => {
-      const name = row.getAttribute('data-customer-name') || '';
-      const phone = row.getAttribute('data-customer-phone') || '';
-      const num = row.getAttribute('data-enrollment-number') || '';
-
-      const paidMonths = (row.getAttribute('data-paid-months') || '').split(',').filter(Boolean).map(Number);
-      const unpaidMonths = (row.getAttribute('data-unpaid-months') || '').split(',').filter(Boolean).map(Number);
-
-      // Search match
-      const searchMatch = !q || name.includes(q) || phone.includes(q) || num.includes(q);
-
-      // Installment match
-      let instMatch = true;
-      if (selectedMonth === 'ALL') {
-        if (selectedStatus === 'NOT_PAID') {
-          instMatch = unpaidMonths.length > 0;
-        } else if (selectedStatus === 'PAID') {
-          instMatch = paidMonths.length > 0;
-        }
-      } else {
-        const m = parseInt(selectedMonth, 10);
-        if (selectedStatus === 'NOT_PAID') {
-          instMatch = unpaidMonths.includes(m);
-        } else if (selectedStatus === 'PAID') {
-          instMatch = paidMonths.includes(m);
-        }
-      }
-
-      const visible = searchMatch && instMatch;
-      row.style.display = visible ? '' : 'none';
-      if (visible) matched++;
-
-      // Highlight target month chip
-      row.querySelectorAll('[data-month-chip]').forEach(chip => {
-        const chipMonth = parseInt(chip.getAttribute('data-month-chip'), 10);
-        if (selectedMonth !== 'ALL' && chipMonth === parseInt(selectedMonth, 10)) {
-          chip.classList.add('highlighted');
-        } else {
-          chip.classList.remove('highlighted');
-        }
-      });
-    });
-
-    // Update count display
-    if (countEl) {
-      if (selectedMonth === 'ALL' && selectedStatus === 'ALL' && !q) {
-        countEl.textContent = `${totalCount} customer${totalCount === 1 ? '' : 's'} enrolled in this scheme`;
-      } else {
-        const statusLabel = selectedStatus === 'NOT_PAID' ? 'Not Paid' : (selectedStatus === 'PAID' ? 'Paid' : '');
-        const monthLabel = selectedMonth !== 'ALL' ? `Month ${selectedMonth}` : '';
-        const filterDesc = [monthLabel, statusLabel].filter(Boolean).join(' · ');
-        countEl.textContent = `Showing ${matched} of ${totalCount} customers${filterDesc ? ` (${filterDesc})` : ''}`;
-      }
-    }
-
-    if (colFilterLabel) {
-      if (selectedMonth !== 'ALL') {
-        const stText = selectedStatus === 'NOT_PAID' ? '❌ Not Paid' : (selectedStatus === 'PAID' ? '✓ Paid' : '');
-        colFilterLabel.textContent = `[Month ${selectedMonth}${stText ? ' · ' + stText : ''}]`;
-      } else if (selectedStatus !== 'ALL') {
-        colFilterLabel.textContent = selectedStatus === 'NOT_PAID' ? '[❌ Has Unpaid]' : '[✓ Has Paid]';
-      } else {
-        colFilterLabel.textContent = '';
-      }
-    }
-
-    // Toggle empty state
-    if (noMatchBox && tableEl) {
-      if (matched === 0) {
-        noMatchBox.style.display = 'block';
-        tableEl.style.display = 'none';
-      } else {
-        noMatchBox.style.display = 'none';
-        tableEl.style.display = '';
-      }
-    }
-  }
-
-  // Events
-  searchInput?.addEventListener('input', applyFilters);
-  monthSelect?.addEventListener('change', applyFilters);
-  statusSelect?.addEventListener('change', applyFilters);
-
-  function resetAll() {
-    if (searchInput) searchInput.value = '';
-    if (monthSelect) monthSelect.value = 'ALL';
-    const monthButton = document.getElementById('filterMonthOpen');
-    if (monthButton) monthButton.textContent = 'All Months';
-    if (statusSelect) statusSelect.value = 'ALL';
-    applyFilters();
-  }
-
-  resetBtn?.addEventListener('click', resetAll);
-  resetEmptyBtn?.addEventListener('click', resetAll);
-
-  applyFilters();
+  if (!form) return;
+  let searchTimer;
+  const submit = () => form.requestSubmit();
+  searchInput?.addEventListener('input', () => {
+    window.clearTimeout(searchTimer);
+    searchTimer = window.setTimeout(submit, 280);
+  });
+  monthSelect?.addEventListener('change', submit);
+  statusSelect?.addEventListener('change', submit);
 })();
 </script>

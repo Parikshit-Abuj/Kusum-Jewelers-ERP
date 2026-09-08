@@ -81,6 +81,21 @@ function redirectWith(res, route, type, message) {
   res.redirect(`${route}${separator}${type}=${encodeURIComponent(message)}`);
 }
 
+function schemePlanReturnPath(value, planId) {
+  const fallback = `/schemes/plans/${planId}`;
+  if (typeof value !== 'string' || !value.trim()) return fallback;
+  try {
+    const candidate = new URL(value, 'http://127.0.0.1');
+    // A passbook can return only to its own plan page. This preserves the
+    // selected page/filter/row without turning a query parameter into an
+    // external redirect target.
+    if (candidate.origin !== 'http://127.0.0.1' || candidate.pathname !== fallback) return fallback;
+    return `${candidate.pathname}${candidate.search}${candidate.hash}`;
+  } catch (_) {
+    return fallback;
+  }
+}
+
 // The session store is MySQL-backed. Explicitly save a regenerated session
 // before redirecting, otherwise a very fast next request can arrive before
 // the new cashier login has reached MySQL.
@@ -1425,6 +1440,26 @@ app.get('/customers/:id', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+app.get('/customers/:id/activity', async (req, res, next) => {
+  try {
+    const customerId = Number(req.params.id);
+    const [customer, sales, payments, purchases, enrollments] = await Promise.all([
+      prisma.customer.findUniqueOrThrow({ where: { id: customerId }, select: { id: true, name: true, phone: true } }),
+      prisma.sale.findMany({ where: { customerId, cancelledAt: null }, select: { id: true, invoiceNumber: true, saleDate: true, total: true }, orderBy: { saleDate: 'desc' }, take: 30 }),
+      prisma.customerLedger.findMany({ where: { customerId, type: { not: 'SALE_CREDIT' } }, select: { createdAt: true, amount: true, paymentMethod: true }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 30 }),
+      prisma.urdPurchase.findMany({ where: { customerId, cancelledAt: null }, select: { purchaseNumber: true, purchaseDate: true, totalAmount: true, metal: true }, orderBy: { purchaseDate: 'desc' }, take: 30 }),
+      prisma.schemeEnrollment.findMany({ where: { customerId, status: { not: 'CANCELLED' } }, include: { schemePlan: { select: { name: true } } }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 30 })
+    ]);
+    const activity = [
+      ...sales.map((sale) => ({ kind: 'SALE', occurredAt: sale.saleDate, title: sale.invoiceNumber, amount: Number(sale.total), detail: 'Bill generated', href: `/sales/${sale.id}` })),
+      ...payments.map((entry) => ({ kind: 'PAYMENT', occurredAt: entry.createdAt, title: 'Payment received', amount: Math.abs(Number(entry.amount)), detail: entry.paymentMethod?.replace('_', ' ') || 'Payment', href: null })),
+      ...purchases.map((purchase) => ({ kind: 'URD', occurredAt: purchase.purchaseDate, title: purchase.purchaseNumber, amount: Number(purchase.totalAmount), detail: `${purchase.metal} purchase`, href: `/urd-purchases?q=${encodeURIComponent(purchase.purchaseNumber)}` })),
+      ...enrollments.map((enrollment) => ({ kind: 'SCHEME', occurredAt: enrollment.createdAt, title: enrollment.schemePlan.name, detail: `Scheme joined · ${enrollment.enrollmentNumber}`, href: `/schemes/enrollments/${enrollment.id}` }))
+    ].sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt)).slice(0, 80);
+    res.render('contacts/customer-activity', { title: `${customer.name} activity`, customer, activity });
+  } catch (error) { next(error); }
+});
+
 app.post('/customers/:id/payments', async (req, res, next) => {
   try {
     const customerId = Number(req.params.id);
@@ -1624,6 +1659,48 @@ app.get('/api/customers/search', async (req, res, next) => {
       take: 20
     });
     res.json({ customers });
+  } catch (error) { next(error); }
+});
+
+// A deliberately small, on-demand workspace search.  It never loads a whole
+// register: the desktop command palette asks only after two characters and
+// each result group is capped, keeping counter PCs responsive on large shops.
+app.get('/api/search', async (req, res, next) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 2) return res.json({ results: [] });
+
+    const [customers, sales, products, purchases, enrollments] = await Promise.all([
+      prisma.customer.findMany({
+        where: { OR: [{ name: { contains: q } }, { phone: { contains: normalizePhone(q) || q } }, { email: { contains: q } }] },
+        select: { id: true, name: true, phone: true }, orderBy: { name: 'asc' }, take: 5
+      }),
+      prisma.sale.findMany({
+        where: { cancelledAt: null, OR: [{ invoiceNumber: { contains: q } }, { customer: { name: { contains: q } } }, { customer: { phone: { contains: q } } }] },
+        select: { id: true, invoiceNumber: true, customer: { select: { name: true, phone: true } } }, orderBy: { saleDate: 'desc' }, take: 5
+      }),
+      prisma.product.findMany({
+        where: { status: 'AVAILABLE', quantity: { gt: 0 }, OR: [{ barcode: { contains: q } }, { name: { contains: q } }, { category: { contains: q } }] },
+        select: { id: true, barcode: true, name: true, metal: true, netWeight: true }, orderBy: { updatedAt: 'desc' }, take: 5
+      }),
+      prisma.urdPurchase.findMany({
+        where: { cancelledAt: null, OR: [{ purchaseNumber: { contains: q } }, { customer: { name: { contains: q } } }, { customer: { phone: { contains: q } } }] },
+        select: { purchaseNumber: true, metal: true, customer: { select: { name: true } } }, orderBy: { purchaseDate: 'desc' }, take: 5
+      }),
+      prisma.schemeEnrollment.findMany({
+        where: { status: { not: 'CANCELLED' }, OR: [{ enrollmentNumber: { contains: q } }, { customer: { name: { contains: q } } }, { customer: { phone: { contains: q } } }] },
+        select: { id: true, enrollmentNumber: true, customer: { select: { name: true, phone: true } }, schemePlan: { select: { name: true } } }, orderBy: { updatedAt: 'desc' }, take: 5
+      })
+    ]);
+
+    const results = [
+      ...customers.map((customer) => ({ type: 'Customer', label: customer.name, detail: customer.phone || 'Customer profile', href: `/customers/${customer.id}` })),
+      ...sales.map((sale) => ({ type: 'Sale', label: sale.invoiceNumber, detail: sale.customer?.name || sale.customer?.phone || 'Walk-in customer', href: `/sales/${sale.id}` })),
+      ...products.map((product) => ({ type: 'Stock', label: `${product.barcode || 'No barcode'} · ${product.name}`, detail: `${product.metal} · ${Number(product.netWeight).toFixed(3)} g`, href: `/inventory?barcode=${encodeURIComponent(product.barcode || '')}&itemName=${encodeURIComponent(product.name)}` })),
+      ...purchases.map((purchase) => ({ type: 'URD', label: purchase.purchaseNumber, detail: `${purchase.customer?.name || 'Customer'} · ${purchase.metal}`, href: `/urd-purchases?q=${encodeURIComponent(purchase.purchaseNumber)}` })),
+      ...enrollments.map((enrollment) => ({ type: 'Scheme', label: enrollment.customer?.name || enrollment.enrollmentNumber, detail: `${enrollment.schemePlan?.name || 'Scheme'} · ${enrollment.enrollmentNumber}`, href: `/schemes/enrollments/${enrollment.id}` }))
+    ];
+    res.json({ results });
   } catch (error) { next(error); }
 });
 
@@ -2870,8 +2947,37 @@ app.get('/schemes/plans/:id', async (req, res, next) => {
     if (!plan) return res.status(404).render('not-found', { title: 'Scheme plan not found' });
 
     // Cancelled customers remain in the audit trail and Cashbook, but are not
-    // shown in operational scheme screens or counts.
+    // shown in operational scheme screens or counts. Apply every list filter
+    // here, before count/pagination, rather than filtering only the rows on
+    // the current browser page. A customer on page 3 must be findable from
+    // page 1 just like Sales, Inventory, Customers, Cashbook and URD lists.
+    const q = String(req.query.q || '').trim();
+    const requestedMonth = Number(req.query.month);
+    const selectedMonth = Number.isInteger(requestedMonth)
+      && requestedMonth >= 1
+      && requestedMonth <= plan.durationMonths
+      ? requestedMonth
+      : null;
+    const paymentStatus = ['PAID', 'NOT_PAID'].includes(String(req.query.status || '').toUpperCase())
+      ? String(req.query.status).toUpperCase()
+      : 'ALL';
     const enrollmentWhere = { schemePlanId: id, status: { not: 'CANCELLED' } };
+    const enrollmentFilters = [];
+    if (q) {
+      enrollmentFilters.push({ OR: [
+        { enrollmentNumber: { contains: q } },
+        { customer: { name: { contains: q } } },
+        { customer: { phone: { contains: q } } }
+      ] });
+    }
+    if (paymentStatus !== 'ALL') {
+      const installmentWhere = {
+        ...(selectedMonth ? { installmentNumber: selectedMonth } : {}),
+        ...(paymentStatus === 'PAID' ? { status: 'PAID' } : { status: { not: 'PAID' } })
+      };
+      enrollmentFilters.push({ installments: { some: installmentWhere } });
+    }
+    if (enrollmentFilters.length) enrollmentWhere.AND = enrollmentFilters;
     const totalItems = await prisma.schemeEnrollment.count({ where: enrollmentWhere });
     const pagination = paginationFor(req, totalItems, req.query.page, 50);
     const [enrollments, enrollmentSummary] = await Promise.all([
@@ -2916,7 +3022,9 @@ app.get('/schemes/plans/:id', async (req, res, next) => {
       plan,
       enrollments,
       stats,
-      pagination
+      pagination,
+      hasEnrollments: (plan._count?.enrollments || 0) > 0,
+      filters: { q, month: selectedMonth ? String(selectedMonth) : 'ALL', status: paymentStatus }
     });
   } catch (error) { next(error); }
 });
@@ -3117,7 +3225,11 @@ app.get('/schemes/enrollments/:id', async (req, res, next) => {
     // Cancelled enrollments remain only in the financial audit trail; they
     // must not be reachable as normal scheme customer screens.
     if (!enrollment || enrollment.status === 'CANCELLED') return res.status(404).render('not-found', { title: 'Enrollment not found' });
-    res.render('schemes/enrollment-detail', { title: `${enrollment.enrollmentNumber}`, enrollment });
+    res.render('schemes/enrollment-detail', {
+      title: `${enrollment.enrollmentNumber}`,
+      enrollment,
+      returnTo: schemePlanReturnPath(req.query.returnTo, enrollment.schemePlanId)
+    });
   } catch (error) { next(error); }
 });
 

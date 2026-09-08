@@ -1,16 +1,16 @@
-<% const unpaidCount = typeof unpaidSalesCount !== 'undefined' ? unpaidSalesCount : customer.sales.filter((sale) => Number(sale.balance) > 0).length; %>
-<header class="page-header">
-  <div><p class="eyebrow">Customer credit sheet</p><h1><%= customer.name %></h1><p class="muted"><%= customer.phone || 'No phone saved' %><%= customer.address ? ` · ${customer.address}` : '' %></p></div>
-  <div class="header-actions"><a class="button ghost" href="/customers">All customers</a><a class="button ghost" href="/data-management?resource=customer-ledger">Export ledger</a><button class="button ghost" type="button" data-customer-edit-open>Edit customer</button><a class="button secondary" href="/sales/new">New sale</a></div>
+<% const unpaidCount = typeof unpaidSalesCount !== 'undefined' ? unpaidSalesCount : customer.sales.filter((sale) => Number(sale.balance) > 0).length; const customerInitials = String(customer.name || '?').trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase(); %>
+<header class="page-header customer-profile-header">
+  <div class="customer-profile-identity"><span class="customer-avatar" aria-hidden="true"><%= customerInitials %></span><div><p class="eyebrow">Customer credit sheet</p><h1><%= customer.name %></h1><p class="muted"><%= customer.phone || 'No phone saved' %><%= customer.address ? ` · ${customer.address}` : '' %></p></div></div>
+  <div class="header-actions"><a class="button ghost" href="/customers">All customers</a><a class="button ghost" href="/customers/<%= customer.id %>/activity">Activity</a><details class="action-menu"><summary class="button ghost">More <span aria-hidden="true">⌄</span></summary><div class="action-menu-panel"><a class="action-menu-item" href="/data-management?resource=customer-ledger">Export ledger</a><button class="action-menu-item" type="button" data-customer-edit-open>Edit customer</button></div></details><a class="button secondary" href="/sales/new">New sale</a><button class="button" type="button" data-customer-payment-open <%= outstanding <= 0 ? 'disabled' : '' %>>Receive payment</button></div>
 </header>
-<section class="customer-summary">
-  <article class="stat-card accent-gold"><span class="stat-label">Current credit due</span><strong><%= money(outstanding) %></strong><p>Across <%= unpaidCount %> unpaid invoice<%= unpaidCount === 1 ? '' : 's' %></p></article>
-  <article class="stat-card"><span class="stat-label">Recent invoices</span><strong><%= customer.sales.length %></strong><p>Sales recorded for this customer</p></article>
-  <article class="stat-card"><span class="stat-label">Savings schemes</span><strong><%= customer.schemeEnrollments?.length || 0 %></strong><p>Customer scheme records</p></article>
+<section class="customer-summary customer-profile-summary">
+  <article class="stat-card accent-gold customer-due-card"><span class="stat-label">Current credit due</span><strong><%= money(outstanding) %></strong><p>Across <%= unpaidCount %> unpaid invoice<%= unpaidCount === 1 ? '' : 's' %></p></article>
+  <article class="stat-card customer-stat-card"><span class="stat-label">Recent invoices</span><strong><%= customer.sales.length %></strong><p>Sales recorded for this customer</p></article>
+  <article class="stat-card customer-stat-card"><span class="stat-label">Savings schemes</span><strong><%= customer.schemeEnrollments?.length || 0 %></strong><p>Customer scheme records</p></article>
 </section>
 <section class="content-grid customer-detail-grid">
-  <article class="panel">
-    <div class="panel-heading"><div><h2>Credit &amp; payment log</h2><p>Each credit sale and received payment is recorded here.</p></div></div>
+  <article class="panel customer-ledger-panel register-panel">
+    <div class="panel-heading"><div><h2>Credit &amp; payment log</h2></div></div>
     <% if (customer.ledger.length) { %>
       <div class="table-wrap"><table><thead><tr><th>Date</th><th>Entry</th><th>Method</th><th class="right">Amount</th><th class="right">Running due</th></tr></thead><tbody>
         <% customer.ledger.slice().reverse().forEach((entry) => { %>
@@ -22,19 +22,40 @@
       <div class="empty-state compact"><span>✓</span><h3>No credit entries</h3><p>This customer currently has no payment due.</p></div>
     <% } %>
   </article>
-  <aside class="panel side-form receive-payment">
-    <h2>Receive payment</h2>
-    <form method="post" action="/customers/<%= customer.id %>/payments">
-      <label>Amount received (₹) *<input name="amount" type="number" min="0.01" max="<%= outstanding %>" step="0.01" required value="<%= outstanding > 0 ? outstanding : '' %>" <%= outstanding <= 0 ? 'disabled' : '' %>></label>
-      <label>Payment method<select name="paymentMethod" data-payment-method <%= outstanding <= 0 ? 'disabled' : '' %>><% ['CASH','UPI','CARD','BANK_TRANSFER'].forEach((method) => { %><option value="<%= method %>"><%= method.replace('_', ' ') %></option><% }) %></select></label>
-      <label>Note<textarea name="note" rows="3" placeholder="Optional payment note" <%= outstanding <= 0 ? 'disabled' : '' %>></textarea></label>
-      <button class="button full" type="submit" <%= outstanding <= 0 ? 'disabled' : '' %>><%= outstanding > 0 ? 'Receive payment' : 'No credit pending' %></button>
-    </form>
-  </aside>
 </section>
+<div class="modal-overlay customer-payment-modal" id="customerPaymentModal" style="display:none;" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="customerPaymentTitle">
+  <section class="modal-card customer-payment-card" role="document">
+    <header class="modal-header">
+      <div><p class="eyebrow">Customer payment</p><h2 id="customerPaymentTitle">Receive payment</h2></div>
+      <button class="modal-close-btn" type="button" data-customer-payment-close aria-label="Close receive payment">×</button>
+    </header>
+    <div class="customer-payment-due"><span>Current credit due</span><strong><%= money(outstanding) %></strong></div>
+    <form method="post" action="/customers/<%= customer.id %>/payments" data-enter-scope>
+      <div class="modal-body customer-payment-fields">
+        <label>Amount received (₹) *<input name="amount" type="number" min="0.01" max="<%= outstanding %>" step="0.01" required value="<%= outstanding > 0 ? outstanding : '' %>" autofocus></label>
+        <label>Payment method<select name="paymentMethod" data-payment-method><% ['CASH','UPI','CARD','BANK_TRANSFER'].forEach((method) => { %><option value="<%= method %>"><%= method.replace('_', ' ') %></option><% }) %></select></label>
+        <label>Note<textarea name="note" rows="3" placeholder="Optional payment note"></textarea></label>
+      </div>
+      <footer class="modal-footer customer-payment-footer"><button class="button ghost" type="button" data-customer-payment-close>Cancel</button><button class="button" type="submit">Receive payment</button></footer>
+    </form>
+  </section>
+</div>
+<script>
+(() => {
+  const modal = document.getElementById('customerPaymentModal');
+  const opener = document.querySelector('[data-customer-payment-open]');
+  if (!modal || !opener) return;
+  const close = () => { modal.style.display = 'none'; modal.setAttribute('aria-hidden', 'true'); opener.focus(); };
+  const open = () => { modal.style.display = 'flex'; modal.setAttribute('aria-hidden', 'false'); setTimeout(() => modal.querySelector('[name="amount"]')?.focus(), 0); };
+  opener.addEventListener('click', open);
+  modal.querySelectorAll('[data-customer-payment-close]').forEach((button) => button.addEventListener('click', close));
+  modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && modal.style.display === 'flex') close(); });
+})();
+</script>
 <% if (customer.schemeEnrollments?.length) { %>
 <section class="panel" style="margin-top:16px;">
-  <div class="panel-heading"><div><h2>Savings schemes</h2><p>Monthly scheme progress for this customer.</p></div><a class="button ghost small" href="/schemes">All schemes</a></div>
+  <div class="panel-heading"><div><h2>Savings schemes</h2></div><a class="button ghost small" href="/schemes">All schemes</a></div>
   <div class="table-wrap"><table><thead><tr><th>Enrollment</th><th>Scheme</th><th>Start</th><th>Status</th><th class="right">Paid</th><th class="right">Installments</th><th></th></tr></thead><tbody>
     <% customer.schemeEnrollments.forEach((enrollment) => { %>
       <tr>

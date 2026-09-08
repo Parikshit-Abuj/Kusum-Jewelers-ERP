@@ -129,7 +129,9 @@ async function openErpWindow() {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
-        spellcheck: false,
+        // Chromium's local spelling dictionary works without an ERP internet
+        // connection and never changes typed text automatically.
+        spellcheck: true,
         partition: cashierSessionPartition
       }
     });
@@ -146,7 +148,6 @@ async function openErpWindow() {
       event.preventDefault();
       if (url.startsWith('https://') || url.startsWith('http://') || url.startsWith('whatsapp://')) shell.openExternal(url);
     });
-
     await erpWindow.loadURL(`http://127.0.0.1:${localPort}`);
   } catch (error) {
     writeStartupLog(error);

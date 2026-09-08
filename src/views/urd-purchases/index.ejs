@@ -7,7 +7,7 @@
 </header>
 
 <% const qVal = typeof q !== 'undefined' ? q : ''; const currentState = typeof state !== 'undefined' ? state : 'ACTIVE'; const purchaseList = typeof purchases !== 'undefined' && Array.isArray(purchases) ? purchases : []; %>
-<section class="panel">
+<section class="panel register-panel">
   <form class="search-bar" method="get" action="/urd-purchases">
     <input name="q" value="<%= qVal %>" placeholder="Search by customer name, mobile number or URD no.">
     <select name="state"><option value="ACTIVE" <%= currentState === 'ACTIVE' ? 'selected' : '' %>>Active purchases</option><option value="CANCELLED" <%= currentState === 'CANCELLED' ? 'selected' : '' %>>Cancelled purchases</option></select>
