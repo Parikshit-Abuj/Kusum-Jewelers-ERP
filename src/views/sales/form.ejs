@@ -777,16 +777,18 @@
     </div>
   </header>
 
-    </div>
-  </header>
-
   <!-- POS Form -->
+  <nav class="billing-wayfinder" aria-label="Invoice sections">
+    <a href="#invoice-customer"><b>1</b> Customer</a>
+    <a href="#invoice-items"><b>2</b> Items</a>
+    <a href="#invoice-payment"><b>3</b> Payment</a>
+  </nav>
   <form class="transaction-layout barcode-sale" method="post" action="<%= editingSale ? `/sales/${editSale.id}/edit` : '/sales' %>" data-barcode-sale data-edit-sale="<%= editingSale ? 'true' : 'false' %>" novalidate>
 
     <!-- Left Main Area -->
     <section class="transaction-main">
       <!-- 1. Customer & Invoice Details -->
-      <div class="pos-card">
+      <div class="pos-card" id="invoice-customer">
         <div class="pos-card-header">
           <h2 class="pos-card-title">Customer</h2>
         </div>
@@ -872,7 +874,7 @@
       </div>
 
       <!-- 2. Scanned Jewellery Items -->
-      <div class="pos-card">
+      <div class="pos-card" id="invoice-items">
         <div class="pos-card-header">
           <div class="item-card-heading"><h2 class="pos-card-title">Items</h2><span class="item-count" data-item-count>0 items</span></div>
           <button class="button small" type="button" data-add-row style="background:#f0ebe0; color:#5a4933; border:1px solid #dcd1c2; font-weight:750; padding:4px 10px; font-size:12px;">
@@ -991,7 +993,7 @@
     </section>
 
     <!-- Right Sidebar: Payment Summary -->
-    <aside class="transaction-summary">
+    <aside class="transaction-summary" id="invoice-payment">
       <h2 class="summary-heading">Payment Summary</h2>
 
       <div class="summary-row">

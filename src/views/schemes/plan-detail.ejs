@@ -80,6 +80,7 @@
       <% if (hasVisibleEnrollmentRecords) { %>
       <form method="get" action="/schemes/plans/<%= plan.id %>" id="schemeFiltersForm" class="scheme-filter-controls">
         <input type="search" id="filterSearch" name="q" value="<%= schemeFilters.q %>" placeholder="Search customer…" autocomplete="off">
+        <button type="submit" class="button secondary small">Search</button>
 
         <input type="hidden" id="filterMonth" name="month" value="<%= schemeFilters.month %>">
         <button type="button" class="scheme-month-picker" id="filterMonthOpen" aria-haspopup="dialog" aria-controls="schemeMonthModal"><%= selectedSchemeMonth ? `Month ${selectedSchemeMonth}` : 'All Months' %></button>
@@ -529,11 +530,12 @@
   const monthSelect = document.getElementById('filterMonth');
   const statusSelect = document.getElementById('filterStatus');
   if (!form) return;
-  let searchTimer;
   const submit = () => form.requestSubmit();
-  searchInput?.addEventListener('input', () => {
-    window.clearTimeout(searchTimer);
-    searchTimer = window.setTimeout(submit, 280);
+  // A full-page GET must be explicit: a typing pause must not navigate away.
+  searchInput?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || event.isComposing || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
+    event.preventDefault();
+    submit();
   });
   monthSelect?.addEventListener('change', submit);
   statusSelect?.addEventListener('change', submit);

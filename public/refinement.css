@@ -1,0 +1,66 @@
+/* Presentation only. Screen media isolates invoices and printed documents. */
+.erp-ui .page-header { gap: 18px; flex-wrap: wrap; }
+.erp-ui .page-header .header-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.erp-ui .panel-heading { flex-wrap: wrap; }
+.erp-ui .button { min-height: 38px; }
+.erp-ui .table-wrap thead th { position: sticky; top: 0; z-index: 2; }
+.erp-ui .table-wrap td { line-height: 1.55; }
+.erp-ui .report-menu-card { min-height: 145px; }
+.erp-ui .report-menu-card:hover { transform: translateY(-2px); }
+.erp-ui .billing-wayfinder { display: flex; gap: 8px; margin: 0 0 18px; padding: 6px; border: 1px solid var(--line); border-radius: 12px; }
+.erp-ui .billing-wayfinder a { flex: 1; display: flex; align-items: center; gap: 10px; padding: 8px 12px; color: var(--ink); font-weight: 600; font-size: 12px; border-radius: 8px; }
+.erp-ui .billing-wayfinder b { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; background: #e8d6ad; color: #3f3014; }
+.erp-ui .billing-wayfinder a:hover { background: rgb(180 145 70 / 15%); }
+.erp-ui :is(#invoice-customer,#invoice-items,#invoice-payment) { scroll-margin-top: 20px; }
+.erp-ui .transaction-layout.barcode-sale { display: grid; grid-template-columns: minmax(0,1fr) 330px !important; gap: 18px; align-items: start; }
+.erp-ui .transaction-main { min-width: 0; display: grid; grid-template-columns: minmax(0,1fr); justify-items: stretch; gap: 16px; }
+.erp-ui .transaction-main .pos-card { width: 100%; min-width: 0; max-width: 100%; margin: 0; padding: 20px; box-sizing: border-box; }
+.erp-ui .transaction-summary { position: static; padding: 20px; max-height: none; overflow: visible; }
+.erp-ui .transaction-summary .btn-submit-bill { position: static; min-height: 47px; width: 100%; }
+.erp-ui .pos-grid-3 { display: grid; grid-template-columns: 1fr 1fr 1.2fr; gap: 12px; }
+.erp-ui .cust-new-grid { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; padding: 14px; }
+.erp-ui .pos-card-title { font-size: 15px; }
+.erp-ui .barcode-cart { max-height: none; overflow-x: auto; scrollbar-width: thin; }
+.erp-ui .sale-cart-columns { position: sticky; top: 0; z-index: 3; }
+.erp-ui .sale-line-editor-modal-card { width: min(1000px,calc(100vw - 32px)); }
+.erp-ui .sale-line-editor-body { padding: 22px; }
+.erp-ui .summary-row { padding: 5px 0; }
+.erp-ui .summary-input-wrap { margin: 14px 0; }
+.erp-ui .net-payable-box { padding: 18px; }
+[data-theme='dark'] .erp-ui .billing-wayfinder { background: #15161f; border-color: #30313d; }
+[data-theme='dark'] .erp-ui .billing-wayfinder a { color: #e5e5eb; }
+[data-theme='dark'] .erp-ui .billing-wayfinder a:nth-child(1) b { background: #453720; color: #ffdb83; }
+[data-theme='dark'] .erp-ui .billing-wayfinder a:nth-child(2) b { background: #233e38; color: #96e5cc; }
+[data-theme='dark'] .erp-ui .billing-wayfinder a:nth-child(3) b { background: #393048; color: #d4b5ff; }
+[data-theme='dark'] .erp-ui .overview-metric.metric-gold { background: linear-gradient(125deg,#3a2e1a,#201e18) !important; border-color: #66512a !important; }
+[data-theme='dark'] .erp-ui .overview-metric.metric-silver { background: linear-gradient(125deg,#233a43,#1a222c) !important; border-color: #355663 !important; }
+[data-theme='dark'] .erp-ui .overview-metric.metric-sales { background: linear-gradient(125deg,#1e3c32,#18251f) !important; border-color: #326c51 !important; }
+[data-theme='dark'] .erp-ui .overview-metric.metric-cash { background: linear-gradient(125deg,#3b294b,#221d2c) !important; border-color: #624276 !important; }
+[data-theme='dark'] .erp-ui .report-menu-card { border-top: 3px solid #a9873f; }
+[data-theme='dark'] .erp-ui .report-menu-card:nth-child(3n + 2) { border-top-color: #7d63aa; }
+[data-theme='dark'] .erp-ui .report-menu-card:nth-child(3n) { border-top-color: #439a85; }
+[data-theme='dark'] .erp-ui #invoice-customer { border-top: 2px solid #b18c45; }
+[data-theme='dark'] .erp-ui #invoice-items { border-top: 2px solid #429b85; }
+[data-theme='dark'] .erp-ui #invoice-payment { border-top: 2px solid #9472bf; }
+@media(max-width:1100px) {
+  .erp-ui .transaction-layout.barcode-sale { grid-template-columns: minmax(0,1fr) !important; }
+  .erp-ui .transaction-summary { position: static; max-height: none; }
+}
+@media(max-width:600px) {
+  .erp-ui .pos-grid-3,.erp-ui .cust-new-grid { grid-template-columns: 1fr; }
+  .erp-ui .billing-wayfinder a { padding: 7px 4px; gap: 5px; font-size: 11px; }
+  .erp-ui .transaction-main .pos-card { padding: 14px; }
+}
+@media(prefers-reduced-motion:reduce) { .erp-ui .report-menu-card:hover { transform: none; } }
+
+/* One document scroll, with no viewport lock or nested vertical payment area. */
+.erp-ui:has(.billing-wrapper) { overflow-y: auto; }
+.erp-ui:has(.billing-wrapper) .main-content { height: auto; overflow: visible; }
+.erp-ui .billing-wrapper { height: auto; max-height: none; }
+.erp-ui .transaction-main { overflow: visible; }
+.erp-ui #invoice-items { height: auto; max-height: none; overflow: visible; }
+.erp-ui .barcode-cart { height: auto; }
+/* Pin only short summaries on tall displays; expanded payment forms scroll normally. */
+@media (min-width: 1101px) and (min-height: 1050px) {
+  .erp-ui #invoice-payment:not(:has([data-split-payment]:not([hidden]))):not(:has([data-urd-refund-method]:not([hidden]))) { position: sticky; top: 16px; }
+}
