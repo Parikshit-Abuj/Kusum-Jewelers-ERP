@@ -1,32 +1,30 @@
-<header class="page-header">
-  <div>
-    <p class="eyebrow">Business registers</p>
-    <h1>Reports</h1>
-  </div>
-</header>
-
-<section class="report-menu" aria-label="Reports menu">
-  <a class="report-menu-card" href="/reports/stock">
-    <span class="report-menu-icon">◇</span>
-    <span><strong>Stock report</strong><small>Available pieces, weights and barcode search.</small></span>
-    <b>Open →</b>
-  </a>
-  <a class="report-menu-card" href="/reports/stock-movements">
-    <span class="report-menu-icon">⇄</span>
-    <span><strong>Stock movement report</strong><small>Opening, sale and adjustment history.</small></span>
-    <b>Open →</b>
-  </a>
-  <a class="report-menu-card" href="/reports/balance-register">
-    <span class="report-menu-icon">₹</span>
-    <span><strong>Balance register</strong><small>Customer credit and cleared balances.</small></span>
-    <b>Open →</b>
-  </a>
-  <a class="report-menu-card" href="/reports/sales-register">
-    <span class="report-menu-icon">▤</span>
-    <span><strong>Sales register</strong><small>Invoices by date, item, customer and payment.</small></span>
-    <b>Open →</b>
-  </a>
-  <a class="report-menu-card" href="/reports/top-selling-items"><span class="report-menu-icon">★</span><span><strong>Top selling items</strong><small>Gold and Silver items ranked by sales performance.</small></span><b>Open →</b></a>
-  <a class="report-menu-card" href="/reports/cashbook-register"><span class="report-menu-icon">₹</span><span><strong>Cashbook register</strong><small>Money in and out by date and payment method.</small></span><b>Open →</b></a>
-  <a class="report-menu-card" href="/urd-purchases"><span class="report-menu-icon">⇣</span><span><strong>URD register</strong><small>Old-gold and silver purchases.</small></span><b>Open →</b></a>
-</section>
+<header class="page-header"><div><p class="eyebrow">Business registers</p><h1>Reports</h1></div></header>
+<% const reportGroups = [
+  { title: 'Sales & accounts', reports: [
+    ['/reports/sales-register', 'Sales register', 'Invoices, customers and payments.', 'receipt'],
+    ['/reports/cashbook-register', 'Cashbook register', 'Money in and out, by payment method.', 'wallet'],
+    ['/reports/balance-register', 'Balance register', 'Customer credit and cleared balances.', 'people'],
+    ['/urd-purchases', 'URD register', 'Old gold and silver purchases.', 'exchange']
+  ] },
+  { title: 'Stock & performance', reports: [
+    ['/reports/stock', 'Stock report', 'Available pieces, weights and barcodes.', 'diamond'],
+    ['/reports/stock-movements', 'Stock movement report', 'Opening, sale and adjustment history.', 'trend'],
+    ['/reports/top-selling-items', 'Top selling items', 'Gold and Silver sales performance.', 'chart']
+  ] }
+]; %>
+<div class="report-directory">
+  <% reportGroups.forEach(group => { %>
+  <section class="report-directory-section" aria-label="<%= group.title %>">
+    <h2><%= group.title %></h2>
+    <div class="report-menu">
+      <% group.reports.forEach(([url, name, description, icon]) => { %>
+      <a class="report-menu-card" href="<%= url %>">
+        <span class="report-menu-icon"><svg class="ui-icon" aria-hidden="true"><use href="/ui-icons.svg#<%= icon %>"></use></svg></span>
+        <span><strong><%= name %></strong><small><%= description %></small></span>
+        <b aria-hidden="true">↗</b>
+      </a>
+      <% }); %>
+    </div>
+  </section>
+  <% }); %>
+</div>

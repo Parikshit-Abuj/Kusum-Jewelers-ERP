@@ -7,6 +7,31 @@
 (function initUiLanguage() {
   const STORAGE_KEY = 'kusum-erp-ui-language';
   const MARATHI = {
+    'Workspace': 'कार्यक्षेत्र',
+    'Manage': 'व्यवस्थापन',
+    'Overview': 'आढावा',
+    'Skip to content': 'मुख्य भागावर जा',
+    'Search anything…': 'शोधा…',
+    '+ Batch Add Pieces': '+ बॅचने वस्तू जोडा',
+    'Your stock, sales and accounts. In one place.': 'तुमचा साठा, विक्री आणि हिशेब. एकाच ठिकाणी.',
+    'Stock & performance': 'साठा आणि कामगिरी',
+    'Sales & accounts': 'विक्री आणि हिशेब',
+    'Recent invoices': 'अलीकडील बिले',
+    'View all': 'सर्व पहा',
+    'Gold stock': 'सोन्याचा साठा',
+    'Silver stock': 'चांदीचा साठा',
+    'Sales today': 'आजची विक्री',
+    'Cash flow today': 'आजचा रोख प्रवाह',
+    'Customer receivables': 'ग्राहकांकडून येणे',
+    'Open balance register': 'बाकी रजिस्टर उघडा',
+    'Stock by metal': 'धातूनुसार साठा',
+    'Top selling item today': 'आज सर्वाधिक विकलेली वस्तू',
+    'Item-wise stock': 'वस्तूनुसार साठा',
+    'No sales today': 'आज विक्री नाही',
+    'View sales register': 'विक्री रजिस्टर पहा',
+    'No stock available': 'साठा उपलब्ध नाही',
+    'Category': 'वर्ग',
+    'Net weight': 'निव्वळ वजन',
     'Dashboard': 'डॅशबोर्ड',
     'Inventory': 'साठा',
     'Item Names': 'वस्तू नावे',
@@ -156,7 +181,7 @@
     while (walker.nextNode()) nodes.push(walker.currentNode);
     nodes.forEach((node) => {
       if (!textNodeAllowed(node)) return;
-      const source = node.dataset?.i18nOriginal || node.nodeValue;
+      const source = node.__kusumI18nOriginal || node.nodeValue;
       const trimmed = source.trim();
       if (!trimmed || !Object.prototype.hasOwnProperty.call(MARATHI, trimmed)) return;
       if (!node.__kusumI18nOriginal) node.__kusumI18nOriginal = source;

@@ -200,34 +200,34 @@
 
 <!-- Modal: Load Previous Batch Document -->
 <div class="modal-overlay" id="batchLoadDocModal" style="display:none; z-index:10001;" aria-hidden="true">
-  <div class="modal-card" style="max-width: 820px; background: #ffffff !important;">
-    <header class="modal-header" style="background: #faf8f5; border-bottom: 1px solid #e8dfcf;">
+  <div class="modal-card batch-load-modal-card" style="max-width: 820px;">
+    <header class="modal-header">
       <div>
-        <h2 style="font-size: 18px; margin: 0; color: #1a1612;">Load Batch Document</h2>
-        <p style="font-size: 12px; color: #7d7265; margin: 2px 0 0;">Select a previous batch document to continue adding pieces or print labels</p>
+        <h2 id="batchLoadDocModalTitle">Load Batch Document</h2>
+        <p class="muted">Select a previous batch document to continue adding pieces or print labels</p>
       </div>
       <button type="button" class="modal-close-btn" id="batchLoadDocCloseBtn">✕</button>
     </header>
-    <div class="modal-body" style="max-height: 60vh; overflow-y: auto; background: #ffffff; padding: 16px 20px;">
-      <div class="table-wrap" style="border: 1px solid #eee6d8; border-radius: 10px; background: #ffffff;">
-        <table class="inventory-table" style="background: #ffffff; width: 100%;">
+    <div class="modal-body" style="max-height: 60vh; overflow-y: auto;">
+      <div class="table-wrap">
+        <table class="inventory-table">
           <thead>
-            <tr style="background: #faf6ef;">
-              <th style="padding: 10px 12px; font-size: 11px; color: #635647; text-transform: uppercase;">Batch Doc No</th>
-              <th style="padding: 10px 12px; font-size: 11px; color: #635647; text-transform: uppercase;">Item / Metal</th>
-              <th class="right" style="padding: 10px 12px; font-size: 11px; color: #635647; text-transform: uppercase;">Pieces</th>
-              <th class="right" style="padding: 10px 12px; font-size: 11px; color: #635647; text-transform: uppercase;">Total Weight</th>
-              <th class="right" style="padding: 10px 12px; font-size: 11px; color: #635647; text-transform: uppercase;">Total Value</th>
-              <th class="center" style="padding: 10px 12px; font-size: 11px; color: #635647; text-transform: uppercase;">Action</th>
+            <tr>
+              <th>Batch Doc No</th>
+              <th>Item / Metal</th>
+              <th class="right">Pieces</th>
+              <th class="right">Total Weight</th>
+              <th class="right">Total Value</th>
+              <th class="center">Action</th>
             </tr>
           </thead>
-          <tbody id="batchDocListTbody" style="background: #ffffff;">
-            <tr><td colspan="6" class="center muted" style="padding: 24px; background: #ffffff;">Loading batch documents...</td></tr>
+          <tbody id="batchDocListTbody">
+            <tr><td colspan="6" class="center muted" style="padding: 24px;">Loading batch documents...</td></tr>
           </tbody>
         </table>
       </div>
     </div>
-    <footer class="modal-footer" style="background: #faf8f5; border-top: 1px solid #e8dfcf; padding: 12px 20px; justify-content: flex-end;">
+    <footer class="modal-footer" style="justify-content: flex-end;">
       <button type="button" class="button ghost" id="batchLoadDocCancelBtn">Cancel</button>
     </footer>
   </div>

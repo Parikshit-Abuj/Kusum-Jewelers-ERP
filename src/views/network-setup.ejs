@@ -1,52 +1,264 @@
 <header class="page-header">
-  <div><p class="eyebrow">Shared shop data</p><h1>Network PC setup</h1></div>
-  <button class="button ghost" type="button" data-connection-repair-open>Change connection</button>
+  <div>
+    <p class="eyebrow">Multi-PC Showroom Network</p>
+    <h1>Network PC Setup</h1>
+    <p class="muted">Share your central jewellery database with billing counters, owner desks, and inventory terminals.</p>
+  </div>
+  <div class="header-actions">
+    <button class="button ghost small" type="button" data-connection-repair-open>
+      ⚙️ Change Connection
+    </button>
+  </div>
 </header>
 
 <% if (!canEnableSharing) { %>
-  <article class="panel"><div class="empty-state compact"><span>i</span><h3>Client PC</h3><p>Connected to main database at <strong><%= connection.host %>:<%= connection.port %></strong>.</p></div></article>
+  <!-- Client Counter PC View -->
+  <div class="network-client-container">
+    <article class="panel network-client-card">
+      <div class="network-client-hero">
+        <span class="status-indicator-dot"></span>
+        <div>
+          <span class="client-role-badge">COUNTER TERMINAL</span>
+          <h2>Connected to Showroom Main PC</h2>
+          <p class="muted">This computer is synchronized in real-time with your central jewellery database.</p>
+        </div>
+      </div>
+
+      <div class="client-connection-summary">
+        <div class="summary-item">
+          <span class="summary-label">Main Server Host</span>
+          <strong class="summary-value highlight"><%= connection.host %></strong>
+        </div>
+        <div class="summary-item">
+          <span class="summary-label">MySQL Service Port</span>
+          <strong class="summary-value"><%= connection.port %></strong>
+        </div>
+        <div class="summary-item">
+          <span class="summary-label">Active Database</span>
+          <strong class="summary-value"><%= connection.database %></strong>
+        </div>
+      </div>
+
+      <div class="client-card-footer">
+        <button class="button ghost small" type="button" data-connection-repair-open>
+          Change Connection Settings →
+        </button>
+      </div>
+    </article>
+  </div>
+
 <% } else { %>
-  <section class="content-grid two-thirds">
-    <article class="panel">
-      <div class="panel-heading"><div><h2>Enable client PCs</h2></div></div>
-      <form method="post" action="/network-setup" class="stack-form">
-        <div class="form-grid two compact-fields">
-          <label>Database name<input value="<%= connection.database %>" disabled></label>
-          <label>MySQL port<input value="<%= connection.port %>" disabled></label>
+  <!-- Main Server PC View -->
+  <div class="network-main-grid">
+    
+    <!-- Left Column: Main PC Network IP & Guide -->
+    <article class="panel network-left-panel">
+      <div class="panel-heading">
+        <div>
+          <div class="host-status-badge">● Primary Showroom PC (Database Host)</div>
+          <h2>Showroom Network Details</h2>
+          <p class="muted">Other computers on your shop Wi-Fi or LAN connect directly to this machine.</p>
         </div>
-        <div class="form-grid two compact-fields">
-          <label>MySQL admin user<input name="mysqlUser" type="text" required value="root" autocomplete="username" class="preserve-case" data-no-uppercase autocapitalize="none" spellcheck="false"></label>
-          <label>MySQL admin password<input name="mysqlPassword" type="password" autocomplete="current-password" placeholder="Leave blank if none" class="preserve-case" data-no-uppercase></label>
+      </div>
+
+      <!-- Clean IP Display Box -->
+      <div class="clean-ip-box">
+        <span class="clean-ip-label">MAIN PC LOCAL IP ADDRESS</span>
+        
+        <% if (addresses.length) { %>
+          <div class="clean-ip-list">
+            <% addresses.forEach((address, idx) => { %>
+            <div class="clean-ip-row">
+              <code id="mainPcIpVal_<%= idx %>" class="ip-code"><%= address %></code>
+              <button type="button" class="button ghost small copy-ip-btn" data-copy-target="mainPcIpVal_<%= idx %>">
+                📋 Copy IP
+              </button>
+            </div>
+            <% }) %>
+          </div>
+        <% } else { %>
+          <div class="clean-ip-empty">
+            ⚠️ No local network IP detected. Ensure this PC is connected to your shop Wi-Fi or router.
+          </div>
+        <% } %>
+        <p class="clean-ip-hint">Database: <code class="gold-code"><%= connection.database %></code> &nbsp;·&nbsp; Port: <code class="gold-code"><%= connection.port %></code></p>
+      </div>
+
+      <!-- Clean Step-by-Step Instructions -->
+      <div class="clean-steps-wrap">
+        <h3 class="clean-steps-title">Connecting a Counter PC:</h3>
+        <ol class="clean-steps-list">
+          <li>
+            <strong>Connect to Same Network</strong>
+            <p>Ensure your counter PC is connected to the same shop Wi-Fi or LAN router.</p>
+          </li>
+          <li>
+            <strong>Open Kusum ERP on Counter PC</strong>
+            <p>During initial setup or via "Change Connection", enter this Main PC IP (<code class="gold-code"><%= addresses[0] || '192.168.1.X' %></code>).</p>
+          </li>
+          <li>
+            <strong>Enter Shared Credentials</strong>
+            <p>Authenticate using the shared counter username &amp; password set on the right.</p>
+          </li>
+        </ol>
+      </div>
+    </article>
+
+    <!-- Right Column: Enable Client PC Access Form -->
+    <article class="panel network-right-panel">
+      <div class="panel-heading">
+        <div>
+          <h2>Authorize Counter PCs</h2>
+          <p class="muted">Configure remote access credentials for billing counter terminals.</p>
         </div>
-        <div class="form-grid two compact-fields">
-          <label>Shared ERP username<input name="databaseUser" type="text" required value="kusum_erp_shared" minlength="3" autocomplete="off" class="preserve-case" data-no-uppercase autocapitalize="none" spellcheck="false"></label>
-          <label>Shared ERP password<input name="databasePassword" type="password" required autocomplete="new-password" class="preserve-case" data-no-uppercase></label>
+      </div>
+
+      <form method="post" action="/network-setup" class="clean-auth-form">
+        
+        <!-- MySQL Admin Authentication -->
+        <div class="clean-form-group">
+          <label class="clean-field-label">
+            <span>MySQL Admin Password</span>
+            <small class="muted">Required once to create and grant remote permissions</small>
+          </label>
+          <div class="form-grid two">
+            <label class="pos-field">
+              <span>Admin Username</span>
+              <input name="mysqlUser" type="text" required value="root" autocomplete="username" class="preserve-case" data-no-uppercase autocapitalize="none" spellcheck="false">
+            </label>
+            <label class="pos-field">
+              <span>Admin Password</span>
+              <input name="mysqlPassword" type="password" autocomplete="current-password" placeholder="Leave blank if none" class="preserve-case" data-no-uppercase>
+            </label>
+          </div>
         </div>
-        <button class="button" type="submit">Save client PC access</button>
+
+        <!-- Shared Counter Credentials -->
+        <div class="clean-form-group">
+          <label class="clean-field-label">
+            <span>Shared Counter Credentials</span>
+            <small class="muted">Counter PCs will use these to link into your showroom database</small>
+          </label>
+          <div class="form-grid two">
+            <label class="pos-field">
+              <span>Counter Username</span>
+              <input name="databaseUser" type="text" required value="kusum_erp_shared" minlength="3" autocomplete="off" class="preserve-case" data-no-uppercase autocapitalize="none" spellcheck="false">
+            </label>
+            <label class="pos-field">
+              <span>Counter Password</span>
+              <div class="input-with-action">
+                <input name="databasePassword" id="sharedDbPasswordInput" type="password" required autocomplete="new-password" placeholder="Set a secure password" class="preserve-case" data-no-uppercase>
+                <button type="button" id="toggleSharedPwBtn" class="pw-toggle-btn" title="Show or hide password">👁️</button>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <div class="auth-submit-wrap">
+          <button class="button gold-btn full-width" type="submit">
+            💾 Save &amp; Authorize Counter PCs
+          </button>
+        </div>
       </form>
     </article>
-    <aside class="panel network-info">
-      <h2>Main PC LAN IP</h2>
-      <% if (addresses.length) { %><div class="network-addresses"><% addresses.forEach((address) => { %><code><%= address %></code><% }) %></div><% } else { %><p class="muted">No LAN address detected.</p><% } %>
-    </aside>
-  </section>
+
+  </div>
 <% } %>
 
+<!-- Connection Repair Confirmation Modal Popup -->
 <div class="modal-overlay connection-repair-modal" id="connectionRepairModal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="connectionRepairModalTitle" aria-hidden="true">
-  <section class="modal-card" role="document">
+  <section class="modal-card" role="document" style="max-width: 500px;">
     <header class="modal-header">
       <div>
-        <p class="eyebrow">Confirm change</p>
-        <h2 id="connectionRepairModalTitle">Change ERP connection?</h2>
+        <p class="eyebrow" style="color: #f5c042 !important;">Connection Manager</p>
+        <h2 id="connectionRepairModalTitle">Change ERP Connection?</h2>
       </div>
       <button class="modal-close-btn" type="button" data-connection-repair-close aria-label="Close confirmation">&times;</button>
     </header>
-    <div class="modal-body">
-      <p class="muted">Continue only when the database server, port, database name, or login details have changed.</p>
+    <div class="modal-body" style="padding: 20px 24px;">
+      <p class="muted" style="margin: 0; font-size: 13.5px; line-height: 1.5;">
+        Continue only when the database server IP, port, database name, or login credentials have changed. You will be redirected to the connection repair wizard.
+      </p>
     </div>
     <footer class="modal-footer connection-repair-modal-footer">
       <button class="button ghost" type="button" data-connection-repair-close>Cancel</button>
-      <a class="button danger" href="/connection-repair">Continue</a>
+      <a class="button danger" href="/connection-repair">Continue to Connection Wizard →</a>
     </footer>
   </section>
 </div>
+
+<script>
+(function() {
+  // Modal open / close handlers
+  const repairModal = document.getElementById('connectionRepairModal');
+  const repairOpeners = document.querySelectorAll('[data-connection-repair-open]');
+  const repairClosers = document.querySelectorAll('[data-connection-repair-close]');
+
+  if (repairModal) {
+    let previousFocus = null;
+    const openModal = () => {
+      previousFocus = document.activeElement;
+      repairModal.style.display = 'flex';
+      repairModal.setAttribute('aria-hidden', 'false');
+    };
+    const closeModal = () => {
+      repairModal.style.display = 'none';
+      repairModal.setAttribute('aria-hidden', 'true');
+      previousFocus?.focus();
+    };
+
+    repairOpeners.forEach(btn => btn.addEventListener('click', openModal));
+    repairClosers.forEach(btn => btn.addEventListener('click', closeModal));
+    repairModal.addEventListener('click', (e) => { if (e.target === repairModal) closeModal(); });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && repairModal.style.display !== 'none') closeModal();
+    });
+  }
+
+  // Copy IP address buttons
+  document.querySelectorAll('.copy-ip-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const targetId = btn.dataset.copyTarget;
+      const targetEl = document.getElementById(targetId);
+      if (!targetEl) return;
+      const textToCopy = targetEl.textContent.trim();
+      
+      try {
+        await navigator.clipboard.writeText(textToCopy);
+        const originalText = btn.textContent;
+        btn.textContent = '✓ Copied!';
+        btn.style.color = '#4ade80';
+        setTimeout(() => {
+          btn.textContent = originalText;
+          btn.style.color = '';
+        }, 2000);
+      } catch (err) {
+        // Fallback for older environments
+        const textarea = document.createElement('textarea');
+        textarea.value = textToCopy;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        btn.textContent = '✓ Copied!';
+        setTimeout(() => { btn.textContent = '📋 Copy IP'; }, 2000);
+      }
+    });
+  });
+
+  // Password show / hide toggle
+  const togglePwBtn = document.getElementById('toggleSharedPwBtn');
+  const sharedPwInput = document.getElementById('sharedDbPasswordInput');
+  if (togglePwBtn && sharedPwInput) {
+    togglePwBtn.addEventListener('click', () => {
+      if (sharedPwInput.type === 'password') {
+        sharedPwInput.type = 'text';
+        togglePwBtn.textContent = '🙈';
+      } else {
+        sharedPwInput.type = 'password';
+        togglePwBtn.textContent = '👁️';
+      }
+    });
+  }
+})();
+</script>

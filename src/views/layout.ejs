@@ -1,12 +1,17 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title><%= title %> · Kusum ERP</title>
+    <script>/* Restore theme preference before first paint to prevent flash */
+    (function(){var t=localStorage.getItem('erp-theme')||'dark';document.documentElement.setAttribute('data-theme',t)})()
+    </script>
     <link rel="stylesheet" href="/styles.css">
+    <link rel="stylesheet" href="/workspace.css" media="screen">
   </head>
-  <body>
+  <body class="erp-ui">
+    <a class="skip-link" href="#main-content">Skip to content</a>
     <div class="app-shell">
       <!-- Mobile Responsive Top Bar -->
       <div class="mobile-top-bar">
@@ -25,34 +30,53 @@
           <span class="brand-mark">K</span>
           <span>Kusum ERP<small>Jewelry management</small></span>
         </a>
-        <nav>
-          <a class="<%= currentPath === '/' ? 'active' : '' %>" href="/"><span>▦</span> Dashboard</a>
-          <a class="<%= currentPath.startsWith('/inventory') ? 'active' : '' %>" href="/inventory"><span>◇</span> Inventory</a>
-          <a class="nav-sub <%= currentPath.startsWith('/item-names') ? 'active' : '' %>" href="/item-names"><span>⊞</span> Item Names</a>
-          <a class="<%= currentPath.startsWith('/rates') ? 'active' : '' %>" href="/rates"><span>⌁</span> Daily rates</a>
-          <a class="<%= currentPath.startsWith('/sales') ? 'active' : '' %>" href="/sales"><span>₹</span> Sales</a>
-          <a class="<%= currentPath.startsWith('/urd') ? 'active' : '' %>" href="/urd-purchases"><span>⇣</span> URD Purchase</a>
-          <a class="<%= currentPath.startsWith('/cashbook') ? 'active' : '' %>" href="/cashbook"><span>⊟</span> Cashbook</a>
-          <a class="<%= currentPath.startsWith('/customers') ? 'active' : '' %>" href="/customers"><span>◎</span> Customers</a>
-          <a class="<%= currentPath.startsWith('/schemes') ? 'active' : '' %>" href="/schemes"><span>⬡</span> Schemes</a>
-          <a class="<%= currentPath.startsWith('/data-management') ? 'active' : '' %>" href="/data-management"><span>⇩</span> Export & archive</a>
-          <a class="<%= currentPath.startsWith('/reports') ? 'active' : '' %>" href="/reports"><span>▤</span> Reports</a>
-          <a class="<%= currentPath.startsWith('/network-setup') ? 'active' : '' %>" href="/network-setup"><span>⌁</span> Network PCs</a>
+        <% const navigationGroups = [
+          { name: 'Workspace', links: [
+            ['/', 'Dashboard', 'dashboard'], ['/sales', 'Sales', 'receipt'],
+            ['/inventory', 'Inventory', 'diamond'], ['/urd-purchases', 'URD Purchase', 'exchange'],
+            ['/customers', 'Customers', 'people'], ['/schemes', 'Schemes', 'scheme'], ['/cashbook', 'Cashbook', 'wallet']
+          ] },
+          { name: 'Manage', links: [
+            ['/rates', 'Daily rates', 'trend'], ['/item-names', 'Item Names', 'grid'],
+            ['/reports', 'Reports', 'chart'], ['/data-management', 'Export & archive', 'download'],
+            ['/network-setup', 'Network PCs', 'network']
+          ] }
+        ]; const activeSection = navigationGroups.flatMap(group => group.links).find(([url]) => url === '/' ? currentPath === '/' : currentPath.startsWith(url)); %>
+        <nav aria-label="Main navigation">
+          <% navigationGroups.forEach(group => { %>
+          <div class="nav-group">
+            <p class="nav-group-label"><%= group.name %></p>
+            <% group.links.forEach(([url, label, icon]) => { const active = url === '/' ? currentPath === '/' : currentPath.startsWith(url); %>
+            <a class="<%= active ? 'active' : '' %>" href="<%= url %>" <%- active ? 'aria-current="page"' : '' %>>
+              <svg class="ui-icon" aria-hidden="true"><use href="/ui-icons.svg#<%= icon %>"></use></svg>
+              <span class="nav-label"><%= label %></span>
+            </a>
+            <% }); %>
+          </div>
+          <% }); %>
         </nav>
         <div class="sidebar-foot">
-          Signed in as <strong><%= loggedInUser %></strong>
-          <button class="sidebar-language" type="button" data-ui-language-toggle aria-label="Switch ERP interface language">मराठी</button>
-          <a class="sidebar-logout" href="/change-password">Change password</a>
-          <form method="post" action="/logout"><button class="sidebar-logout" type="submit">Sign out</button></form>
+          <details class="account-menu">
+            <summary><span class="account-avatar" aria-hidden="true" data-no-i18n><%= String(loggedInUser || 'K').slice(0, 1).toUpperCase() %></span><span class="account-copy"><small>Signed in as</small><strong data-no-i18n><%= loggedInUser %></strong></span><svg class="ui-icon" aria-hidden="true"><use href="/ui-icons.svg#more"></use></svg></summary>
+            <div class="account-options">
+              <a href="/change-password">Change password</a>
+              <form method="post" action="/logout"><button type="submit">Sign out</button></form>
+            </div>
+          </details>
         </div>
       </aside>
-      <main class="main-content">
+      <main class="main-content" id="main-content" tabindex="-1">
         <div class="workspace-toolbar" aria-label="Workspace tools">
+          <div class="workspace-breadcrumb"><span>Workspace</span><span aria-hidden="true">/</span><strong><%= activeSection ? activeSection[1] : title %></strong></div>
+          <div class="workspace-tools">
           <button class="global-search-trigger" type="button" data-global-search-open aria-haspopup="dialog">
-            <span class="global-search-icon" aria-hidden="true">⌕</span>
-            <span>Search barcode, invoice, customer…</span>
+            <svg class="ui-icon" aria-hidden="true"><use href="/ui-icons.svg#search"></use></svg>
+            <span>Search anything…</span>
             <kbd>Ctrl K</kbd>
           </button>
+          <button class="toolbar-language" type="button" data-ui-language-toggle aria-label="Switch ERP interface language">मराठी</button>
+          <button class="theme-toggle" type="button" id="themeToggle" aria-label="Toggle dark/light theme"><span class="theme-icon" data-no-i18n>🌙</span></button>
+          </div>
         </div>
         <% if (message) { %><div class="flash success"><span>✓</span><%= message %></div><% } %>
         <% if (error) { %><div class="flash error"><span>!</span><%= error %></div><% } %>
@@ -73,5 +97,6 @@
     </div>
     <script src="/i18n.js"></script>
     <script src="/app.js"></script>
+    <script src="/workspace.js"></script>
   </body>
 </html>

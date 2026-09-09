@@ -8,542 +8,97 @@
   const _itemBreakdown = typeof itemWeightBreakdown !== 'undefined' && Array.isArray(itemWeightBreakdown) ? itemWeightBreakdown : [];
   const _recentSales = typeof recentSales !== 'undefined' && Array.isArray(recentSales) ? recentSales : [];
 %>
-
-<style>
-  /* ── Clean Professional Dashboard ─────────────────────────────── */
-  .dash-hero-banner {
-    background: #ffffff;
-    border: 1px solid #e5dec9;
-    border-radius: 14px;
-    padding: 18px 24px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 16px;
-    margin-bottom: 20px;
-    box-shadow: 0 2px 10px rgba(60, 45, 20, 0.03);
-  }
-
-  .dash-hero-title h1 {
-    font-size: 20px;
-    font-weight: 800;
-    color: #1a1612;
-    margin: 0 0 3px 0;
-    letter-spacing: -.01em;
-  }
-
-  .dash-hero-title p {
-    font-size: 12.5px;
-    color: #7d7265;
-    margin: 0;
-  }
-
-  .dash-actions-group {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-
-  .btn-dash-primary {
-    background: linear-gradient(135deg, #d4a23c, #a37518);
-    color: #fff !important;
-    border: none;
-    border-radius: 9px;
-    padding: 9px 16px;
-    font-size: 13px;
-    font-weight: 750;
-    display: inline-flex;
-    align-items: center;
-    box-shadow: 0 3px 12px rgba(163, 117, 24, 0.2);
-    transition: transform .15s, box-shadow .15s;
-    text-decoration: none;
-  }
-
-  .btn-dash-primary:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 5px 16px rgba(163, 117, 24, 0.3);
-  }
-
-  /* Stat Cards Grid */
-  .dash-stats-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 14px;
-    margin-bottom: 20px;
-  }
-
-  .dash-stat-card {
-    background: #ffffff;
-    border: 1px solid #e8dfcf;
-    border-radius: 12px;
-    padding: 16px 18px;
-    box-shadow: 0 2px 8px rgba(60, 45, 20, 0.02);
-    position: relative;
-    overflow: hidden;
-    transition: transform .15s, border-color .15s;
-  }
-
-  .dash-stat-card:hover {
-    border-color: #c9a044;
-    transform: translateY(-2px);
-  }
-
-  .dash-stat-card.gold-card {
-    border-left: 4px solid #d4a23c;
-  }
-
-  .dash-stat-card.silver-card {
-    border-left: 4px solid #8e9ca6;
-  }
-
-  .dash-stat-top {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 6px;
-  }
-
-  .dash-stat-label {
-    font-size: 11px;
-    font-weight: 750;
-    color: #706354;
-    text-transform: uppercase;
-    letter-spacing: .04em;
-  }
-
-  .dash-stat-value {
-    font-size: 20px;
-    font-weight: 800;
-    color: #1a1612;
-    margin-bottom: 4px;
-    line-height: 1.2;
-    display: block;
-  }
-
-  .dash-stat-desc {
-    font-size: 12px;
-    color: #8c7f6f;
-    margin: 0;
-  }
-
-  .dash-stat-desc a {
-    color: #9d6512;
-    font-weight: 650;
-    text-decoration: none;
-  }
-
-  .dash-stat-desc a:hover {
-    text-decoration: underline;
-  }
-
-  /* Two Column Layout */
-  .dash-columns-2 {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 18px;
-    margin-bottom: 20px;
-  }
-
-  @media (max-width: 900px) {
-    .dash-columns-2 { grid-template-columns: 1fr; }
-  }
-
-  .dash-panel {
-    background: #ffffff;
-    border: 1px solid #e8dfcf;
-    border-radius: 14px;
-    padding: 18px 20px;
-    box-shadow: 0 2px 10px rgba(60, 45, 20, 0.02);
-  }
-
-  .dash-panel-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding-bottom: 10px;
-    margin-bottom: 14px;
-    border-bottom: 1px solid #f2ede4;
-  }
-
-  .dash-panel-title {
-    font-size: 14px;
-    font-weight: 800;
-    color: #2b2319;
-    margin: 0;
-  }
-
-  .dash-panel-link {
-    font-size: 12px;
-    font-weight: 700;
-    color: #9d6512;
-    text-decoration: none;
-  }
-
-  .dash-panel-link:hover {
-    text-decoration: underline;
-  }
-
-  /* Highlight Card */
-  .dash-trophy-box {
-    background: #fffbf2;
-    border: 1.5px solid #ebd9c4;
-    border-radius: 10px;
-    padding: 14px 16px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-  }
-
-  .dash-trophy-info strong {
-    font-size: 14px;
-    color: #2b2319;
-    display: block;
-    margin-bottom: 2px;
-  }
-
-  .dash-trophy-info small {
-    color: #7d705f;
-    font-size: 12px;
-  }
-
-  .dash-trophy-amount {
-    font-size: 17px;
-    font-weight: 800;
-    color: #b47a21;
-    text-align: right;
-  }
-
-  /* Metal Stock List */
-  .dash-metal-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-
-  .dash-metal-row {
-    background: #faf7f2;
-    border: 1px solid #ebd9c4;
-    border-radius: 9px;
-    padding: 10px 14px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  .dash-metal-badge {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-weight: 750;
-    font-size: 13px;
-    color: #2b2319;
-  }
-
-  .dash-metal-counts {
-    text-align: right;
-  }
-
-  .dash-metal-counts strong {
-    font-size: 13px;
-    color: #1a1612;
-    display: block;
-  }
-
-  .dash-metal-counts small {
-    font-size: 11px;
-    color: #7d705f;
-  }
-
-  /* Modern Data Tables */
-  .dash-table-wrap {
-    overflow-x: auto;
-    border-radius: 10px;
-    border: 1px solid #eee6d8;
-  }
-
-  .dash-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 12.5px;
-    text-align: left;
-  }
-
-  .dash-table thead th {
-    background: #faf6ef;
-    padding: 10px 12px;
-    font-weight: 750;
-    color: #635647;
-    text-transform: uppercase;
-    font-size: 10.5px;
-    letter-spacing: .04em;
-    border-bottom: 1px solid #e5dec9;
-  }
-
-  .dash-table tbody td {
-    padding: 10px 12px;
-    border-bottom: 1px solid #f2ede4;
-    color: #3b3228;
-  }
-
-  .dash-table tbody tr:last-child td {
-    border-bottom: none;
-  }
-
-  .dash-table tbody tr:hover {
-    background: #fcfaf6;
-  }
-
-  .dash-invoice-pill {
-    display: inline-block;
-    padding: 2px 7px;
-    border-radius: 5px;
-    background: #f0ebe0;
-    font-family: 'Courier New', monospace;
-    font-weight: 750;
-    color: #2b2319;
-    text-decoration: none;
-    font-size: 12px;
-  }
-
-  .dash-invoice-pill:hover {
-    background: #dfd4c5;
-  }
-</style>
-
-<!-- Top Hero & Quick Actions -->
-<header class="dash-hero-banner">
-  <div class="dash-hero-title">
-    <h1>Kusum ERP · Shop Dashboard</h1>
-    <p>Live inventory, billing counter, and customer credit at a glance</p>
-  </div>
-
-  <div class="dash-actions-group">
-    <a class="btn-dash-primary" href="/sales/new">
-      + New Sale
-    </a>
-    <a class="button secondary" href="/inventory?openBatch=1" style="border-radius:9px; font-weight:700;">
-      + Batch Stock
-    </a>
-    <a class="button ghost" href="/cashbook?addEntry=1" style="border-radius:9px; font-weight:700;">
-      + Cash Entry
-    </a>
+<header class="page-header overview-heading">
+  <div><p class="eyebrow">Overview</p><h1>Dashboard</h1></div>
+  <div class="header-actions">
+    <a class="button ghost" href="/cashbook?addEntry=1">+ Cash Entry</a>
+    <a class="button secondary" href="/inventory?openBatch=1">+ Batch Stock</a>
+    <a class="button" href="/sales/new">+ New sale</a>
   </div>
 </header>
 
-<!-- Key Stats Grid -->
-<section class="dash-stats-grid">
-  <article class="dash-stat-card gold-card">
-    <div class="dash-stat-top">
-      <span class="dash-stat-label">Gold Stock</span>
-    </div>
-    <strong class="dash-stat-value"><%= grams(_stats.goldWeight) %></strong>
-    <p class="dash-stat-desc">
-      <strong><%= _stats.goldPieces %></strong> piece<%= _stats.goldPieces === 1 ? '' : 's' %> · <a href="/inventory">View stock →</a>
-    </p>
+<section class="overview-metrics" aria-label="Daily overview">
+  <article class="overview-metric metric-gold">
+    <div class="metric-heading"><span>Gold stock</span><span class="metric-symbol"><svg class="ui-icon" aria-hidden="true"><use href="/ui-icons.svg#diamond"></use></svg></span></div>
+    <strong><%= grams(_stats.goldWeight) %></strong>
+    <p><span data-no-i18n><%= _stats.goldPieces %></span> <span>available pieces</span></p>
   </article>
-
-  <article class="dash-stat-card silver-card">
-    <div class="dash-stat-top">
-      <span class="dash-stat-label">Silver Stock</span>
-    </div>
-    <strong class="dash-stat-value"><%= grams(_stats.silverWeight) %></strong>
-    <p class="dash-stat-desc">
-      <strong><%= _stats.silverPieces %></strong> piece<%= _stats.silverPieces === 1 ? '' : 's' %> · <a href="/inventory">View stock →</a>
-    </p>
+  <article class="overview-metric metric-silver">
+    <div class="metric-heading"><span>Silver stock</span><span class="metric-symbol"><svg class="ui-icon" aria-hidden="true"><use href="/ui-icons.svg#diamond"></use></svg></span></div>
+    <strong><%= grams(_stats.silverWeight) %></strong>
+    <p><span data-no-i18n><%= _stats.silverPieces %></span> <span>available pieces</span></p>
   </article>
-
-  <article class="dash-stat-card">
-    <div class="dash-stat-top">
-      <span class="dash-stat-label">Today's Sales</span>
-    </div>
-    <strong class="dash-stat-value"><%= money(_stats.sales) %></strong>
-    <p class="dash-stat-desc">
-      <%= _stats.invoices %> invoice<%= _stats.invoices === 1 ? '' : 's' %> today
-    </p>
+  <article class="overview-metric metric-sales">
+    <div class="metric-heading"><span>Sales today</span><span class="metric-symbol"><svg class="ui-icon" aria-hidden="true"><use href="/ui-icons.svg#receipt"></use></svg></span></div>
+    <strong><%= money(_stats.sales) %></strong>
+    <p><span data-no-i18n><%= _stats.invoices %></span> <span>Invoices</span></p>
   </article>
-
-  <article class="dash-stat-card">
-    <div class="dash-stat-top">
-      <span class="dash-stat-label">Daily Cash Flow</span>
-    </div>
-    <strong class="dash-stat-value <%= _stats.cashNet >= 0 ? 'success-text' : 'danger-text' %>">
-      <%= money(_stats.cashNet) %>
-    </strong>
-    <p class="dash-stat-desc">
-      In <%= money(_stats.cashIn) %> · Out <%= money(_stats.cashOut) %>
-    </p>
-  </article>
-
-  <article class="dash-stat-card">
-    <div class="dash-stat-top">
-      <span class="dash-stat-label">Customer Receivables</span>
-    </div>
-    <strong class="dash-stat-value" style="color:#b47a21;"><%= money(_stats.customerDue) %></strong>
-    <p class="dash-stat-desc">
-      <a href="/reports/balance-register">Open ledger register →</a>
-    </p>
+  <article class="overview-metric metric-cash">
+    <div class="metric-heading"><span>Cash flow today</span><span class="metric-symbol"><svg class="ui-icon" aria-hidden="true"><use href="/ui-icons.svg#wallet"></use></svg></span></div>
+    <strong class="<%= _stats.cashNet >= 0 ? 'success-text' : 'danger-text' %>"><%= money(_stats.cashNet) %></strong>
+    <p><span>In</span> <%= money(_stats.cashIn) %> · <span>Out</span> <%= money(_stats.cashOut) %></p>
   </article>
 </section>
 
-<!-- 2-Column Analytics Panel -->
-<section class="dash-columns-2">
-  <!-- Top Selling Item -->
-  <article class="dash-panel">
-    <div class="dash-panel-header">
-      <h2 class="dash-panel-title">Top Selling Item Today</h2>
-      <a class="dash-panel-link" href="/reports/sales-register">Sales Register →</a>
-    </div>
-
-    <% if (_topItem) { %>
-      <div class="dash-trophy-box">
-        <div class="dash-trophy-info">
-          <div style="display:flex; align-items:center; gap:6px; margin-bottom:2px;">
-            <span class="metal-dot <%= String(_topItem.metal || 'OTHER').toLowerCase() %>"></span>
-            <strong><%= _topItem.name %></strong>
-          </div>
-          <small><%= _topItem.metal %><%= _topItem.purity ? ` · ${_topItem.purity}` : '' %> · <strong><%= _topItem.quantity %> piece<%= _topItem.quantity === 1 ? '' : 's' %> billed</strong></small>
-        </div>
-        <div class="dash-trophy-amount">
-          <%= money(_topItem.billed) %>
-        </div>
-      </div>
-    <% } else { %>
-      <div class="empty-state compact" style="padding:20px 10px;">
-        <h3 style="font-size:13.5px; margin-bottom:2px;">No sales recorded today yet</h3>
-        <p style="font-size:12px; margin:0;">Top selling item will appear after the first bill.</p>
-      </div>
-    <% } %>
-  </article>
-
-  <!-- Stock By Metal -->
-  <article class="dash-panel">
-    <div class="dash-panel-header">
-      <h2 class="dash-panel-title">Available Stock by Metal</h2>
-      <a class="dash-panel-link" href="/reports/stock">Full Stock Report →</a>
-    </div>
-
-    <% if (_invByMetal.length) { %>
-      <ul class="dash-metal-list">
-        <% _invByMetal.forEach((row) => { %>
-          <li class="dash-metal-row">
-            <div class="dash-metal-badge">
-              <span class="metal-dot <%= row.metal.toLowerCase() %>"></span>
-              <span><%= row.metal %></span>
-            </div>
-            <div class="dash-metal-counts">
-              <strong><%= row.pieces %> piece<%= row.pieces === 1 ? '' : 's' %></strong>
-              <small><%= grams(row.weight) %> net</small>
-            </div>
-          </li>
-        <% }) %>
-      </ul>
-    <% } else { %>
-      <div class="empty-state compact" style="padding:20px 10px;">
-        <h3 style="font-size:13.5px; margin-bottom:2px;">No inventory in database</h3>
-        <p style="font-size:12px; margin:0;">Add stock to view distribution.</p>
-      </div>
-    <% } %>
-  </article>
-</section>
-
-<!-- Item-wise Stock Weight Breakdown Table -->
-<% if (_itemBreakdown.length) { %>
-<section class="dash-panel" style="margin-bottom:20px;">
-  <div class="dash-panel-header">
-    <h2 class="dash-panel-title">Item-Wise Stock Weight Breakdown</h2>
-    <span style="font-size:12px; color:#8c7f6f;"><%= _itemBreakdown.length %> categories</span>
-  </div>
-
-  <div class="dash-table-wrap">
-    <table class="dash-table">
-      <thead>
-        <tr>
-          <th>Item Name</th>
-          <th>Category</th>
-          <th>Metal</th>
-          <th style="text-align:right;">Available Pieces</th>
-          <th style="text-align:right;">Total Net Weight</th>
-        </tr>
-      </thead>
+<div class="overview-grid">
+  <section class="panel overview-invoices">
+    <div class="panel-heading"><h2>Recent invoices</h2><a class="text-link" href="/sales">View all →</a></div>
+    <% if (_recentSales.length) { %>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Invoice</th><th>Customer</th><th>Date</th><th class="right">Total amount</th><th><span class="sr-only">Action</span></th></tr></thead>
       <tbody>
-        <% _itemBreakdown.forEach((item) => { %>
-          <tr>
-            <td><strong><%= item.name %></strong></td>
-            <td><%= item.category %></td>
-            <td>
-              <span class="metal-dot <%= item.metal.toLowerCase() %>"></span>
-              <%= item.metal %>
-            </td>
-            <td style="text-align:right;">
-              <span class="pill neutral"><%= item.pieces %></span>
-            </td>
-            <td style="text-align:right;">
-              <strong><%= grams(item.weight) %></strong>
-            </td>
-          </tr>
-        <% }) %>
+        <% _recentSales.forEach(sale => { %>
+        <tr>
+          <td><a class="invoice-reference" href="/sales/<%= sale.id %>"><%= sale.invoiceNumber %></a></td>
+          <td><strong><%= sale.customer?.name || 'Walk-in customer' %></strong><% if (sale.customer?.phone) { %><small><%= sale.customer.phone %></small><% } %></td>
+          <td><%= sale.saleDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) %></td>
+          <td class="right"><strong><%= money(sale.total) %></strong></td>
+          <td><a class="icon-button" href="/sales/<%= sale.id %>" aria-label="View invoice <%= sale.invoiceNumber %>"><svg class="ui-icon" aria-hidden="true"><use href="/ui-icons.svg#arrow"></use></svg></a></td>
+        </tr>
+        <% }); %>
       </tbody>
-    </table>
-  </div>
+    </table></div>
+    <% } else { %>
+      <div class="empty-state"><h3>No invoices recorded yet</h3><p>Create your first bill from the billing desk.</p><a class="button" href="/sales/new">+ New sale</a></div>
+    <% } %>
+  </section>
+
+  <aside class="overview-side">
+    <section class="credit-summary">
+      <h2>Customer receivables</h2><strong><%= money(_stats.customerDue) %></strong>
+      <a href="/reports/balance-register"><span>Open balance register</span><svg class="ui-icon" aria-hidden="true"><use href="/ui-icons.svg#arrow"></use></svg></a>
+    </section>
+    <section class="panel">
+      <div class="panel-heading"><h2>Stock by metal</h2><a class="text-link" href="/reports/stock" aria-label="Stock report">↗</a></div>
+      <% if (_invByMetal.length) { %>
+      <ul class="stock-distribution">
+        <% _invByMetal.forEach(row => { %>
+        <li><span><span class="metal-dot <%= row.metal.toLowerCase() %>"></span><span data-no-i18n><%= row.metal %></span></span><div><strong><%= grams(row.weight) %></strong><small><%= row.pieces %> <span>pieces</span></small></div></li>
+        <% }); %>
+      </ul>
+      <% } else { %><p class="quiet-empty">No stock available</p><% } %>
+    </section>
+    <section class="panel">
+      <div class="panel-heading"><h2>Top selling item today</h2><a class="text-link" href="/reports/top-selling-items" aria-label="Top selling items">↗</a></div>
+      <% if (_topItem) { %>
+      <div class="top-item-name" data-no-i18n><%= _topItem.name %></div>
+      <small data-no-i18n><%= _topItem.metal %><%= _topItem.purity ? ' · ' + _topItem.purity : '' %></small>
+      <div class="top-item-meta"><span><%= _topItem.quantity %> <span>pieces billed</span></span><strong><%= money(_topItem.billed) %></strong></div>
+      <% } else { %><p class="quiet-empty">No sales today</p><% } %>
+    </section>
+  </aside>
+</div>
+
+<% if (_itemBreakdown.length) { %>
+<section class="panel stock-breakdown-panel">
+  <div class="panel-heading"><h2>Item-wise stock</h2><a class="text-link" href="/inventory">Inventory →</a></div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Item name</th><th>Category</th><th>Metal</th><th class="right">Available pieces</th><th class="right">Net weight</th></tr></thead>
+    <tbody>
+      <% _itemBreakdown.forEach(item => { %>
+      <tr><td><strong><%= item.name %></strong></td><td><%= item.category %></td><td><span class="metal-dot <%= item.metal.toLowerCase() %>"></span><%= item.metal %></td><td class="right"><%= item.pieces %></td><td class="right"><strong><%= grams(item.weight) %></strong></td></tr>
+      <% }); %>
+    </tbody>
+  </table></div>
 </section>
 <% } %>
-
-<!-- Recent Counter Invoices Table -->
-<section class="dash-panel">
-  <div class="dash-panel-header">
-    <h2 class="dash-panel-title">Recent Counter Invoices</h2>
-    <a class="dash-panel-link" href="/sales">View All Invoices →</a>
-  </div>
-
-  <% if (_recentSales.length) { %>
-    <div class="dash-table-wrap">
-      <table class="dash-table">
-        <thead>
-          <tr>
-            <th>Invoice No.</th>
-            <th>Customer</th>
-            <th>Billing Date</th>
-            <th style="text-align:right;">Total Amount</th>
-            <th style="text-align:center;">Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          <% _recentSales.forEach((sale) => { %>
-            <tr>
-              <td>
-                <a class="dash-invoice-pill" href="/sales/<%= sale.id %>">
-                  <%= sale.invoiceNumber %>
-                </a>
-              </td>
-              <td>
-                <strong><%= sale.customer?.name || 'Walk-in customer' %></strong>
-                <% if (sale.customer?.phone) { %>
-                  <small style="color:#8c7f6f; display:block;"><%= sale.customer.phone %></small>
-                <% } %>
-              </td>
-              <td><%= sale.saleDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) %></td>
-              <td style="text-align:right;">
-                <strong><%= money(sale.total) %></strong>
-              </td>
-              <td style="text-align:center;">
-                <a class="button ghost small" href="/sales/<%= sale.id %>" style="padding:2px 8px; font-size:11.5px;">View →</a>
-              </td>
-            </tr>
-          <% }) %>
-        </tbody>
-      </table>
-    </div>
-  <% } else { %>
-    <div class="empty-state" style="padding:28px 10px;">
-      <h3>No invoices recorded yet</h3>
-      <p>Create your first bill from the POS counter.</p>
-      <a class="btn-dash-primary" href="/sales/new">+ Create New Sale</a>
-    </div>
-  <% } %>
-</section>

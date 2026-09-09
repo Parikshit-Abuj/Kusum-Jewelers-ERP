@@ -1,126 +1,191 @@
-<header class="page-header" style="margin-bottom: 24px;">
+<header class="page-header">
   <div>
-    <p class="eyebrow" style="color: #b47a21; font-weight: 700; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;">Data Lifecycle Management</p>
-    <h1 style="font-size: 24px; font-weight: 800; color: #1a1612; margin: 4px 0 6px;">Data Exports &amp; Archiving</h1>
-    <p class="muted" style="color: #756f69; font-size: 13.5px; margin: 0;">Generate multi-sheet Excel (.xlsx) workbooks or manage historical data lifecycle with automated safety rules.</p>
+    <p class="eyebrow">Data Lifecycle &amp; Compliance</p>
+    <h1>Data Exports &amp; Archiving</h1>
+    <p class="muted">Download multi-sheet Excel (.xlsx) workbooks for CA audits and tax filings, or manage historical records.</p>
   </div>
-  <button class="button danger" type="button" data-archive-modal-open>Controlled archival</button>
+  <div class="header-actions">
+    <button class="button ghost small" type="button" data-archive-modal-open>
+      🛡️ Controlled Archival
+    </button>
+  </div>
 </header>
 
-<div class="archive-layout">
+<!-- Main Clean 2-Column Grid -->
+<div class="data-mgmt-grid">
   
-  <!-- Section 1: Excel Export -->
-  <article class="panel" style="background: #ffffff; border: 1px solid #e5ded5; border-radius: 14px; padding: 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.03);">
-    <div style="margin-bottom: 20px; padding-bottom: 14px; border-bottom: 1px solid #f0ebe0;">
-      <h2 style="font-size: 18px; font-weight: 750; color: #1a1612; margin: 0 0 4px;">Export to Excel (.xlsx)</h2>
-      <p style="font-size: 12.5px; color: #756f69; margin: 0;">Download comprehensive audit-ready spreadsheets for any register.</p>
+  <!-- Left Panel: Excel Export Console -->
+  <article class="panel export-panel">
+    <div class="panel-heading">
+      <div>
+        <h2>Export to Excel (.xlsx)</h2>
+        <p class="muted">Generate complete, audit-ready spreadsheet workbooks with native formulas and totals.</p>
+      </div>
     </div>
 
-    <form method="post" action="/data/export" id="exportForm">
-      <div style="margin-bottom: 18px;">
-        <label style="display: block; font-size: 12px; font-weight: 700; color: #4a3e31; text-transform: uppercase; margin-bottom: 6px;">
-          Select Data Register
+    <form method="post" action="/data/export" id="exportForm" class="export-form">
+      
+      <!-- Register Selector -->
+      <div class="clean-form-group">
+        <label for="exportResourceSelect" class="clean-field-label">
+          <span>Select Register</span>
         </label>
-        <select name="resource" style="width: 100%; padding: 10px 14px; border: 1.5px solid #ded5c5; border-radius: 9px; font-size: 14px; font-weight: 600; background: #fffcf8; color: #1a1612;">
+        <select name="resource" id="exportResourceSelect" class="clean-select">
           <% resources.forEach((item) => { %>
           <option value="<%= item.key %>" <%= selectedResource === item.key ? 'selected' : '' %>>
-            <%= item.label %>
+            <%= item.label %> &nbsp;—&nbsp; <%= item.dateLabel %>
           </option>
           <% }) %>
         </select>
       </div>
 
-      <!-- Quick Preset Chips -->
-      <div style="margin-bottom: 16px;">
-        <label style="display: block; font-size: 11px; font-weight: 700; color: #825512; text-transform: uppercase; margin-bottom: 8px;">
-          Quick Date Ranges
+      <!-- Accounting Period Presets & Dates -->
+      <div class="clean-form-group">
+        <label class="clean-field-label">
+          <span>Accounting Period</span>
         </label>
-        <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-          <button type="button" class="button ghost small" data-preset="today" style="font-size: 11.5px; padding: 5px 12px; border-radius: 7px; background: #faf8f5;">Today</button>
-          <button type="button" class="button ghost small" data-preset="thisMonth" style="font-size: 11.5px; padding: 5px 12px; border-radius: 7px; background: #faf8f5;">This Month</button>
-          <button type="button" class="button ghost small" data-preset="lastMonth" style="font-size: 11.5px; padding: 5px 12px; border-radius: 7px; background: #faf8f5;">Last Month</button>
-          <button type="button" class="button ghost small" data-preset="fy" style="font-size: 11.5px; padding: 5px 12px; border-radius: 7px; background: #faf8f5;">Financial Year</button>
-          <button type="button" class="button ghost small" data-preset="twoYears" style="font-size: 11.5px; padding: 5px 12px; border-radius: 7px; background: #faf8f5;">Last 2 Years</button>
+        
+        <!-- Clean Presets Pill Row -->
+        <div class="period-presets-bar">
+          <button type="button" class="preset-pill" data-preset="today">Today</button>
+          <button type="button" class="preset-pill is-active" data-preset="thisMonth">This Month</button>
+          <button type="button" class="preset-pill" data-preset="lastMonth">Last Month</button>
+          <button type="button" class="preset-pill" data-preset="fy">Current FY</button>
+          <button type="button" class="preset-pill" data-preset="twoYears">Last 2 Years</button>
+        </div>
+
+        <div class="form-grid two clean-date-grid">
+          <label class="pos-field">
+            <span>From Date</span>
+            <input name="from" id="exportFromDate" type="date" required value="<%= range.from %>">
+          </label>
+          <label class="pos-field">
+            <span>To Date</span>
+            <input name="to" id="exportToDate" type="date" required value="<%= range.to %>">
+          </label>
         </div>
       </div>
 
-      <div class="form-grid two" style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 22px;">
-        <label style="display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 700; color: #4a3e31;">
-          <span>From Date</span>
-          <input name="from" id="exportFromDate" type="date" required value="<%= range.from %>" style="padding: 9px 12px; border: 1.5px solid #ded5c5; border-radius: 8px; font-size: 13.5px;">
-        </label>
-        <label style="display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 700; color: #4a3e31;">
-          <span>To Date</span>
-          <input name="to" id="exportToDate" type="date" required value="<%= range.to %>" style="padding: 9px 12px; border: 1.5px solid #ded5c5; border-radius: 8px; font-size: 13.5px;">
-        </label>
+      <div class="export-btn-wrap">
+        <button class="button gold-btn full-width" type="submit">
+          📥 Download Excel (.xlsx) Report
+        </button>
       </div>
-
-      <button class="button accent" type="submit" style="width: 100%; padding: 12px; font-size: 14px; font-weight: 750; background: #b47a21; color: #ffffff; border: none; border-radius: 9px; box-shadow: 0 4px 14px rgba(180, 122, 33, 0.25); cursor: pointer;">
-        Download Excel (.xlsx) Report →
-      </button>
     </form>
   </article>
 
+  <!-- Right Panel: Retention & Safeguards Hub -->
+  <aside class="panel safeguards-panel">
+    <div class="panel-heading">
+      <div>
+        <h2>Retention &amp; Safeguards</h2>
+        <p class="muted">Automated integrity protections for showroom compliance.</p>
+      </div>
+    </div>
+
+    <!-- Clean, Sleek Policy Summary -->
+    <ul class="safeguards-list">
+      <li>
+        <span class="bullet-dot">●</span>
+        <div>
+          <strong>7-Year IT Act Retention</strong>
+          <p>Indian Income Tax Act requires preserving primary sales, invoices, and cashbooks for at least 7 assessment years.</p>
+        </div>
+      </li>
+      <li>
+        <span class="bullet-dot">●</span>
+        <div>
+          <strong>Referential Lock Engine</strong>
+          <p>Invoices with open credit dues, customer balances, and active pawn loans cannot be purged.</p>
+        </div>
+      </li>
+      <li>
+        <span class="bullet-dot">●</span>
+        <div>
+          <strong>Active Stock Protection</strong>
+          <p>Only zero-stock archived records can ever be removed. All active jewelry in stock trays is strictly preserved.</p>
+        </div>
+      </li>
+      <li>
+        <span class="bullet-dot">●</span>
+        <div>
+          <strong>Permanent Audit Registers</strong>
+          <p>Cancelled bills, customer ledgers, and savings schemes remain permanent audit history.</p>
+        </div>
+      </li>
+    </ul>
+
+    <!-- Clean Archival Trigger Box -->
+    <div class="archival-trigger-card">
+      <div class="archival-trigger-text">
+        <strong>Need to purge obsolete historical data?</strong>
+        <p class="muted">Requires verified backup confirmation and explicit typing of DELETE.</p>
+      </div>
+      <button class="button danger small" type="button" data-archive-modal-open>
+        Open Archival Console →
+      </button>
+    </div>
+  </aside>
+
 </div>
 
+<!-- Controlled Archival Modal Popup -->
 <div class="modal-overlay archival-modal" id="archiveModal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="archiveModalTitle" aria-hidden="true">
-  <section class="modal-card" role="document">
+  <section class="modal-card archive-modal-card" role="document">
     <header class="modal-header">
       <div>
-        <p class="eyebrow">Data lifecycle</p>
-        <h2 id="archiveModalTitle">Controlled archival</h2>
+        <p class="eyebrow" style="color:#ef4444 !important;">Data Lifecycle · Permanent Purge</p>
+        <h2 id="archiveModalTitle">Controlled Archival</h2>
       </div>
       <button class="modal-close-btn" type="button" data-archive-modal-close aria-label="Close controlled archival">&times;</button>
     </header>
 
     <form method="post" action="/data/archive" data-archive-form>
       <div class="modal-body archival-modal-body">
-      <div style="margin-bottom: 14px;">
-        <label style="display: block; font-size: 11.5px; font-weight: 700; color: #4a3e31; text-transform: uppercase; margin-bottom: 5px;">
-          Register to Purge
+        <div class="pos-field" style="margin-bottom: 14px;">
+          <label>Select Register to Purge</label>
+          <select name="resource" data-resource-select class="archive-resource-select">
+            <% resources.forEach((item) => { %>
+            <option value="<%= item.key %>" data-archive-disabled="<%= item.archiveDisabled ? 'true' : 'false' %>" data-archive-note="<%= item.archiveNote %>" <%= selectedResource === item.key ? 'selected' : '' %>>
+              <%= item.label %>
+            </option>
+            <% }) %>
+          </select>
+        </div>
+
+        <div class="form-grid two" style="margin-bottom: 14px;">
+          <label class="pos-field">
+            <span>From Date</span>
+            <input name="from" type="date" required value="<%= range.from %>">
+          </label>
+          <label class="pos-field">
+            <span>To Date</span>
+            <input name="to" type="date" required value="<%= range.to %>">
+          </label>
+        </div>
+
+        <!-- Dynamic Rule Banner -->
+        <div class="archive-rule-banner" style="margin-bottom: 16px; padding: 12px 14px; border-left: 3px solid #f5c042; background: rgba(245, 192, 66, 0.08); border-radius: 6px;">
+          <span class="archive-rule-label" style="font-size: 11px; font-weight: 750; text-transform: uppercase; color: #f5c042; display: block; margin-bottom: 3px;">Active Safety Rule:</span>
+          <p class="archive-rule" id="archiveRuleNoteText" style="margin: 0; font-size: 12px; line-height: 1.45;"><%= resource.archiveNote %></p>
+        </div>
+
+        <!-- Safety Confirmation Step 1 -->
+        <label class="archive-check" style="display: flex; align-items: flex-start; gap: 10px; margin-bottom: 14px; cursor: pointer;">
+          <input name="archiveAcknowledged" type="checkbox" style="width: auto; margin-top: 3px;">
+          <span style="font-size: 12.5px; font-weight: 600;">I have downloaded an Excel backup and confirm permanently deleting these records.</span>
         </label>
-        <select name="resource" data-resource-select style="width: 100%; padding: 8px 12px; border: 1.5px solid #ded5c5; border-radius: 8px; font-size: 13.5px; font-weight: 600; background: #fffcf8; color: #1a1612;">
-          <% resources.forEach((item) => { %>
-          <option value="<%= item.key %>" data-archive-disabled="<%= item.archiveDisabled ? 'true' : 'false' %>" data-archive-note="<%= item.archiveNote %>" <%= selectedResource === item.key ? 'selected' : '' %>>
-            <%= item.label %>
-          </option>
-          <% }) %>
-        </select>
-      </div>
 
-      <div class="form-grid two" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">
-        <label style="display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; font-weight: 700; color: #4a3e31;">
-          <span>From Date</span>
-          <input name="from" type="date" required value="<%= range.from %>" style="padding: 7px 10px; border: 1.5px solid #ded5c5; border-radius: 7px; font-size: 12.5px;">
+        <!-- Safety Confirmation Step 2 -->
+        <label class="pos-field archive-confirm-label" style="margin-bottom: 6px;">
+          <span>Type <strong style="color: #ef4444;">DELETE</strong> to confirm permanent deletion:</span>
+          <input name="archiveConfirm" autocomplete="off" placeholder="DELETE" class="archive-confirm-input" style="font-weight: 700; letter-spacing: 0.05em;">
         </label>
-        <label style="display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; font-weight: 700; color: #4a3e31;">
-          <span>To Date</span>
-          <input name="to" type="date" required value="<%= range.to %>" style="padding: 7px 10px; border: 1.5px solid #ded5c5; border-radius: 7px; font-size: 12.5px;">
-        </label>
-      </div>
-
-      <!-- Dynamic Rule Banner -->
-      <div style="background: #fbf7ed; border-left: 3px solid #d8b25f; padding: 9px 12px; border-radius: 4px 8px 8px 4px; margin-bottom: 14px;">
-        <span style="display: block; font-size: 10.5px; font-weight: 750; color: #825512; text-transform: uppercase; margin-bottom: 2px;">Archival Rule:</span>
-        <p class="archive-rule" id="archiveRuleNoteText" style="margin: 0; font-size: 11.5px; color: #5a4b36; line-height: 1.4;"><%= resource.archiveNote %></p>
-      </div>
-
-      <!-- Safety Confirmation Step 1 -->
-      <label class="archive-check" style="display: flex; align-items: flex-start; gap: 8px; font-size: 11.5px; line-height: 1.35; color: #3d352e; margin-bottom: 12px; cursor: pointer;">
-        <input name="archiveAcknowledged" type="checkbox" style="margin-top: 2px; accent-color: #b53d36;">
-        <span>I have a verified backup and confirm deleting these records.</span>
-      </label>
-
-      <!-- Safety Confirmation Step 2 -->
-      <label style="display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; font-weight: 700; color: #7b302b; margin-bottom: 16px;">
-        <span>Type <strong>DELETE</strong> to confirm</span>
-        <input name="archiveConfirm" autocomplete="off" placeholder="DELETE" style="padding: 7px 10px; border: 1.5px solid #e0c0bc; border-radius: 7px; font-size: 12.5px; font-weight: 700; letter-spacing: 1px; color: #b53d36;">
-      </label>
       </div>
       <footer class="modal-footer archival-modal-footer">
         <button class="button ghost" type="button" data-archive-modal-close>Cancel</button>
-        <button class="button danger full" type="submit" data-archive-submit <%= resource.archiveDisabled ? 'disabled' : '' %> style="width: 100%; padding: 10px; font-size: 13px; font-weight: 750; border-radius: 8px;">
-          Permanently Delete Selected Data
+        <button class="button danger full" type="submit" data-archive-submit <%= resource.archiveDisabled ? 'disabled' : '' %>>
+          Permanently Delete Selected Records
         </button>
       </footer>
     </form>
@@ -129,20 +194,21 @@
 
 <script>
 (function() {
-  // Preset date helpers
   const fromInput = document.getElementById('exportFromDate');
   const toInput = document.getElementById('exportToDate');
   
   function formatDate(d) {
-    // Date inputs must follow the Windows computer's local calendar day. UTC
-    // conversion previously selected the prior day for Indian shop PCs early
-    // in the morning.
     const pad = (value) => String(value).padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   }
 
-  document.querySelectorAll('[data-preset]').forEach((btn) => {
+  // Preset date chips
+  const presetPills = document.querySelectorAll('.preset-pill');
+  presetPills.forEach((btn) => {
     btn.addEventListener('click', () => {
+      presetPills.forEach(b => b.classList.remove('is-active'));
+      btn.classList.add('is-active');
+
       const preset = btn.dataset.preset;
       const now = new Date();
       let fromDate, toDate;
@@ -192,34 +258,37 @@
     update();
   }
 
+  // Modal open/close handlers
   const archiveModal = document.getElementById('archiveModal');
-  const archiveOpen = document.querySelector('[data-archive-modal-open]');
-  if (!archiveModal || !archiveOpen) return;
+  const archiveOpeners = document.querySelectorAll('[data-archive-modal-open]');
+  if (archiveModal && archiveOpeners.length) {
+    let archiveTrigger = null;
+    const closeArchiveModal = () => {
+      archiveModal.style.display = 'none';
+      archiveModal.setAttribute('aria-hidden', 'true');
+      archiveTrigger?.focus();
+    };
 
-  let archiveTrigger = null;
-  const closeArchiveModal = () => {
-    archiveModal.style.display = 'none';
-    archiveModal.setAttribute('aria-hidden', 'true');
-    archiveTrigger?.focus();
-  };
+    archiveOpeners.forEach(opener => {
+      opener.addEventListener('click', () => {
+        archiveTrigger = opener;
+        archiveModal.style.display = 'flex';
+        archiveModal.setAttribute('aria-hidden', 'false');
+        window.setTimeout(() => archiveModal.querySelector('[data-resource-select]')?.focus(), 0);
+      });
+    });
 
-  archiveOpen.addEventListener('click', () => {
-    archiveTrigger = archiveOpen;
-    archiveModal.style.display = 'flex';
-    archiveModal.setAttribute('aria-hidden', 'false');
-    window.setTimeout(() => archiveModal.querySelector('[data-resource-select]')?.focus(), 0);
-  });
+    archiveModal.querySelectorAll('[data-archive-modal-close]').forEach((button) => {
+      button.addEventListener('click', closeArchiveModal);
+    });
 
-  archiveModal.querySelectorAll('[data-archive-modal-close]').forEach((button) => {
-    button.addEventListener('click', closeArchiveModal);
-  });
+    archiveModal.addEventListener('click', (event) => {
+      if (event.target === archiveModal) closeArchiveModal();
+    });
 
-  archiveModal.addEventListener('click', (event) => {
-    if (event.target === archiveModal) closeArchiveModal();
-  });
-
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && archiveModal.style.display !== 'none') closeArchiveModal();
-  });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && archiveModal.style.display !== 'none') closeArchiveModal();
+    });
+  }
 })();
 </script>
