@@ -3398,4 +3398,289 @@ html.theme-transitioning *::after {
   border-top-color: #262838 !important;
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   AUTOCOMPLETE & SUGGESTION DROPDOWNS (DARK THEME)
+   Fixes white dropdowns across Item Names, Batch Adding, etc.
+   ═══════════════════════════════════════════════════════════════ */
+[data-theme="dark"] .autocomplete-list,
+[data-theme="dark"] .erp-ui .autocomplete-list {
+  background: #14151f !important;
+  border: 1px solid #36394d !important;
+  border-radius: 8px !important;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.85), 0 0 1px rgba(245, 192, 66, 0.4) !important;
+  z-index: 1000 !important;
+}
+
+[data-theme="dark"] .autocomplete-list li,
+[data-theme="dark"] .autocomplete-list .autocomplete-item {
+  background: transparent !important;
+  color: #e5e7eb !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
+}
+
+[data-theme="dark"] .autocomplete-list li:last-child,
+[data-theme="dark"] .autocomplete-list .autocomplete-item:last-child {
+  border-bottom: none !important;
+}
+
+[data-theme="dark"] .autocomplete-list li strong,
+[data-theme="dark"] .autocomplete-list .autocomplete-item strong {
+  color: #ffffff !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="dark"] .autocomplete-list li small,
+[data-theme="dark"] .autocomplete-list .autocomplete-item small {
+  color: #9ca3af !important;
+}
+
+[data-theme="dark"] .autocomplete-list li:hover,
+[data-theme="dark"] .autocomplete-list li.highlighted,
+[data-theme="dark"] .autocomplete-list .autocomplete-item:hover,
+[data-theme="dark"] .autocomplete-list .autocomplete-item.highlighted {
+  background: linear-gradient(90deg, rgba(245, 192, 66, 0.22) 0%, rgba(217, 119, 6, 0.12) 100%) !important;
+  color: #ffd666 !important;
+}
+
+[data-theme="dark"] .autocomplete-list li:hover strong,
+[data-theme="dark"] .autocomplete-list li.highlighted strong,
+[data-theme="dark"] .autocomplete-list .autocomplete-item:hover strong,
+[data-theme="dark"] .autocomplete-list .autocomplete-item.highlighted strong {
+  color: #ffd666 !important;
+}
+
+[data-theme="dark"] .autocomplete-list li:hover small,
+[data-theme="dark"] .autocomplete-list li.highlighted small,
+[data-theme="dark"] .autocomplete-list .autocomplete-item:hover small,
+[data-theme="dark"] .autocomplete-list .autocomplete-item.highlighted small {
+  color: #fde68a !important;
+}
+
+[data-theme="dark"] .autocomplete-list .autocomplete-new {
+  color: #f5c042 !important;
+}
+
+[data-theme="dark"] .autocomplete-list::-webkit-scrollbar {
+  width: 6px;
+}
+[data-theme="dark"] .autocomplete-list::-webkit-scrollbar-track {
+  background: #14151f;
+  border-radius: 4px;
+}
+[data-theme="dark"] .autocomplete-list::-webkit-scrollbar-thumb {
+  background: #2e3247;
+  border-radius: 4px;
+}
+[data-theme="dark"] .autocomplete-list::-webkit-scrollbar-thumb:hover {
+  background: #f5c042;
+}
+
+/* ── Native Select & Option Dropdowns (Dark Theme) ───────────── */
+[data-theme="dark"] select,
+[data-theme="dark"] .erp-ui select,
+[data-theme="dark"] select option,
+[data-theme="dark"] .erp-ui select option {
+  background-color: #14151e !important;
+  color: #f3f4f6 !important;
+}
+
+[data-theme="dark"] select:focus,
+[data-theme="dark"] .erp-ui select:focus {
+  border-color: #f5c042 !important;
+  box-shadow: 0 0 0 3px rgba(245, 192, 66, 0.15) !important;
+}
+
+/* ── Browser Autofill Dark Styling ──────────────────────────── */
+[data-theme="dark"] input:-webkit-autofill,
+[data-theme="dark"] input:-webkit-autofill:hover,
+[data-theme="dark"] input:-webkit-autofill:focus,
+[data-theme="dark"] textarea:-webkit-autofill,
+[data-theme="dark"] select:-webkit-autofill {
+  -webkit-text-fill-color: #ffffff !important;
+  -webkit-box-shadow: 0 0 0px 1000px #14151e inset !important;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+/* ── Batch Modal Dark Refinements ────────────────────────────── */
+[data-theme="dark"] .erp-ui .batch-section-title span {
+  background: linear-gradient(135deg, #fcd34d, #d97706) !important;
+  color: #08090c !important;
+}
+[data-theme="dark"] .erp-ui .batch-section-title strong {
+  color: #ffffff !important;
+}
+
+[data-theme="dark"] .erp-ui .batch-rate-indicator {
+  background: #1a1b26 !important;
+  border: 1px solid #4a3818 !important;
+  color: #ffd666 !important;
+}
+[data-theme="dark"] .erp-ui .batch-rate-indicator .dot {
+  color: #4ade80 !important;
+}
+
+[data-theme="dark"] .erp-ui .batch-entry-panel {
+  background: #14151e !important;
+  border: 2px solid #5a4317 !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5) !important;
+}
+[data-theme="dark"] .erp-ui .batch-entry-panel.is-editing {
+  border-color: #f5c042 !important;
+  background: #181926 !important;
+}
+
+[data-theme="dark"] .erp-ui .batch-editing-banner {
+  background: #241d11 !important;
+  border: 1px solid #856118 !important;
+  color: #fde68a !important;
+}
+[data-theme="dark"] .erp-ui .batch-editing-banner strong {
+  color: #ffd666 !important;
+}
+
+[data-theme="dark"] .erp-ui .batch-action-btn {
+  border-color: #2e3247 !important;
+  color: #e5e7eb !important;
+  background: #1a1b27 !important;
+}
+[data-theme="dark"] .erp-ui .batch-action-btn:hover {
+  background: #2a2d40 !important;
+  color: #ffd666 !important;
+  border-color: #f5c042 !important;
+}
+[data-theme="dark"] .erp-ui .batch-action-btn.delete:hover {
+  background: rgba(239, 68, 68, 0.2) !important;
+  border-color: #ef4444 !important;
+  color: #fca5a5 !important;
+}
+
+[data-theme="dark"] .erp-ui .batch-results-panel.full-height {
+  background: #14151e !important;
+  border-color: #272a3b !important;
+}
+[data-theme="dark"] .erp-ui .batch-results-panel table th {
+  background: #181924 !important;
+  color: #e5e7eb !important;
+  border-bottom: 1px solid #282a3c !important;
+}
+[data-theme="dark"] .erp-ui .batch-results-panel table td {
+  border-bottom: 1px solid #202230 !important;
+  color: #d1d5db !important;
+}
+[data-theme="dark"] .erp-ui .batch-results-panel table tr:hover td {
+  background: #191a26 !important;
+}
+
+[data-theme="dark"] .erp-ui .batch-right-footer {
+  background: #121319 !important;
+  border-top: 1px solid #272a3b !important;
+}
+
+[data-theme="dark"] .batch-load-modal-card {
+  background: #121319 !important;
+  border: 1px solid #282a3c !important;
+}
+[data-theme="dark"] .batch-load-modal-card table th {
+  background: #181924 !important;
+  color: #e5e7eb !important;
+  border-bottom: 1px solid #282a3c !important;
+}
+[data-theme="dark"] .batch-load-modal-card table td {
+  border-bottom: 1px solid #202230 !important;
+  color: #d1d5db !important;
+}
+[data-theme="dark"] .batch-load-modal-card table tr:hover td {
+  background: #191a26 !important;
+}
+
+/* ── Inline details popup form (Dark Theme) ─────────────────── */
+[data-theme="dark"] .erp-ui .inline-details > form {
+  background: #14151f !important;
+  border: 1px solid #36394d !important;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.8) !important;
+  color: #f3f4f6 !important;
+}
+
+/* ── Table Inline Settlement Form (Dark Mode Luxury Theme) ──── */
+.erp-ui .table-wrap tr.sub-row td {
+  padding: 8px 16px 12px;
+  background: #fafaf9;
+}
+
+[data-theme="dark"] .erp-ui .table-wrap tr.sub-row td {
+  background: #0d0e14;
+  border-bottom: 1px solid #1d1f2b;
+}
+
+.erp-ui .table-settle-form {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  padding: 8px 16px;
+  margin: 2px 0;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+[data-theme="dark"] .erp-ui .table-settle-form {
+  background: #14151f;
+  border: 1px solid #282a3c;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+[data-theme="dark"] .erp-ui .table-settle-due {
+  color: #cbd5e1;
+}
+
+[data-theme="dark"] .erp-ui .table-settle-due strong {
+  color: #f5c042;
+  font-weight: 700;
+  text-shadow: 0 0 12px rgba(245, 192, 66, 0.25);
+}
+
+[data-theme="dark"] .erp-ui .table-settle-field {
+  color: #cbd5e1;
+}
+
+[data-theme="dark"] .erp-ui .table-settle-field span {
+  color: #94a3b8;
+}
+
+[data-theme="dark"] .erp-ui .table-settle-field input[type="number"] {
+  background: #1a1b26 !important;
+  border-color: #33364d !important;
+  color: #f8fafc !important;
+}
+
+[data-theme="dark"] .erp-ui .table-settle-field input[type="number"]:focus {
+  border-color: #f5c042 !important;
+  box-shadow: 0 0 0 2px rgba(245, 192, 66, 0.2) !important;
+}
+
+[data-theme="dark"] .erp-ui .table-settle-field select {
+  background: #1a1b26 !important;
+  border-color: #33364d !important;
+  color: #f8fafc !important;
+}
+
+[data-theme="dark"] .erp-ui .table-settle-field select:focus {
+  border-color: #f5c042 !important;
+  box-shadow: 0 0 0 2px rgba(245, 192, 66, 0.2) !important;
+}
+
+[data-theme="dark"] .erp-ui .table-settle-btn {
+  background: #1b1c28 !important;
+  color: #f8fafc !important;
+  border: 1px solid #3d415e !important;
+  transition: background .14s, border-color .14s, box-shadow .14s, color .14s;
+}
+
+[data-theme="dark"] .erp-ui .table-settle-btn:hover {
+  background: #252738 !important;
+  border-color: #f5c042 !important;
+  color: #f5c042 !important;
+  box-shadow: 0 0 10px rgba(245, 192, 66, 0.25) !important;
+}
 

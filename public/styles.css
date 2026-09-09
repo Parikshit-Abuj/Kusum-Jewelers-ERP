@@ -228,6 +228,90 @@ nav a.active { box-shadow: inset 3px 0 0 #dfa437; }
 .inline-details input, .inline-details select { margin-top: 3px; padding: 6px 7px; font-size: 12px; }
 .inline-details .button { float: right; }
 
+/* ── Table Inline Settlement Form (Purchases & URD) ───────── */
+.table-settle-form {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  padding: 8px 14px;
+  margin: 2px 0;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+.table-settle-due {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+  white-space: nowrap;
+}
+.table-settle-due strong {
+  color: #b45309;
+  font-size: 13px;
+  font-weight: 700;
+}
+.table-settle-field {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 8px !important;
+  margin: 0 !important;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.table-settle-field span {
+  font-size: 11px;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  white-space: nowrap;
+}
+.table-settle-field input[type="number"] {
+  width: 110px !important;
+  min-width: 90px !important;
+  max-width: 120px !important;
+  height: 34px !important;
+  min-height: 34px !important;
+  margin: 0 !important;
+  padding: 4px 8px !important;
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  border-radius: 6px;
+  box-sizing: border-box;
+}
+.table-settle-field select {
+  width: 135px !important;
+  min-width: 120px !important;
+  max-width: 150px !important;
+  height: 34px !important;
+  min-height: 34px !important;
+  margin: 0 !important;
+  padding: 4px 8px !important;
+  font-weight: 500;
+  border-radius: 6px;
+  box-sizing: border-box;
+}
+.table-settle-btn {
+  height: 34px !important;
+  min-height: 34px !important;
+  padding: 0 14px !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  letter-spacing: .03em;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+  margin: 0 !important;
+  border-radius: 6px;
+}
+
 /* ── Forms ────────────────────────────────────────────────── */
 form label { display: block; color: #554e47; font-size: 12px; font-weight: 700; }
 input, select, textarea { width: 100%; margin-top: 5px; border: 1px solid #dcd6ce; border-radius: 7px; outline: none; color: #2b2723; background: #fff; padding: 9px 10px; font: 400 13px 'Inter', inherit; transition: border-color .14s, box-shadow .14s; }
@@ -754,20 +838,48 @@ form[action="/network-setup"] input,
 /* ── Autocomplete dropdown ────────────────────────────────── */
 .autocomplete-wrap { position: relative; }
 .autocomplete-list {
-  display: none; position: absolute; left: 0; top: 100%; z-index: 20;
-  width: 100%; max-height: 220px; overflow-y: auto;
-  margin: 2px 0 0; padding: 4px 0; list-style: none;
-  background: #fff; border: 1px solid var(--line); border-radius: 8px;
-  box-shadow: 0 12px 28px rgba(29,22,14,.15);
+  display: none; position: absolute; left: 0; top: calc(100% + 4px); z-index: 100;
+  width: 100%; max-height: 240px; overflow-y: auto;
+  margin: 0; padding: 4px 0; list-style: none;
+  background: var(--panel, #fff); border: 1px solid var(--line, #e3d9cd); border-radius: 8px;
+  box-shadow: 0 14px 32px rgba(29, 22, 14, .16);
 }
 .autocomplete-list.open { display: block; }
-.autocomplete-list li {
-  padding: 8px 12px; cursor: pointer; font-size: 13px; transition: background .1s;
+.autocomplete-list li,
+.autocomplete-list .autocomplete-item {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 8px 12px; cursor: pointer; font-size: 13px;
+  color: var(--ink, #2b2723);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  transition: background .12s ease, color .12s ease;
 }
-.autocomplete-list li:hover, .autocomplete-list li.highlighted {
-  background: #f5f0e9;
+.autocomplete-list li:last-child,
+.autocomplete-list .autocomplete-item:last-child {
+  border-bottom: none;
 }
-.autocomplete-list li small { display: block; font-size: 11px; color: var(--muted); margin-top: 1px; }
+.autocomplete-list li strong,
+.autocomplete-list .autocomplete-item strong {
+  color: var(--ink, #2b2723);
+  font-weight: 700;
+  font-size: 13px;
+}
+.autocomplete-list li small,
+.autocomplete-list .autocomplete-item small {
+  display: block; font-size: 11px; color: var(--muted, #6b635b);
+}
+.autocomplete-list li:hover,
+.autocomplete-list li.highlighted,
+.autocomplete-list .autocomplete-item:hover,
+.autocomplete-list .autocomplete-item.highlighted {
+  background: #fbf5eb;
+  color: var(--gold-dark, #b47a21);
+}
+.autocomplete-list li:hover strong,
+.autocomplete-list li.highlighted strong,
+.autocomplete-list .autocomplete-item:hover strong,
+.autocomplete-list .autocomplete-item.highlighted strong {
+  color: var(--gold-dark, #b47a21);
+}
 .autocomplete-list .autocomplete-new { color: var(--gold-dark); font-weight: 700; font-style: italic; }
 
 /* ── Item Names management ────────────────────────────────── */

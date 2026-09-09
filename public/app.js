@@ -1846,10 +1846,61 @@ function updateInventoryLabelBatchState() {
 
   // Autocomplete for master item names
   let debounceTimer = null;
+  let batchItems = [];
+  let batchHighlighted = -1;
+
+  function renderBatchList() {
+    if (!nameList) return;
+    nameList.innerHTML = '';
+    if (!batchItems.length) {
+      nameList.classList.remove('open');
+      return;
+    }
+    batchItems.forEach((item, idx) => {
+      const li = document.createElement('li');
+      li.className = 'autocomplete-item' + (idx === batchHighlighted ? ' highlighted' : '');
+      li.dataset.index = String(idx);
+      replaceWithTextElements(li, [
+        { tag: 'strong', text: item.name },
+        { tag: 'small', text: item.category || '' }
+      ]);
+      li.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        selectBatchItem(idx);
+      });
+      nameList.appendChild(li);
+    });
+    nameList.classList.add('open');
+  }
+
+  function selectBatchItem(index) {
+    const item = batchItems[index];
+    if (!item) return;
+    isSelectingAutocomplete = true;
+    nameInput.value = item.name;
+    if (categoryInput) {
+      categoryInput.value = item.category || item.name;
+      batchCategoryManuallyEdited = false;
+    }
+    autoDetectMetal(item.name);
+    closeBatchList();
+    setTimeout(() => { isSelectingAutocomplete = false; }, 150);
+    if (grossWeightInput) grossWeightInput.focus();
+  }
+
+  function closeBatchList() {
+    batchItems = [];
+    batchHighlighted = -1;
+    if (nameList) {
+      nameList.innerHTML = '';
+      nameList.classList.remove('open');
+    }
+  }
+
   function searchItemNames(q) {
     clearTimeout(debounceTimer);
     if (!q || q.length < 1) {
-      if (nameList) { nameList.innerHTML = ''; nameList.classList.remove('open'); }
+      closeBatchList();
       return;
     }
     debounceTimer = setTimeout(async () => {
@@ -1857,36 +1908,10 @@ function updateInventoryLabelBatchState() {
         const res = await fetch(`/api/item-names?q=${encodeURIComponent(q)}`);
         if (!res.ok) return;
         const items = await res.json();
-        if (!nameList) return;
-        nameList.innerHTML = '';
-        if (items.length === 0) {
-          nameList.classList.remove('open');
-          return;
-        }
-        items.forEach((item) => {
-          const li = document.createElement('li');
-          li.className = 'autocomplete-item';
-          replaceWithTextElements(li, [
-            { tag: 'strong', text: item.name },
-            { tag: 'small', text: item.category }
-          ]);
-          li.addEventListener('mousedown', (e) => {
-            e.preventDefault();
-            isSelectingAutocomplete = true;
-            nameInput.value = item.name;
-            if (categoryInput) {
-              categoryInput.value = item.category || item.name;
-              batchCategoryManuallyEdited = false;
-            }
-            autoDetectMetal(item.name);
-            nameList.innerHTML = '';
-            nameList.classList.remove('open');
-            setTimeout(() => { isSelectingAutocomplete = false; }, 150);
-            if (grossWeightInput) grossWeightInput.focus();
-          });
-          nameList.appendChild(li);
-        });
-        nameList.classList.add('open');
+        if (isSelectingAutocomplete) return;
+        batchItems = Array.isArray(items) ? items : [];
+        batchHighlighted = -1;
+        renderBatchList();
       } catch (_) { }
     }, 180);
   }
@@ -1908,10 +1933,27 @@ function updateInventoryLabelBatchState() {
       }
       autoDetectMetal(nameInput.value);
     });
+
+    nameInput.addEventListener('keydown', (e) => {
+      if (!batchItems.length || !nameList?.classList.contains('open')) return;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        batchHighlighted = Math.min(batchHighlighted + 1, batchItems.length - 1);
+        renderBatchList();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        batchHighlighted = Math.max(batchHighlighted - 1, 0);
+        renderBatchList();
+      } else if (e.key === 'Enter' && batchHighlighted >= 0) {
+        e.preventDefault();
+        selectBatchItem(batchHighlighted);
+      } else if (e.key === 'Escape') {
+        closeBatchList();
+      }
+    });
+
     nameInput.addEventListener('blur', () => {
-      setTimeout(() => {
-        if (nameList) nameList.classList.remove('open');
-      }, 200);
+      setTimeout(closeBatchList, 200);
     });
   }
 

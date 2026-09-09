@@ -1,0 +1,39 @@
+<header class="page-header">
+  <div><p class="eyebrow">Customer collateral</p><h1>Pledge Loans</h1><p class="muted">Gold and silver kept securely against money lent. These items never enter inventory.</p></div>
+  <div class="header-actions"><button class="button ghost" type="button" data-export-modal-open="pledgeExportModal">Export Excel</button><a class="button" href="/pledges/new">+ New pledge loan</a></div>
+</header>
+
+<section class="cashbook-summary" aria-label="Active pledge summary">
+  <article class="stat-card"><span class="stat-label">Money lent</span><strong><%- money(activeTotals.lent) %></strong></article>
+  <article class="stat-card"><span class="stat-label">Principal repaid</span><strong class="stat-positive"><%- money(activeTotals.repaid) %></strong></article>
+  <article class="stat-card accent-gold"><span class="stat-label">Principal outstanding</span><strong class="credit-amount"><%- money(activeTotals.outstanding) %></strong></article>
+</section>
+
+<section class="panel register-panel">
+  <form class="search-bar" method="get" action="/pledges">
+    <input name="q" value="<%= q || '' %>" placeholder="Search customer, pledge no., item or purity">
+    <select name="metal"><option value="">Gold & silver</option><option value="GOLD" <%= metal === 'GOLD' ? 'selected' : '' %>>Gold</option><option value="SILVER" <%= metal === 'SILVER' ? 'selected' : '' %>>Silver</option></select>
+    <select name="status"><option value="ACTIVE" <%= status === 'ACTIVE' ? 'selected' : '' %>>Active</option><option value="RELEASED" <%= status === 'RELEASED' ? 'selected' : '' %>>Released</option><option value="CANCELLED" <%= status === 'CANCELLED' ? 'selected' : '' %>>Cancelled</option><option value="ALL" <%= status === 'ALL' ? 'selected' : '' %>>All records</option></select>
+    <button class="button secondary" type="submit">Search</button><% if (q || metal || status !== 'ACTIVE') { %><a class="button ghost" href="/pledges">Clear</a><% } %>
+  </form>
+
+  <% if (loans.length) { %>
+    <div class="table-wrap"><table><thead><tr><th>Pledge</th><th>Customer</th><th>Jewellery held</th><th>Due date</th><th class="right">Lent / returned</th><th class="right">Principal due</th><th>Status</th><th></th></tr></thead><tbody>
+    <% loans.forEach((loan) => { const outstanding = pledgeOutstanding(loan); %><tr>
+      <td><strong><%= loan.pledgeNumber %></strong><small><%= formatDateDisplay(loan.pledgeDate) %></small></td>
+      <td><a href="/customers/<%= loan.customer.id %>"><strong><%= loan.customer.name %></strong></a><small><%= loan.customer.phone || 'No mobile saved' %></small></td>
+      <td><strong><%= loan.itemDescription %></strong><small><%= loan.quantity %> piece<%= loan.quantity === 1 ? '' : 's' %> · <%= loan.metal %><%= loan.purity ? ` · ${loan.purity}` : '' %> · <%= Number(loan.netWeight).toFixed(3) %> g</small></td>
+      <td><%= loan.dueDate ? formatDateDisplay(loan.dueDate) : '—' %></td>
+      <td class="right"><strong><%- money(loan.principalAmount) %></strong><small>Repaid: <%- money(loan.principalRepaid) %></small></td>
+      <td class="right"><strong class="<%= outstanding > 0 ? 'credit-amount' : 'paid-amount' %>"><%- money(outstanding) %></strong><small>Interest: <%- money(loan.interestReceived) %></small></td>
+      <td><span class="pill <%= loan.status === 'ACTIVE' ? 'warning' : loan.status === 'RELEASED' ? 'success' : 'danger' %>"><%= loan.status === 'ACTIVE' ? 'Held' : loan.status === 'RELEASED' ? 'Released' : 'Cancelled' %></span></td>
+      <td class="actions"><a class="button ghost small" href="/pledges/<%= loan.id %>"><%= loan.status === 'ACTIVE' ? 'Manage' : 'View' %><%= loan._count.payments ? ` (${loan._count.payments})` : '' %></a></td>
+    </tr><% }) %>
+    </tbody></table></div>
+    <%- include('../_pagination', { pagination }) %>
+  <% } else { %>
+    <div class="empty-state"><span>◇</span><h3>No pledge loans found</h3><p>Record gold or silver held as security when money is lent to a customer.</p><a class="button" href="/pledges/new">Record first pledge</a></div>
+  <% } %>
+</section>
+
+<%- include('../_export_modal', { exportModalId: 'pledgeExportModal', exportResource: 'pledges', exportTitle: 'Pledge loan', exportFrom: '2000-01-01', exportTo: dateInput() }) %>

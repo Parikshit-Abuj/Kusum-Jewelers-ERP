@@ -1,12 +1,9 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title><%= title %> · Kusum ERP</title>
-    <script>/* Restore theme preference before first paint to prevent flash */
-    (function(){var t=localStorage.getItem('erp-theme')||'dark';document.documentElement.setAttribute('data-theme',t)})()
-    </script>
     <link rel="stylesheet" href="/styles.css">
     <link rel="stylesheet" href="/workspace.css" media="screen">
     <link rel="stylesheet" href="/refinement.css" media="screen">
@@ -34,7 +31,7 @@
         <% const navigationGroups = [
           { name: 'Workspace', links: [
             ['/', 'Dashboard', 'dashboard'], ['/sales', 'Sales', 'receipt'],
-            ['/inventory', 'Inventory', 'diamond'], ['/urd-purchases', 'URD Purchase', 'exchange'],
+            ['/inventory', 'Inventory', 'diamond'], ['/customer-orders', 'Customer Orders', 'receipt'], ['/purchases', 'Purchases', 'download'], ['/suppliers', 'Suppliers', 'people'], ['/urd-purchases', 'URD Purchase', 'exchange'], ['/pledges', 'Pledge Loans', 'wallet'],
             ['/customers', 'Customers', 'people'], ['/schemes', 'Schemes', 'scheme'], ['/cashbook', 'Cashbook', 'wallet']
           ] },
           { name: 'Manage', links: [
@@ -76,7 +73,6 @@
             <kbd>Ctrl K</kbd>
           </button>
           <button class="toolbar-language" type="button" data-ui-language-toggle aria-label="Switch ERP interface language">मराठी</button>
-          <button class="theme-toggle" type="button" id="themeToggle" aria-label="Toggle dark/light theme"><span class="theme-icon" data-no-i18n>🌙</span></button>
           </div>
         </div>
         <% if (message) { %><div class="flash success"><span>✓</span><%= message %></div><% } %>

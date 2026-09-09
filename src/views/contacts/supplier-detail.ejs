@@ -1,0 +1,26 @@
+<header class="page-header">
+  <div><p class="eyebrow">Supplier account</p><h1><%= supplier.name %></h1><p class="muted"><%= supplier.phone || 'No mobile saved' %><%= supplier.address ? ` · ${supplier.address}` : '' %></p></div>
+  <div class="header-actions"><a class="button ghost" href="/suppliers">All suppliers</a><button class="button ghost" type="button" data-supplier-edit-open>Edit supplier</button><a class="button" href="/purchases/new">+ New purchase</a></div>
+</header>
+<section class="customer-summary customer-profile-summary">
+  <article class="stat-card accent-gold customer-due-card"><span class="stat-label">Outstanding due</span><strong><%= money(summary.due) %></strong><p>Amount payable to this supplier</p></article>
+  <article class="stat-card customer-stat-card"><span class="stat-label">Purchase value</span><strong><%= money(summary.purchased) %></strong><p><%= supplier.purchases.length %> active purchase<%= supplier.purchases.length === 1 ? '' : 's' %></p></article>
+  <article class="stat-card customer-stat-card"><span class="stat-label">Paid</span><strong><%= money(summary.paid) %></strong><p><%= Number(summary.weight).toFixed(3) %> g · <%= supplier.purchases.reduce((sum, purchase) => sum + Number(purchase.quantity || 1), 0) %> pieces received</p></article>
+</section>
+<section class="panel register-panel">
+  <div class="panel-heading"><div><h2>Purchase & payment history</h2><p>Each payment is also recorded in Cashbook.</p></div><a class="button ghost small" href="/purchases?q=<%= encodeURIComponent(supplier.name) %>">Open purchase register</a></div>
+  <% if (supplier.purchases.length) { %><div class="table-wrap"><table><thead><tr><th>PO No.</th><th>Date</th><th>Item / barcode</th><th>Metal / purity</th><th class="right">Amount</th><th class="right">Paid</th><th class="right">Due</th><th>Payments</th></tr></thead><tbody>
+    <% supplier.purchases.forEach((purchase) => { const due = Math.max(0, Number(purchase.totalAmount) - Number(purchase.paid)); %><tr>
+      <td><strong><%= purchase.purchaseNumber %></strong><small><%= purchase.reference || '' %></small></td><td><%= formatDateDisplay(purchase.purchaseDate) %></td>
+      <td><strong><%= purchase.itemName %></strong><small><%= Number(purchase.quantity || 1) %> pieces · <%= Number(purchase.netWeight).toFixed(3) %> g<%= (purchase.barcode || purchase.product?.barcode) ? ` · ${purchase.barcode || purchase.product?.barcode}` : '' %></small></td>
+      <td><%= purchase.metal %><small><%= purchase.purity || '—' %></small></td><td class="right"><%= money(purchase.totalAmount) %></td><td class="right"><%= money(purchase.paid) %></td><td class="right"><strong class="<%= due > 0 ? 'credit-amount' : 'paid-amount' %>"><%= money(due) %></strong></td>
+      <td><% if (purchase.cashbookEntries.length) { %><small><%= purchase.cashbookEntries.map((entry) => `${entry.paymentMethod.replace('_',' ')} ${money(entry.amount)}`).join(' · ') %></small><% } else { %><small>—</small><% } %></td>
+    </tr><% }) %>
+  </tbody></table></div><% } else { %><div class="empty-state compact"><span>✓</span><h3>No active purchases</h3><p>This supplier currently has no active purchase record.</p></div><% } %>
+</section>
+<div class="modal-overlay" id="supplierEditModal" style="display:none" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="supplierEditTitle">
+  <section class="modal-card"><header class="modal-header"><div><p class="eyebrow">Supplier profile</p><h2 id="supplierEditTitle">Edit supplier</h2></div><button class="modal-close-btn" type="button" data-supplier-edit-close aria-label="Close">×</button></header>
+  <form method="post" action="/suppliers/<%= supplier.id %>"><div class="modal-body"><div class="form-grid customer-edit-fields"><label>Supplier name *<input name="name" data-uppercase required value="<%= supplier.name %>"></label><label>Mobile number<input name="phone" inputmode="numeric" maxlength="15" value="<%= supplier.phone || '' %>"></label><label>Email<input name="email" type="email" value="<%= supplier.email || '' %>"></label><label>GSTIN<input name="gstin" data-uppercase maxlength="20" value="<%= supplier.gstin || '' %>"></label><label>PAN<input name="panNumber" data-uppercase maxlength="20" value="<%= supplier.panNumber || '' %>"></label><label class="full">Address<textarea name="address" data-uppercase rows="3"><%= supplier.address || '' %></textarea></label></div></div><footer class="modal-footer"><button class="button ghost" type="button" data-supplier-edit-close>Cancel</button><button class="button" type="submit">Save supplier</button></footer></form>
+  </section>
+</div>
+<script>(()=>{const modal=document.getElementById('supplierEditModal'),open=document.querySelector('[data-supplier-edit-open]');if(!modal||!open)return;const close=()=>{modal.style.display='none';modal.setAttribute('aria-hidden','true');open.focus()};open.addEventListener('click',()=>{modal.style.display='flex';modal.setAttribute('aria-hidden','false');setTimeout(()=>modal.querySelector('[name=name]')?.focus(),0)});modal.querySelectorAll('[data-supplier-edit-close]').forEach(button=>button.addEventListener('click',close));modal.addEventListener('click',event=>{if(event.target===modal)close()});document.addEventListener('keydown',event=>{if(event.key==='Escape'&&modal.style.display==='flex')close()})})();</script>

@@ -2432,7 +2432,7 @@ app.get('/cashbook', async (req, res, next) => {
     const totalItems = await prisma.cashbookEntry.count({ where });
     const pagination = paginationFor(req, totalItems, req.query.page, 200);
     const [entries, totals] = await Promise.all([
-      prisma.cashbookEntry.findMany({ where, include: { customer: true }, orderBy: [{ entryDate: 'desc' }, { createdAt: 'desc' }], skip: (pagination.page - 1) * pagination.pageSize, take: pagination.pageSize }),
+      prisma.cashbookEntry.findMany({ where, include: { customer: true, supplierPurchase: { include: { supplier: true } } }, orderBy: [{ entryDate: 'desc' }, { createdAt: 'desc' }], skip: (pagination.page - 1) * pagination.pageSize, take: pagination.pageSize }),
       prisma.cashbookEntry.groupBy({
         by: ['type', 'paymentMethod'],
         where,
@@ -2510,6 +2510,765 @@ app.post('/cashbook/:id/delete', async (req, res, next) => {
     const result = await prisma.$transaction((tx) => reverseAndDeleteCashbookEntry(tx, Number(req.params.id)));
     redirectWith(res, '/cashbook', 'message', 'Entry deleted and all linked accounting records reversed.');
   } catch (error) { redirectWith(res, '/cashbook', 'error', error.message || 'Could not safely delete this cashbook entry.'); }
+});
+
+/* ── Customer Orders (made-to-order jewellery) ──────────── */
+async function resolveOrderCustomer(tx, body) {
+  const selectedId = Number(body.customerId);
+  if (Number.isInteger(selectedId) && selectedId > 0) {
+    return tx.customer.findUniqueOrThrow({ where: { id: selectedId } });
+  }
+  const phone = normalizePhone(body.customerPhone);
+  if (phone && !validCustomerPhone(phone)) throw new Error('Enter a valid customer mobile number, or leave it blank.');
+  if (phone) {
+    const existing = await tx.customer.findUnique({ where: { phone } });
+    if (existing) return existing;
+  }
+  const name = titleCase(body.customerName);
+  if (!name) throw new Error('Select or enter the customer name.');
+  return tx.customer.create({ data: {
+    name, phone: phone || null, address: titleCase(body.customerAddress) || null,
+    panNumber: String(body.customerPan || '').trim().toUpperCase() || null
+  } });
+}
+
+/* ── Pledge Loans (customer gold/silver held as security) ── */
+function pledgeStatus(value) {
+  const normalized = String(value || 'ACTIVE').toUpperCase();
+  return ['ACTIVE', 'RELEASED', 'CANCELLED', 'ALL'].includes(normalized) ? normalized : 'ACTIVE';
+}
+
+function pledgeOutstanding(loan) {
+  return roundedMoney(Math.max(0, Number(loan.principalAmount || 0) - Number(loan.principalRepaid || 0)));
+}
+
+app.get('/pledges', async (req, res, next) => {
+  try {
+    const q = supplierText(req.query.q);
+    const status = pledgeStatus(req.query.status);
+    const metal = ['GOLD', 'SILVER'].includes(String(req.query.metal || '').toUpperCase())
+      ? String(req.query.metal).toUpperCase()
+      : '';
+    const where = {
+      ...(status === 'ALL' ? {} : { status }),
+      ...(metal ? { metal } : {})
+    };
+    if (q) where.OR = [
+      { pledgeNumber: { contains: q } }, { itemDescription: { contains: q } }, { purity: { contains: q } },
+      { customer: { name: { contains: q } } }, { customer: { phone: { contains: q } } }
+    ];
+    const totalItems = await prisma.pledgeLoan.count({ where });
+    const pagination = paginationFor(req, totalItems, req.query.page, 100);
+    const loans = await prisma.pledgeLoan.findMany({
+      where,
+      include: { customer: true, _count: { select: { payments: true } } },
+      orderBy: [{ status: 'asc' }, { dueDate: 'asc' }, { pledgeDate: 'desc' }, { id: 'desc' }],
+      skip: (pagination.page - 1) * pagination.pageSize,
+      take: pagination.pageSize
+    });
+    const activeTotals = loans.filter((loan) => loan.status === 'ACTIVE').reduce((totals, loan) => ({
+      lent: totals.lent + Number(loan.principalAmount || 0),
+      repaid: totals.repaid + Number(loan.principalRepaid || 0),
+      outstanding: totals.outstanding + pledgeOutstanding(loan)
+    }), { lent: 0, repaid: 0, outstanding: 0 });
+    res.render('pledges/index', { title: 'Pledge loans', loans, q, status, metal, pagination, activeTotals, pledgeOutstanding });
+  } catch (error) { next(error); }
+});
+
+app.get('/pledges/new', (req, res) => {
+  res.render('pledges/form', { title: 'New pledge loan' });
+});
+
+app.post('/pledges', async (req, res) => {
+  try {
+    const metal = ['GOLD', 'SILVER'].includes(String(req.body.metal || '').toUpperCase())
+      ? String(req.body.metal).toUpperCase()
+      : null;
+    const itemDescription = titleCase(req.body.itemDescription);
+    const quantity = Math.floor(number(req.body.quantity));
+    const grossWeight = Math.max(0, number(req.body.grossWeight));
+    const stoneWeight = Math.max(0, number(req.body.stoneWeight));
+    const netWeight = Math.max(0, number(req.body.netWeight));
+    const valuationAmount = roundedMoney(Math.max(0, number(req.body.valuationAmount)));
+    const principalAmount = roundedMoney(Math.max(0, number(req.body.principalAmount)));
+    const monthlyInterestRate = Math.max(0, Math.min(99.99, number(req.body.monthlyInterestRate)));
+    const pledgeDate = dateTimeFromInput(req.body.pledgeDate);
+    const dueDate = req.body.dueDate ? dateTimeFromInput(req.body.dueDate) : null;
+    if (!metal) throw new Error('Choose Gold or Silver collateral.');
+    if (!itemDescription) throw new Error('Enter the jewellery item kept as security.');
+    if (!Number.isInteger(quantity) || quantity <= 0) throw new Error('Enter the number of pledged pieces.');
+    if (netWeight <= 0) throw new Error('Net weight must be greater than zero.');
+    if (principalAmount <= 0) throw new Error('Enter the money given to the customer.');
+    if (dueDate && dueDate < pledgeDate) throw new Error('Return due date cannot be before the pledge date.');
+    const payoutMethod = receiptPaymentMethod(req.body.payoutMethod);
+    const loan = await prisma.$transaction(async (tx) => {
+      const customer = await resolveOrderCustomer(tx, req.body);
+      const record = await tx.pledgeLoan.create({ data: {
+        pledgeNumber: await nextDocumentNumber(tx, 'PL', pledgeDate), customerId: customer.id,
+        pledgeDate, dueDate, metal, itemDescription,
+        purity: supplierText(req.body.purity).toUpperCase() || null,
+        quantity, grossWeight: grossWeight || netWeight, stoneWeight, netWeight,
+        valuationAmount, principalAmount, monthlyInterestRate,
+        notes: supplierText(req.body.notes) || null
+      } });
+      await tx.cashbookEntry.create({ data: {
+        entryDate: dateInput(pledgeDate), type: 'OUT', paymentMethod: payoutMethod, amount: principalAmount,
+        description: `Pledge loan payout — ${record.pledgeNumber}`, reference: record.pledgeNumber,
+        customerId: customer.id, pledgeLoanId: record.id, syncLedger: false,
+        notes: record.notes
+      } });
+      return record;
+    });
+    redirectWith(res, `/pledges/${loan.id}`, 'message', `${loan.pledgeNumber} saved. The cash payout is recorded in Cashbook.`);
+  } catch (error) {
+    redirectWith(res, '/pledges/new', 'error', error.message || 'Could not save the pledge loan.');
+  }
+});
+
+app.get('/pledges/:id', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) throw new Error('Pledge loan not found.');
+    const loan = await prisma.pledgeLoan.findUniqueOrThrow({
+      where: { id },
+      include: {
+        customer: true,
+        payments: { include: { cashbookEntry: true }, orderBy: [{ paymentDate: 'desc' }, { id: 'desc' }] },
+        cashbookEntries: { where: { type: 'OUT' }, orderBy: { id: 'asc' }, take: 1 }
+      }
+    });
+    res.render('pledges/detail', { title: loan.pledgeNumber, loan, outstanding: pledgeOutstanding(loan) });
+  } catch (error) { next(error); }
+});
+
+app.post('/pledges/:id/payments', async (req, res) => {
+  const id = Number(req.params.id);
+  try {
+    const principalAmount = roundedMoney(Math.max(0, number(req.body.principalAmount)));
+    const interestAmount = roundedMoney(Math.max(0, number(req.body.interestAmount)));
+    const total = roundedMoney(principalAmount + interestAmount);
+    const paymentDate = String(req.body.paymentDate || dateInput());
+    const paymentMethod = receiptPaymentMethod(req.body.paymentMethod);
+    if (!Number.isInteger(id) || id <= 0 || total <= 0) throw new Error('Enter principal, interest, or both for this repayment.');
+    await prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw`SELECT id FROM \`PledgeLoan\` WHERE id = ${id} FOR UPDATE`;
+      if (!locked.length) throw new Error('Pledge loan not found.');
+      const loan = await tx.pledgeLoan.findUniqueOrThrow({ where: { id } });
+      if (loan.status !== 'ACTIVE') throw new Error('Only an active pledge can receive a repayment.');
+      const due = pledgeOutstanding(loan);
+      if (principalAmount > due) throw new Error(`Principal repayment is greater than the outstanding amount of ${money(due)}.`);
+      const cashbookEntry = await tx.cashbookEntry.create({ data: {
+        entryDate: paymentDate, type: 'IN', paymentMethod, amount: total,
+        description: `Pledge repayment — ${loan.pledgeNumber}`, reference: loan.pledgeNumber,
+        customerId: loan.customerId, pledgeLoanId: loan.id, syncLedger: false,
+        notes: supplierText(req.body.notes) || null
+      } });
+      await tx.pledgeLoanPayment.create({ data: {
+        pledgeLoanId: loan.id, cashbookEntryId: cashbookEntry.id, paymentDate,
+        principalAmount, interestAmount, paymentMethod, notes: supplierText(req.body.notes) || null
+      } });
+      await tx.pledgeLoan.update({ where: { id: loan.id }, data: {
+        principalRepaid: { increment: principalAmount }, interestReceived: { increment: interestAmount }
+      } });
+    });
+    redirectWith(res, `/pledges/${id}`, 'message', `Repayment of ${money(total)} recorded in Cashbook.`);
+  } catch (error) {
+    redirectWith(res, `/pledges/${id}`, 'error', error.message || 'Could not record the pledge repayment.');
+  }
+});
+
+app.post('/pledges/:id/payments/:paymentId', async (req, res) => {
+  const id = Number(req.params.id);
+  const paymentId = Number(req.params.paymentId);
+  try {
+    const principalAmount = roundedMoney(Math.max(0, number(req.body.principalAmount)));
+    const interestAmount = roundedMoney(Math.max(0, number(req.body.interestAmount)));
+    const total = roundedMoney(principalAmount + interestAmount);
+    const paymentDate = String(req.body.paymentDate || dateInput());
+    const paymentMethod = receiptPaymentMethod(req.body.paymentMethod);
+    if (!Number.isInteger(id) || !Number.isInteger(paymentId) || id <= 0 || paymentId <= 0 || total <= 0) throw new Error('Enter a valid corrected repayment.');
+    await prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw`SELECT id FROM \`PledgeLoan\` WHERE id = ${id} FOR UPDATE`;
+      if (!locked.length) throw new Error('Pledge loan not found.');
+      const [loan, payment] = await Promise.all([
+        tx.pledgeLoan.findUniqueOrThrow({ where: { id } }),
+        tx.pledgeLoanPayment.findFirstOrThrow({ where: { id: paymentId, pledgeLoanId: id } })
+      ]);
+      if (loan.status !== 'ACTIVE') throw new Error('Only an active pledge repayment can be corrected.');
+      const revisedPrincipalTotal = roundedMoney(Number(loan.principalRepaid) - Number(payment.principalAmount) + principalAmount);
+      if (revisedPrincipalTotal < 0 || revisedPrincipalTotal > Number(loan.principalAmount)) throw new Error(`Principal total must stay between ₹0.00 and ${money(loan.principalAmount)}.`);
+      const revisedInterestTotal = roundedMoney(Number(loan.interestReceived) - Number(payment.interestAmount) + interestAmount);
+      const notes = supplierText(req.body.notes) || null;
+      await tx.cashbookEntry.update({ where: { id: payment.cashbookEntryId }, data: {
+        entryDate: paymentDate, amount: total, paymentMethod, notes
+      } });
+      await tx.pledgeLoanPayment.update({ where: { id: payment.id }, data: { paymentDate, principalAmount, interestAmount, paymentMethod, notes } });
+      await tx.pledgeLoan.update({ where: { id: loan.id }, data: { principalRepaid: revisedPrincipalTotal, interestReceived: revisedInterestTotal } });
+    });
+    redirectWith(res, `/pledges/${id}`, 'message', 'Pledge repayment corrected in the loan and Cashbook.');
+  } catch (error) {
+    redirectWith(res, `/pledges/${id}`, 'error', error.message || 'Could not correct the pledge repayment.');
+  }
+});
+
+app.post('/pledges/:id/release', async (req, res) => {
+  const id = Number(req.params.id);
+  try {
+    const loan = await prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw`SELECT id FROM \`PledgeLoan\` WHERE id = ${id} FOR UPDATE`;
+      if (!locked.length) throw new Error('Pledge loan not found.');
+      const current = await tx.pledgeLoan.findUniqueOrThrow({ where: { id } });
+      if (current.status !== 'ACTIVE') throw new Error('This pledge is already closed.');
+      const outstanding = pledgeOutstanding(current);
+      if (outstanding > 0) throw new Error(`Record the remaining principal of ${money(outstanding)} before releasing the jewellery.`);
+      return tx.pledgeLoan.update({ where: { id }, data: { status: 'RELEASED', releasedAt: new Date() } });
+    });
+    redirectWith(res, `/pledges/${loan.id}`, 'message', 'Jewellery released to the customer. The pledge record remains as history.');
+  } catch (error) { redirectWith(res, `/pledges/${id}`, 'error', error.message || 'Could not release the pledged jewellery.'); }
+});
+
+app.post('/pledges/:id/cancel', async (req, res) => {
+  const id = Number(req.params.id);
+  try {
+    const loan = await prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw`SELECT id FROM \`PledgeLoan\` WHERE id = ${id} FOR UPDATE`;
+      if (!locked.length) throw new Error('Pledge loan not found.');
+      const current = await tx.pledgeLoan.findUniqueOrThrow({ where: { id } });
+      if (current.status !== 'ACTIVE') throw new Error('This pledge is already closed.');
+      const paymentCount = await tx.pledgeLoanPayment.count({ where: { pledgeLoanId: id } });
+      if (paymentCount) throw new Error('This pledge has repayments. Correct or remove them first; then release the jewellery when the principal is settled.');
+      await tx.cashbookEntry.deleteMany({ where: { pledgeLoanId: id } });
+      return tx.pledgeLoan.update({ where: { id }, data: { status: 'CANCELLED', cancelledAt: new Date() } });
+    });
+    redirectWith(res, '/pledges', 'message', `${loan.pledgeNumber} cancelled. Its original cash payout was removed from Cashbook.`);
+  } catch (error) { redirectWith(res, `/pledges/${id}`, 'error', error.message || 'Could not cancel this pledge.'); }
+});
+
+app.get('/customer-orders', async (req, res, next) => {
+  try {
+    const q = supplierText(req.query.q);
+    const requestedStatus = String(req.query.status || 'ACTIVE').toUpperCase();
+    const status = ['OPEN', 'IN_PROGRESS', 'READY', 'DELIVERED', 'CANCELLED'].includes(requestedStatus) ? requestedStatus : 'ACTIVE';
+    const where = status === 'ACTIVE' ? { status: { in: ['OPEN', 'IN_PROGRESS', 'READY'] } } : { status };
+    if (q) where.OR = [
+      { orderNumber: { contains: q } }, { itemName: { contains: q } }, { category: { contains: q } },
+      { customer: { name: { contains: q } } }, { customer: { phone: { contains: q } } },
+      { supplier: { name: { contains: q } } }
+    ];
+    const totalItems = await prisma.customerOrder.count({ where });
+    const pagination = paginationFor(req, totalItems, req.query.page, 100);
+    const orders = await prisma.customerOrder.findMany({
+      where, include: { customer: true, supplier: true }, orderBy: [{ dueDate: 'asc' }, { orderDate: 'desc' }, { id: 'desc' }],
+      skip: (pagination.page - 1) * pagination.pageSize, take: pagination.pageSize
+    });
+    res.render('customer-orders/index', { title: 'Customer orders', orders, q, status, pagination });
+  } catch (error) { next(error); }
+});
+
+app.get('/customer-orders/new', (req, res) => {
+  res.render('customer-orders/form', { title: 'New customer order' });
+});
+
+app.post('/customer-orders', async (req, res) => {
+  try {
+    const metal = ['GOLD', 'SILVER'].includes(String(req.body.metal || '').toUpperCase()) ? String(req.body.metal).toUpperCase() : null;
+    const itemName = titleCase(req.body.itemName);
+    const quantity = Math.floor(number(req.body.quantity));
+    const quotedAmount = roundedMoney(Math.max(0, number(req.body.quotedAmount)));
+    const advance = roundedMoney(Math.max(0, number(req.body.customerAdvance)));
+    const orderDate = dateTimeFromInput(req.body.orderDate);
+    const dueDate = req.body.dueDate ? dateTimeFromInput(req.body.dueDate) : null;
+    if (!metal) throw new Error('Choose Gold or Silver.');
+    if (!itemName) throw new Error('Enter the ordered item.');
+    if (!Number.isInteger(quantity) || quantity <= 0) throw new Error('Enter the number of pieces ordered.');
+    if (advance > quotedAmount && quotedAmount > 0) throw new Error('Advance cannot be greater than the quoted amount.');
+    const method = advance > 0 ? receiptPaymentMethod(req.body.advancePaymentMethod) : null;
+    const order = await prisma.$transaction(async (tx) => {
+      const customer = await resolveOrderCustomer(tx, req.body);
+      const selectedSellerId = Number(req.body.sellerId);
+      const supplier = Number.isInteger(selectedSellerId) && selectedSellerId > 0
+        ? await tx.supplier.findUniqueOrThrow({ where: { id: selectedSellerId } })
+        : supplierText(req.body.sellerName)
+          ? await resolveSupplier(tx, { supplierName: req.body.sellerName, supplierPhone: req.body.sellerPhone })
+          : null;
+      const record = await tx.customerOrder.create({ data: {
+        orderNumber: await nextDocumentNumber(tx, 'CO', orderDate), customerId: customer.id, supplierId: supplier?.id || null,
+        orderDate, dueDate, itemName, category: titleCase(req.body.category) || null, metal,
+        purity: supplierText(req.body.purity).toUpperCase() || null, quantity,
+        targetGrossWeight: Math.max(0, number(req.body.targetGrossWeight)), targetNetWeight: Math.max(0, number(req.body.targetNetWeight)),
+        quotedAmount, customerAdvance: advance, advancePaymentMethod: method,
+        notes: supplierText(req.body.notes) || null
+      } });
+      if (advance > 0) await tx.cashbookEntry.create({ data: {
+        entryDate: dateInput(orderDate), type: 'IN', paymentMethod: method, amount: advance,
+        description: `Customer order advance — ${record.orderNumber}`, reference: record.orderNumber,
+        customerId: customer.id, customerOrderId: record.id, syncLedger: false, notes: record.notes
+      } });
+      return record;
+    });
+    redirectWith(res, '/customer-orders', 'message', `Customer order ${order.orderNumber} saved.`);
+  } catch (error) { redirectWith(res, '/customer-orders/new', 'error', error.message || 'Could not save customer order.'); }
+});
+
+app.post('/customer-orders/:id/status', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const status = String(req.body.status || '').toUpperCase();
+    if (!Number.isInteger(id) || id <= 0 || !['OPEN', 'IN_PROGRESS', 'READY', 'DELIVERED'].includes(status)) throw new Error('Choose a valid order status.');
+    await prisma.customerOrder.update({ where: { id }, data: { status } });
+    redirectWith(res, '/customer-orders', 'message', 'Order status updated.');
+  } catch (error) { redirectWith(res, '/customer-orders', 'error', error.message || 'Could not update order status.'); }
+});
+
+app.post('/customer-orders/:id/cancel', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const order = await prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw`SELECT id FROM \`CustomerOrder\` WHERE id = ${id} FOR UPDATE`;
+      if (!locked.length) throw new Error('Customer order not found.');
+      const current = await tx.customerOrder.findUniqueOrThrow({ where: { id } });
+      if (current.status === 'CANCELLED') throw new Error('This customer order is already cancelled.');
+      const refundable = roundedMoney(Math.max(0, Number(current.customerAdvance) - Number(current.refundedAmount)));
+      if (refundable > 0) {
+        const refundMethod = receiptPaymentMethod(req.body.refundPaymentMethod);
+        await tx.cashbookEntry.create({ data: {
+          entryDate: dateInput(), type: 'OUT', paymentMethod: refundMethod, amount: refundable,
+          description: `Customer order advance refund — ${current.orderNumber}`, reference: current.orderNumber,
+          customerId: current.customerId, customerOrderId: current.id, syncLedger: false, notes: 'Order cancelled; advance refunded'
+        } });
+        await tx.customerOrder.update({ where: { id }, data: { refundedAmount: { increment: refundable }, status: 'CANCELLED' } });
+      } else await tx.customerOrder.update({ where: { id }, data: { status: 'CANCELLED' } });
+      return current;
+    });
+    redirectWith(res, '/customer-orders', 'message', `${order.orderNumber} cancelled${Number(order.customerAdvance) > 0 ? ' and advance refund recorded in Cashbook.' : '.'}`);
+  } catch (error) { redirectWith(res, '/customer-orders', 'error', error.message || 'Could not cancel customer order.'); }
+});
+
+/* ── Supplier Purchases (new gold/silver stock) ─────────── */
+function supplierText(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ');
+}
+
+function supplierNameKey(value) {
+  return supplierText(value).toLocaleUpperCase();
+}
+
+function comparableSupplierName(value) {
+  return supplierNameKey(value).replace(/[^A-Z0-9]/g, '');
+}
+
+function supplierNameDistance(left, right) {
+  const source = comparableSupplierName(left);
+  const target = comparableSupplierName(right);
+  if (!source || !target) return Infinity;
+  const previous = Array.from({ length: target.length + 1 }, (_, index) => index);
+  for (let sourceIndex = 1; sourceIndex <= source.length; sourceIndex += 1) {
+    let diagonal = previous[0];
+    previous[0] = sourceIndex;
+    for (let targetIndex = 1; targetIndex <= target.length; targetIndex += 1) {
+      const above = previous[targetIndex];
+      previous[targetIndex] = Math.min(
+        previous[targetIndex] + 1,
+        previous[targetIndex - 1] + 1,
+        diagonal + (source[sourceIndex - 1] === target[targetIndex - 1] ? 0 : 1)
+      );
+      diagonal = above;
+    }
+  }
+  return previous[target.length];
+}
+
+function looksLikeSupplierTypo(enteredName, savedName) {
+  const entered = comparableSupplierName(enteredName);
+  const saved = comparableSupplierName(savedName);
+  const longest = Math.max(entered.length, saved.length);
+  if (entered === saved || Math.min(entered.length, saved.length) < 4) return false;
+  return supplierNameDistance(entered, saved) <= Math.max(1, Math.ceil(longest * 0.22));
+}
+
+async function similarSupplier(tx, name) {
+  const saved = await tx.supplier.findMany({ select: { id: true, name: true }, orderBy: { id: 'asc' } });
+  return saved
+    .filter((supplier) => looksLikeSupplierTypo(name, supplier.name))
+    .sort((left, right) => supplierNameDistance(name, left.name) - supplierNameDistance(name, right.name))[0] || null;
+}
+
+// A supplier is one business contact, even when an earlier entry was saved
+// without its phone number.  The old behaviour created a second profile in
+// that case, splitting the same supplier's lots and due balance across two
+// accounts.  Keep one canonical profile and move both purchases and customer
+// orders to it before removing the duplicate records.
+async function mergeSupplierRecords(tx, records) {
+  const suppliers = records.filter(Boolean);
+  if (!suppliers.length) return null;
+  const canonical = [...suppliers].sort((left, right) => {
+    const leftScore = (left.phone ? 1000000 : 0) + Number(left._count?.purchases || 0) * 1000 + Number(left._count?.customerOrders || 0);
+    const rightScore = (right.phone ? 1000000 : 0) + Number(right._count?.purchases || 0) * 1000 + Number(right._count?.customerOrders || 0);
+    return rightScore - leftScore || left.id - right.id;
+  })[0];
+  const duplicates = suppliers.filter((supplier) => supplier.id !== canonical.id);
+  if (!duplicates.length) return canonical;
+
+  const preferred = (field) => canonical[field] || suppliers.find((supplier) => supplier[field])?.[field] || null;
+  const preferredPhone = preferred('phone');
+  // Phone is unique. Release a duplicate's stored phone before assigning it
+  // to the canonical profile, so merging cannot violate that database rule.
+  if (preferredPhone && canonical.phone !== preferredPhone) {
+    await tx.supplier.updateMany({ where: { id: { in: duplicates.map((supplier) => supplier.id) }, phone: preferredPhone }, data: { phone: null } });
+  }
+  const duplicateIds = duplicates.map((supplier) => supplier.id);
+  await tx.supplierPurchase.updateMany({ where: { supplierId: { in: duplicateIds } }, data: { supplierId: canonical.id } });
+  await tx.customerOrder.updateMany({ where: { supplierId: { in: duplicateIds } }, data: { supplierId: canonical.id } });
+  await tx.supplier.update({ where: { id: canonical.id }, data: {
+    phone: preferredPhone,
+    email: preferred('email'),
+    address: preferred('address'),
+    gstin: preferred('gstin'),
+    panNumber: preferred('panNumber')
+  } });
+  await tx.supplier.deleteMany({ where: { id: { in: duplicateIds } } });
+  return tx.supplier.findUniqueOrThrow({ where: { id: canonical.id } });
+}
+
+async function sameNamedSuppliers(tx, name) {
+  const nameKey = supplierNameKey(name);
+  if (!nameKey) return [];
+  // MySQL's default collation already treats letter case equally. Filtering in
+  // JavaScript also handles old records that had accidental extra whitespace.
+  const candidates = await tx.supplier.findMany({
+    where: { name: { contains: name } },
+    include: { _count: { select: { purchases: true, customerOrders: true } } },
+    take: 100
+  });
+  return candidates.filter((supplier) => supplierNameKey(supplier.name) === nameKey);
+}
+
+async function resolveSupplier(tx, body) {
+  const name = titleCase(supplierText(body.supplierName));
+  const phone = String(body.supplierPhone || '').replace(/\D/g, '').slice(0, 15) || null;
+  if (!name) throw new Error('Enter the supplier name.');
+  const named = await sameNamedSuppliers(tx, name);
+  const phoneMatch = phone ? await tx.supplier.findUnique({ where: { phone } }) : null;
+  if (phoneMatch && supplierNameKey(phoneMatch.name) !== supplierNameKey(name)) {
+    throw new Error(`This mobile number already belongs to supplier ${phoneMatch.name}. Open that supplier account instead of creating a second one.`);
+  }
+  const candidates = [...named];
+  if (phoneMatch && !candidates.some((supplier) => supplier.id === phoneMatch.id)) candidates.push({ ...phoneMatch, _count: { purchases: 0, customerOrders: 0 } });
+  const existing = await mergeSupplierRecords(tx, candidates);
+  if (existing) return tx.supplier.update({ where: { id: existing.id }, data: {
+    name,
+    phone: phone || existing.phone,
+    email: supplierText(body.supplierEmail) || existing.email,
+    address: supplierText(body.supplierAddress) || existing.address,
+    gstin: supplierText(body.supplierGstin).toUpperCase() || existing.gstin,
+    panNumber: supplierText(body.supplierPan).toUpperCase() || existing.panNumber
+  } });
+  if (String(body.confirmDifferentSupplier || '') !== 'yes') {
+    const similar = await similarSupplier(tx, name);
+    if (similar) {
+      throw new Error(`Possible duplicate supplier: "${similar.name}" already exists. Select it from the suggestions, or tick “This is a different supplier” before saving.`);
+    }
+  }
+  return tx.supplier.create({ data: {
+    name, phone, email: supplierText(body.supplierEmail) || null,
+    address: supplierText(body.supplierAddress) || null,
+    gstin: supplierText(body.supplierGstin).toUpperCase() || null,
+    panNumber: supplierText(body.supplierPan).toUpperCase() || null
+  } });
+}
+
+app.post('/suppliers/merge-duplicates', async (req, res) => {
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const records = await tx.supplier.findMany({
+        include: { _count: { select: { purchases: true, customerOrders: true } } },
+        orderBy: { id: 'asc' }
+      });
+      const groups = new Map();
+      records.forEach((supplier) => {
+        const key = supplierNameKey(supplier.name);
+        if (!key) return;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(supplier);
+      });
+      let profilesMerged = 0;
+      for (const group of groups.values()) {
+        if (group.length < 2) continue;
+        await mergeSupplierRecords(tx, group);
+        profilesMerged += group.length - 1;
+      }
+      return profilesMerged;
+    });
+    redirectWith(res, '/suppliers', 'message', result ? `${result} duplicate supplier profile${result === 1 ? '' : 's'} combined.` : 'No duplicate supplier names were found.');
+  } catch (error) {
+    redirectWith(res, '/suppliers', 'error', error.message || 'Could not combine duplicate supplier profiles.');
+  }
+});
+
+app.get('/api/suppliers/search', async (req, res) => {
+  try {
+    const q = supplierText(req.query.q);
+    if (q.length < 2) return res.json({ suppliers: [] });
+    const suppliers = await prisma.supplier.findMany({
+      where: { OR: [{ name: { contains: q } }, { phone: { contains: q } }, { gstin: { contains: q } }] },
+      orderBy: { name: 'asc' }, take: 12
+    });
+    res.json({ suppliers });
+  } catch (error) { res.status(500).json({ error: 'Could not search suppliers.' }); }
+});
+
+// Suppliers are first-class business contacts.  Purchase records retain the
+// original supplier link, while this directory gives the counter a clean
+// place to see outstanding purchase dues and correct contact details.
+app.get('/suppliers', async (req, res, next) => {
+  try {
+    const q = supplierText(req.query.q);
+    const where = q ? { OR: [
+      { name: { contains: q } }, { phone: { contains: q } },
+      { gstin: { contains: q } }, { panNumber: { contains: q } }
+    ] } : {};
+    const [totalItems, allSupplierNames] = await Promise.all([
+      prisma.supplier.count({ where }),
+      prisma.supplier.findMany({ select: { name: true } })
+    ]);
+    const supplierNameCounts = new Map();
+    allSupplierNames.forEach((supplier) => {
+      const key = supplierNameKey(supplier.name);
+      supplierNameCounts.set(key, (supplierNameCounts.get(key) || 0) + 1);
+    });
+    const duplicateSupplierProfiles = [...supplierNameCounts.values()].reduce((count, entries) => count + Math.max(0, entries - 1), 0);
+    const pagination = paginationFor(req, totalItems, req.query.page, 100);
+    const suppliers = await prisma.supplier.findMany({
+      where,
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+      include: { _count: { select: { purchases: { where: { cancelledAt: null } } } } },
+      skip: (pagination.page - 1) * pagination.pageSize,
+      take: pagination.pageSize
+    });
+    const totals = suppliers.length ? await prisma.supplierPurchase.groupBy({
+      by: ['supplierId'], where: { supplierId: { in: suppliers.map((supplier) => supplier.id) }, cancelledAt: null },
+      _sum: { totalAmount: true, paid: true }
+    }) : [];
+    const totalsBySupplier = new Map(totals.map((row) => [row.supplierId, {
+      purchased: Number(row._sum.totalAmount || 0), paid: Number(row._sum.paid || 0)
+    }]));
+    const rows = suppliers.map((supplier) => {
+      const total = totalsBySupplier.get(supplier.id) || { purchased: 0, paid: 0 };
+      return { ...supplier, purchased: total.purchased, paid: total.paid, due: roundedMoney(Math.max(0, total.purchased - total.paid)) };
+    });
+    res.render('contacts/suppliers', { title: 'Suppliers', suppliers: rows, q, pagination, duplicateSupplierProfiles });
+  } catch (error) { next(error); }
+});
+
+app.get('/suppliers/:id', async (req, res, next) => {
+  try {
+    const supplierId = Number(req.params.id);
+    if (!Number.isInteger(supplierId) || supplierId <= 0) throw new Error('Supplier not found.');
+    const supplier = await prisma.supplier.findUniqueOrThrow({
+      where: { id: supplierId },
+      include: {
+        purchases: {
+          where: { cancelledAt: null }, orderBy: [{ purchaseDate: 'desc' }, { id: 'desc' }], take: 200,
+          include: { product: true, cashbookEntries: { orderBy: [{ entryDate: 'desc' }, { id: 'desc' }] } }
+        }
+      }
+    });
+    const summary = supplier.purchases.reduce((totals, purchase) => {
+      totals.purchased += Number(purchase.totalAmount || 0);
+      totals.paid += Number(purchase.paid || 0);
+      totals.weight += Number(purchase.netWeight || 0);
+      return totals;
+    }, { purchased: 0, paid: 0, weight: 0 });
+    summary.due = roundedMoney(Math.max(0, summary.purchased - summary.paid));
+    res.render('contacts/supplier-detail', { title: supplier.name, supplier, summary });
+  } catch (error) { next(error); }
+});
+
+app.post('/suppliers/:id', async (req, res, next) => {
+  const supplierId = Number(req.params.id);
+  try {
+    if (!Number.isInteger(supplierId) || supplierId <= 0) throw new Error('Supplier not found.');
+    const name = titleCase(supplierText(req.body.name));
+    const phone = String(req.body.phone || '').replace(/\D/g, '').slice(0, 15) || null;
+    if (!name) throw new Error('Enter the supplier name.');
+    const updated = await prisma.$transaction(async (tx) => {
+      const current = await tx.supplier.findUniqueOrThrow({
+        where: { id: supplierId },
+        include: { _count: { select: { purchases: true, customerOrders: true } } }
+      });
+      const named = await sameNamedSuppliers(tx, name);
+      const phoneMatch = phone ? await tx.supplier.findUnique({ where: { phone } }) : null;
+      if (phoneMatch && phoneMatch.id !== supplierId && supplierNameKey(phoneMatch.name) !== supplierNameKey(name)) {
+        throw new Error(`This mobile number already belongs to supplier ${phoneMatch.name}.`);
+      }
+      const candidates = [...named, current];
+      if (phoneMatch && !candidates.some((supplier) => supplier.id === phoneMatch.id)) candidates.push({ ...phoneMatch, _count: { purchases: 0, customerOrders: 0 } });
+      const canonical = await mergeSupplierRecords(tx, candidates);
+      return tx.supplier.update({ where: { id: canonical.id }, data: {
+        name, phone,
+        email: supplierText(req.body.email) || null,
+        address: supplierText(req.body.address) || null,
+        gstin: supplierText(req.body.gstin).toUpperCase() || null,
+        panNumber: supplierText(req.body.panNumber).toUpperCase() || null
+      } });
+    });
+    redirectWith(res, `/suppliers/${updated.id}`, 'message', 'Supplier details updated.');
+  } catch (error) {
+    if (error.code === 'P2002') return redirectWith(res, `/suppliers/${supplierId}`, 'error', 'That supplier mobile number is already used by another supplier.');
+    redirectWith(res, `/suppliers/${supplierId}`, 'error', error.message || 'Could not update supplier details.');
+  }
+});
+
+app.get('/purchases', async (req, res, next) => {
+  try {
+    const q = supplierText(req.query.q);
+    const state = String(req.query.state || 'ACTIVE').toUpperCase() === 'CANCELLED' ? 'CANCELLED' : 'ACTIVE';
+    let paymentStatus = ['PENDING', 'PAID'].includes(String(req.query.paymentStatus || '').toUpperCase())
+      ? String(req.query.paymentStatus).toUpperCase()
+      : 'ALL';
+    if (state !== 'ACTIVE') paymentStatus = 'ALL';
+    const where = state === 'CANCELLED' ? { cancelledAt: { not: null } } : { cancelledAt: null };
+    // Use MySQL field references rather than filtering after pagination. This
+    // keeps the pending-payment register correct and fast with years of POs.
+    if (state === 'ACTIVE' && paymentStatus === 'PENDING') {
+      where.paid = { lt: prisma.supplierPurchase.fields.totalAmount };
+    } else if (state === 'ACTIVE' && paymentStatus === 'PAID') {
+      where.paid = { gte: prisma.supplierPurchase.fields.totalAmount };
+    }
+    if (q) {
+      const metalMatch = ['GOLD', 'SILVER'].includes(q.toUpperCase()) ? [{ metal: q.toUpperCase() }] : [];
+      where.OR = [
+      { purchaseNumber: { contains: q } }, { itemName: { contains: q } }, { category: { contains: q } },
+      { supplier: { name: { contains: q } } }, { supplier: { phone: { contains: q } } }, ...metalMatch
+      ];
+    }
+    const totalItems = await prisma.supplierPurchase.count({ where });
+    const pagination = paginationFor(req, totalItems, req.query.page, 100);
+    const purchases = await prisma.supplierPurchase.findMany({
+      where, include: { supplier: true, product: true, cashbookEntries: { orderBy: [{ entryDate: 'asc' }, { id: 'asc' }] } }, orderBy: [{ purchaseDate: 'desc' }, { id: 'desc' }],
+      skip: (pagination.page - 1) * pagination.pageSize, take: pagination.pageSize
+    });
+    res.render('purchases/index', { title: 'Purchase register', purchases, q, state, paymentStatus, pagination });
+  } catch (error) { next(error); }
+});
+
+app.get('/purchases/new', async (req, res, next) => {
+  try {
+    const rateInfo = await getRateForDate(prisma, dateInput());
+    res.render('purchases/form', { title: 'New supplier purchase', rateInfo, purchaseNumber: '' });
+  } catch (error) { next(error); }
+});
+
+app.post('/purchases', async (req, res, next) => {
+  try {
+    const metal = ['GOLD', 'SILVER'].includes(String(req.body.metal || '').toUpperCase()) ? String(req.body.metal).toUpperCase() : null;
+    const netWeight = number(req.body.netWeight);
+    const grossWeight = number(req.body.grossWeight);
+    const stoneWeight = number(req.body.stoneWeight);
+    const quantity = Math.floor(number(req.body.quantity));
+    const ratePerGram = roundedMoney(number(req.body.ratePerGram));
+    const totalAmount = roundedMoney(number(req.body.totalAmount));
+    const paid = roundedMoney(Math.max(0, number(req.body.paid)));
+    const paymentMethod = receiptPaymentMethod(req.body.paymentMethod);
+    const itemName = titleCase(req.body.itemName);
+    const category = titleCase(req.body.category);
+    if (!metal) throw new Error('Choose Gold or Silver.');
+    if (!itemName || !category) throw new Error('Enter item name and category.');
+    if (!Number.isInteger(quantity) || quantity <= 0) throw new Error('Enter the number of pieces received.');
+    if (netWeight <= 0) throw new Error('Net weight must be greater than zero.');
+    if (ratePerGram <= 0) throw new Error('Enter a valid purchase rate per gram.');
+    if (totalAmount <= 0) throw new Error('Enter a valid purchase amount.');
+    if (paid > totalAmount) throw new Error('Amount paid cannot exceed the purchase amount.');
+    const purchaseDate = dateTimeFromInput(req.body.purchaseDate);
+    const purchase = await prisma.$transaction(async (tx) => {
+      const supplier = await resolveSupplier(tx, req.body);
+      const purity = supplierText(req.body.purity).toUpperCase() || null;
+      const record = await tx.supplierPurchase.create({ data: {
+        purchaseNumber: await nextDocumentNumber(tx, 'PO', purchaseDate), supplierId: supplier.id, quantity,
+        purchaseDate, metal, purity, itemName, category, grossWeight: grossWeight || netWeight, stoneWeight, netWeight,
+        ratePerGram, totalAmount, paid, paymentMethod,
+        reference: supplierText(req.body.reference).toUpperCase() || null, notes: supplierText(req.body.notes).toUpperCase() || null
+      } });
+      await upsertItemName(tx, itemName, category, { updateCategory: false });
+      if (paid > 0) await tx.cashbookEntry.create({ data: {
+        entryDate: dateInput(record.purchaseDate), type: 'OUT', paymentMethod, amount: paid,
+        description: `Supplier purchase — ${record.purchaseNumber}`, reference: record.purchaseNumber,
+        supplierPurchaseId: record.id, syncLedger: false, notes: record.notes
+      } });
+      return record;
+    });
+    redirectWith(res, '/purchases', 'message', `Purchase ${purchase.purchaseNumber} saved. Add ${quantity} individual pieces with Batch Add Pieces to create their barcodes.`);
+  } catch (error) { redirectWith(res, '/purchases/new', 'error', error.message || 'Could not save supplier purchase.'); }
+});
+
+app.post('/purchases/:id/payments', async (req, res) => {
+  try {
+    const id = Number(req.params.id); const amount = roundedMoney(number(req.body.amount)); const paymentMethod = receiptPaymentMethod(req.body.paymentMethod);
+    if (!Number.isInteger(id) || id <= 0 || amount <= 0) throw new Error('Enter a valid payment amount.');
+    const record = await prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw`SELECT id FROM \`SupplierPurchase\` WHERE id = ${id} FOR UPDATE`;
+      if (!locked.length) throw new Error('This purchase no longer exists.');
+      const purchase = await tx.supplierPurchase.findFirstOrThrow({ where: { id, cancelledAt: null } });
+      const due = roundedMoney(Number(purchase.totalAmount) - Number(purchase.paid));
+      if (amount > due) throw new Error(`Payment is greater than the outstanding amount of ${money(due)}.`);
+      const updated = await tx.supplierPurchase.update({ where: { id }, data: { paid: { increment: amount }, paymentMethod: Number(purchase.paid) <= 0 || purchase.paymentMethod === paymentMethod ? paymentMethod : 'MIXED' } });
+      await tx.cashbookEntry.create({ data: { entryDate: req.body.entryDate || dateInput(), type: 'OUT', paymentMethod, amount, description: `Supplier payment — ${purchase.purchaseNumber}`, reference: purchase.purchaseNumber, supplierPurchaseId: purchase.id, syncLedger: false, notes: req.body.notes || null } });
+      return updated;
+    });
+    redirectWith(res, '/purchases', 'message', `Supplier payment of ${money(amount)} recorded.`);
+  } catch (error) { redirectWith(res, '/purchases', 'error', error.message || 'Could not record supplier payment.'); }
+});
+
+// Supplier payment corrections are an update, not a second receipt. Rebuild
+// the paid total from its Cashbook rows inside the same transaction so the PO
+// due, Cashbook and Supplier account cannot drift apart.
+app.post('/purchases/:id/payments/:entryId', async (req, res) => {
+  try {
+    const purchaseId = Number(req.params.id);
+    const entryId = Number(req.params.entryId);
+    const amount = roundedMoney(number(req.body.amount));
+    const paymentMethod = receiptPaymentMethod(req.body.paymentMethod);
+    if (!Number.isInteger(purchaseId) || !Number.isInteger(entryId) || purchaseId <= 0 || entryId <= 0 || amount <= 0) throw new Error('Enter a valid payment amount.');
+    await prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw`SELECT id FROM \`SupplierPurchase\` WHERE id = ${purchaseId} FOR UPDATE`;
+      if (!locked.length) throw new Error('This purchase no longer exists.');
+      const purchase = await tx.supplierPurchase.findFirstOrThrow({ where: { id: purchaseId, cancelledAt: null } });
+      const entry = await tx.cashbookEntry.findFirstOrThrow({ where: { id: entryId, supplierPurchaseId: purchaseId } });
+      const nextPaid = roundedMoney(Number(purchase.paid) - Number(entry.amount) + amount);
+      if (nextPaid < 0 || nextPaid > Number(purchase.totalAmount)) throw new Error(`Payment total must stay between ₹0.00 and ${money(purchase.totalAmount)}.`);
+      await tx.cashbookEntry.update({ where: { id: entry.id }, data: {
+        entryDate: req.body.entryDate || entry.entryDate, amount, paymentMethod,
+        notes: supplierText(req.body.notes) || null
+      } });
+      const payments = await tx.cashbookEntry.findMany({ where: { supplierPurchaseId: purchaseId }, select: { amount: true, paymentMethod: true } });
+      const paid = roundedMoney(payments.reduce((sum, payment) => sum + Number(payment.amount), 0));
+      const methods = [...new Set(payments.filter((payment) => Number(payment.amount) > 0).map((payment) => payment.paymentMethod))];
+      await tx.supplierPurchase.update({ where: { id: purchaseId }, data: {
+        paid, paymentMethod: paid <= 0 ? 'CREDIT' : methods.length === 1 ? methods[0] : 'MIXED'
+      } });
+    });
+    redirectWith(res, '/purchases', 'message', 'Supplier payment updated in Purchase Register and Cashbook.');
+  } catch (error) { redirectWith(res, '/purchases', 'error', error.message || 'Could not update supplier payment.'); }
+});
+
+app.post('/purchases/:id/delete', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const record = await prisma.$transaction(async (tx) => {
+      const purchase = await tx.supplierPurchase.findFirstOrThrow({ where: { id, cancelledAt: null }, include: { product: true } });
+      // Purchases entered before lot receiving created one linked inventory item.
+      // Preserve that legacy safety rule. New lot purchases deliberately have no
+      // product link: their separately barcode-labelled items remain independent.
+      if (purchase.product && (purchase.product.status !== 'AVAILABLE' || purchase.product.quantity <= 0)) throw new Error('The linked legacy inventory item has already been sold or removed. This purchase cannot be cancelled safely.');
+      await tx.cashbookEntry.deleteMany({ where: { supplierPurchaseId: purchase.id } });
+      if (purchase.product) {
+        await tx.stockMovement.create({ data: stockMovementSnapshot(purchase.product, 'ADJUSTMENT_OUT', -purchase.product.quantity, `Supplier purchase cancelled · ${purchase.purchaseNumber}`) });
+        await tx.product.update({ where: { id: purchase.product.id }, data: { quantity: 0, status: 'INACTIVE' } });
+      }
+      return tx.supplierPurchase.update({ where: { id }, data: { cancelledAt: new Date() } });
+    });
+    redirectWith(res, '/purchases', 'message', `${record.purchaseNumber} cancelled. Linked cashbook payouts were reversed; separately barcode-labelled inventory items were left unchanged.`);
+  } catch (error) { redirectWith(res, '/purchases', 'error', error.message || 'Could not cancel supplier purchase.'); }
 });
 
 /* ── URD Purchases (old gold/silver from customers) ────── */
@@ -2902,11 +3661,11 @@ app.get('/reports/cashbook-register', async (req, res, next) => {
     const paymentMethod = RECEIPT_PAYMENT_METHODS.has(String(req.query.paymentMethod || '').toUpperCase()) ? String(req.query.paymentMethod).toUpperCase() : '';
     const type = ['IN', 'OUT'].includes(String(req.query.type || '').toUpperCase()) ? String(req.query.type).toUpperCase() : '';
     const q = reportText(req.query.q);
-    const where = { entryDate: { gte: fromKey, lte: toKey }, ...(paymentMethod ? { paymentMethod } : {}), ...(type ? { type } : {}), ...(q ? { OR: [{ description: { contains: q } }, { reference: { contains: q } }, { customer: { is: { name: { contains: q } } } }] } : {}) };
+    const where = { entryDate: { gte: fromKey, lte: toKey }, ...(paymentMethod ? { paymentMethod } : {}), ...(type ? { type } : {}), ...(q ? { OR: [{ description: { contains: q } }, { reference: { contains: q } }, { customer: { is: { name: { contains: q } } } }, { supplierPurchase: { is: { supplier: { is: { name: { contains: q } } } } } }] } : {}) };
     const totalItems = await prisma.cashbookEntry.count({ where });
     const pagination = paginationFor(req, totalItems, req.query.page, 200);
     const [entries, totals] = await Promise.all([
-      prisma.cashbookEntry.findMany({ where, include: { customer: true }, orderBy: [{ entryDate: 'desc' }, { createdAt: 'desc' }], skip: (pagination.page - 1) * pagination.pageSize, take: pagination.pageSize }),
+      prisma.cashbookEntry.findMany({ where, include: { customer: true, supplierPurchase: { include: { supplier: true } } }, orderBy: [{ entryDate: 'desc' }, { createdAt: 'desc' }], skip: (pagination.page - 1) * pagination.pageSize, take: pagination.pageSize }),
       prisma.cashbookEntry.groupBy({ by: ['type'], where, _sum: { amount: true } })
     ]);
     const summary = { in: 0, out: 0 }; totals.forEach((row) => { summary[row.type === 'IN' ? 'in' : 'out'] = Number(row._sum.amount || 0); });

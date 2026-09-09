@@ -84,6 +84,65 @@ async function reverseUrdPayment(tx, entry) {
   await tx.urdPurchase.update({ where: { id: purchase.id }, data: { paid: nextPaid, paymentMethod } });
 }
 
+// Supplier payments are money-out entries, but they still need the same
+// reversal discipline as customer/URD payments.  Without this, deleting a
+// Cashbook entry would leave an overstated paid amount and an understated
+// supplier due in the Purchase Register.
+async function reverseSupplierPurchasePayment(tx, entry) {
+  const locked = await tx.$queryRaw`SELECT id FROM \`SupplierPurchase\` WHERE id = ${entry.supplierPurchaseId} FOR UPDATE`;
+  if (!locked.length) return;
+  const purchase = await tx.supplierPurchase.findUniqueOrThrow({ where: { id: entry.supplierPurchaseId } });
+  const nextPaid = roundedMoney(Math.max(0, Number(purchase.paid) - Number(entry.amount)));
+  const remainingMethods = await tx.cashbookEntry.findMany({
+    where: { supplierPurchaseId: purchase.id, id: { not: entry.id } },
+    select: { paymentMethod: true, amount: true }
+  });
+  const activeMethods = [...new Set(remainingMethods.filter((row) => Number(row.amount) > 0).map((row) => row.paymentMethod))];
+  const paymentMethod = nextPaid <= 0 ? 'CREDIT' : activeMethods.length === 1 ? activeMethods[0] : 'MIXED';
+  await tx.supplierPurchase.update({ where: { id: purchase.id }, data: { paid: nextPaid, paymentMethod } });
+}
+
+async function reverseCustomerOrderAdvance(tx, entry) {
+  const locked = await tx.$queryRaw`SELECT id FROM \`CustomerOrder\` WHERE id = ${entry.customerOrderId} FOR UPDATE`;
+  if (!locked.length) return;
+  const order = await tx.customerOrder.findUniqueOrThrow({ where: { id: entry.customerOrderId } });
+  // Incoming receipts increase the recorded advance; outgoing cancellation
+  // refunds are tracked separately. Deleting either entry reverses only its
+  // own side and never turns a refund into a second advance.
+  const data = entry.type === 'IN'
+    ? { customerAdvance: roundedMoney(Math.max(0, Number(order.customerAdvance) - Number(entry.amount))) }
+    : { refundedAmount: roundedMoney(Math.max(0, Number(order.refundedAmount) - Number(entry.amount))) };
+  await tx.customerOrder.update({ where: { id: order.id }, data });
+}
+
+// A pledge payment is a customer receipt, but it belongs to collateral loan
+// principal/interest rather than the normal sales-credit ledger.  Reversing a
+// Cashbook receipt must therefore rewind the loan payment totals too.  The
+// original loan payout cannot be deleted from Cashbook directly: cancelling
+// it requires the pledge register's explicit safety check.
+async function reversePledgeLoanCashbookEntry(tx, entry) {
+  if (!entry.pledgeLoanId) return;
+  const linkedPayment = await tx.pledgeLoanPayment.findUnique({
+    where: { cashbookEntryId: entry.id },
+    select: { id: true, pledgeLoanId: true, principalAmount: true, interestAmount: true }
+  });
+  if (!linkedPayment) {
+    throw new Error('Manage this pledged-jewellery payout from Pledge Loans. It cannot be deleted directly from Cashbook.');
+  }
+  const locked = await tx.$queryRaw`SELECT id FROM \`PledgeLoan\` WHERE id = ${linkedPayment.pledgeLoanId} FOR UPDATE`;
+  if (!locked.length) return;
+  const loan = await tx.pledgeLoan.findUniqueOrThrow({ where: { id: linkedPayment.pledgeLoanId } });
+  if (loan.status !== 'ACTIVE') throw new Error('This pledge is closed. Its receipt cannot be changed from Cashbook.');
+  await tx.pledgeLoanPayment.delete({ where: { id: linkedPayment.id } });
+  await tx.pledgeLoan.update({
+    where: { id: loan.id },
+    data: {
+      principalRepaid: roundedMoney(Math.max(0, Number(loan.principalRepaid) - Number(linkedPayment.principalAmount))),
+      interestReceived: roundedMoney(Math.max(0, Number(loan.interestReceived) - Number(linkedPayment.interestAmount)))
+    }
+  });
+}
+
 // Scheme savings are linked one-to-one to the Cashbook receipt that recorded
 // them. Deleting that receipt must put the installment back to pending rather
 // than leaving a false paid installment in the customer scheme record.
@@ -198,6 +257,9 @@ async function reverseAndDeleteCashbookEntry(tx, entryId) {
 
   const affectedSales = new Set();
   if (entry.urdPurchaseId) await reverseUrdPayment(tx, entry);
+  if (entry.supplierPurchaseId) await reverseSupplierPurchasePayment(tx, entry);
+  if (entry.customerOrderId) await reverseCustomerOrderAdvance(tx, entry);
+  if (entry.pledgeLoanId) await reversePledgeLoanCashbookEntry(tx, entry);
   await reverseSchemeInstallmentPayment(tx, entry);
 
   if (entry.saleId) {
@@ -304,6 +366,9 @@ async function cancelSale(tx, saleId, cancelledAt = new Date()) {
 module.exports = {
   PAYMENT_COMPONENT_FIELDS,
   paymentMethodFromComponents,
+  reverseSupplierPurchasePayment,
+  reverseCustomerOrderAdvance,
+  reversePledgeLoanCashbookEntry,
   reverseSchemeInstallmentPayment,
   reverseAndDeleteCashbookEntry,
   deleteSettledUrdPurchase,

@@ -28,26 +28,4 @@
     if (linkBox.bottom > navBox.bottom) navigation.scrollTop += linkBox.bottom - navBox.bottom + 12;
   }
 
-  /* ── Theme toggle: dark ↔ light ──────────────────────────── */
-  const themeBtn = document.getElementById('themeToggle');
-  if (themeBtn) {
-    const iconEl = themeBtn.querySelector('.theme-icon');
-    const root = document.documentElement;
-    const syncIcon = () => {
-      const isDark = root.getAttribute('data-theme') === 'dark';
-      if (iconEl) iconEl.textContent = isDark ? '🌙' : '☀️';
-      themeBtn.setAttribute('aria-label', isDark ? 'Switch to light theme' : 'Switch to dark theme');
-    };
-    syncIcon();
-    themeBtn.addEventListener('click', () => {
-      const isDark = root.getAttribute('data-theme') === 'dark';
-      const next = isDark ? 'light' : 'dark';
-      root.classList.add('theme-transitioning');
-      root.setAttribute('data-theme', next);
-      localStorage.setItem('erp-theme', next);
-      syncIcon();
-      setTimeout(() => root.classList.remove('theme-transitioning'), 350);
-    });
-  }
 })();
-

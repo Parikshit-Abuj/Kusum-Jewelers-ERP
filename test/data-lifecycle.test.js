@@ -61,6 +61,28 @@ test('URD purchase numbers use their own India financial-year counter', async ()
   assert.deepEqual(sequenceKeys, ['UR-2026-2027', 'UR-2027-2028']);
 });
 
+test('supplier purchase numbers have their own atomic daily document series', async () => {
+  const sequenceKeys = [];
+  const counters = new Map();
+  let currentKey = '';
+  const tx = {
+    $executeRaw: async (_strings, ...values) => {
+      currentKey = values[0];
+      sequenceKeys.push(currentKey);
+      counters.set(currentKey, (counters.get(currentKey) || 0) + 1);
+    },
+    $queryRaw: async () => [{ lastNumber: counters.get(currentKey) }],
+    sale: { findUnique: async () => null },
+    urdPurchase: { findUnique: async () => null },
+    supplierPurchase: { findUnique: async () => null },
+    schemeEnrollment: { findUnique: async () => null }
+  };
+
+  assert.equal(await nextDocumentNumber(tx, 'PO', new Date(2026, 8, 9, 12, 0)), 'PO-20260909-0001');
+  assert.equal(await nextDocumentNumber(tx, 'PO', new Date(2026, 8, 9, 12, 1)), 'PO-20260909-0002');
+  assert.deepEqual(sequenceKeys, ['PO-20260909', 'PO-20260909']);
+});
+
 test('cashbook export carries each payment method opening balance into its own sheet', async () => {
   const db = {
     cashbookEntry: {
@@ -209,6 +231,29 @@ test('cashbook export retains a URD excess as a method-specific money-out entry'
   assert.equal(cashbook.rows[0].paymentMethod, 'UPI');
   assert.match(cashbook.rows[0].description, /URD refund/);
   assert.equal(upi.rows[0].moneyOut, 50);
+});
+
+test('supplier purchase register exports stock, supplier payment and due figures', async () => {
+  const db = {
+    supplierPurchase: {
+      findMany: async () => [{
+        purchaseDate: new Date(2026, 8, 9, 10, 0), purchaseNumber: 'PO-20260909-0001',
+        metal: 'GOLD', purity: '22K', itemName: 'GOLD RING', category: 'RING',
+        grossWeight: 5.2, netWeight: 5, ratePerGram: 7000, totalAmount: 35000, paid: 10000,
+        reference: 'SUP-48', barcode: 'G 00001', quantity: 54, supplier: { name: 'SHARMA GOLD', phone: '9999999999' }, product: null
+      }]
+    }
+  };
+
+  const payload = await getExportPayload(db, 'supplier-purchases', { from: '2026-09-09', to: '2026-09-09' });
+  const sheet = payload.sheets[0];
+  assert.equal(sheet.name, 'Supplier Purchases');
+  assert.equal(sheet.layout, 'ca-register');
+  assert.equal(sheet.rows[0].supplierName, 'SHARMA GOLD');
+  assert.equal(sheet.rows[0].barcode, 'G 00001');
+  assert.equal(sheet.rows[0].quantity, 54);
+  assert.equal(sheet.rows[0].due, 25000);
+  assert.deepEqual(sheet.totalKeys, ['grossWeight', 'netWeight', 'totalAmount', 'paid', 'due']);
 });
 
 test('URD Excel export keeps Remark empty when a standalone purchase has no linked sales bill', async () => {

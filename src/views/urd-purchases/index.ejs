@@ -61,12 +61,12 @@
         <% const urdDue = Math.max(0, Number(p.totalAmount) - Number(p.saleOffset) - Number(p.paid)); if (currentState === 'ACTIVE' && urdDue > 0) { %>
         <tr class="sub-row">
           <td colspan="10">
-            <form method="post" action="/urd-purchases/<%= p.id %>/payments" class="search-bar" style="margin:0;align-items:end">
-              <strong style="white-space:nowrap">Due: <%- money(urdDue) %></strong>
-              <label style="margin:0">Pay now<input name="amount" type="number" min="0.01" max="<%= urdDue.toFixed(2) %>" step="0.01" required value="<%= urdDue.toFixed(2) %>"></label>
-              <label style="margin:0">Method<select name="paymentMethod" data-payment-method><option value="CASH">Cash</option><option value="UPI">UPI</option><option value="CARD">Card</option><option value="BANK_TRANSFER">Bank Transfer</option></select></label>
+            <form method="post" action="/urd-purchases/<%= p.id %>/payments" class="table-settle-form">
+              <div class="table-settle-due">Due: <strong><%- money(urdDue) %></strong></div>
+              <label class="table-settle-field"><span>Pay now</span><input name="amount" type="number" min="0.01" max="<%= urdDue.toFixed(2) %>" step="0.01" required value="<%= urdDue.toFixed(2) %>"></label>
+              <label class="table-settle-field"><span>Method</span><select name="paymentMethod" data-payment-method><option value="CASH">Cash</option><option value="UPI">UPI</option><option value="CARD">Card</option><option value="BANK_TRANSFER">Bank Transfer</option></select></label>
               <input name="entryDate" type="hidden" value="<%= dateInput() %>">
-              <button class="button secondary small" type="submit">Record payout</button>
+              <button class="button secondary small table-settle-btn" type="submit">Record payout</button>
             </form>
           </td>
         </tr>

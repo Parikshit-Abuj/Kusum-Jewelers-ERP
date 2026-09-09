@@ -1,0 +1,70 @@
+<header class="page-header"><div><p class="eyebrow">Customer collateral</p><h1>New Pledge Loan</h1><p class="muted">Record the jewellery held securely and the money given. It will not be added to inventory.</p></div><a class="button ghost" href="/pledges">Cancel</a></header>
+
+<form class="panel form-panel" method="post" action="/pledges" data-pledge-form data-enter-scope>
+  <section class="form-section">
+    <h2>Customer</h2>
+    <div class="form-grid four">
+      <input type="hidden" name="customerId" data-pledge-customer-id>
+      <label>Customer name *<input name="customerName" autocomplete="off" required data-pledge-customer placeholder="Search or enter customer"></label>
+      <label>Mobile number<input name="customerPhone" inputmode="numeric" maxlength="15" placeholder="Optional"></label>
+      <label>Address<input name="customerAddress" placeholder="Optional"></label>
+      <label>PAN<input name="customerPan" maxlength="20" placeholder="Optional"></label>
+    </div>
+    <div class="supplier-suggestions" data-pledge-customer-suggestions hidden></div>
+  </section>
+
+  <section class="form-section">
+    <h2>Jewellery held as security</h2>
+    <div class="form-grid four">
+      <label>Pledge date *<input name="pledgeDate" type="date" required value="<%= dateInput() %>"></label>
+      <label>Return due date<input name="dueDate" type="date"></label>
+      <label>Metal *<select name="metal"><option value="GOLD">Gold</option><option value="SILVER">Silver</option></select></label>
+      <label>Item description *<input name="itemDescription" data-title-case required placeholder="e.g. Gold chain"></label>
+      <label>Purity<input name="purity" placeholder="Write purity, e.g. 22K"></label>
+      <label>Pieces *<input name="quantity" type="number" min="1" step="1" value="1" required></label>
+      <label>Gross wt. (g)<input name="grossWeight" type="number" min="0" step="0.001" placeholder="Optional"></label>
+      <label>Stone wt. (g)<input name="stoneWeight" type="number" min="0" step="0.001" value="0"></label>
+      <label>Net wt. (g) *<input name="netWeight" type="number" min="0.001" step="0.001" required></label>
+    </div>
+  </section>
+
+  <section class="form-section">
+    <h2>Loan amount</h2>
+    <div class="form-grid four">
+      <label>Jewellery valuation (₹)<input name="valuationAmount" type="number" min="0" step="0.01" value="0" placeholder="Optional reference"></label>
+      <label>Money given *<input name="principalAmount" type="number" min="0.01" step="0.01" required placeholder="0.00"></label>
+      <label>Monthly interest rate (%)<input name="monthlyInterestRate" type="number" min="0" max="99.99" step="0.01" value="0" placeholder="Optional"></label>
+      <label>Money given by *<select name="payoutMethod"><option value="CASH">Cash</option><option value="UPI">UPI</option><option value="CARD">Card</option><option value="BANK_TRANSFER">Bank transfer</option></select></label>
+      <label class="field-span-all">Notes<textarea name="notes" rows="2" placeholder="Optional condition, identification or reminder"></textarea></label>
+    </div>
+  </section>
+  <footer class="form-footer"><a class="button ghost" href="/pledges">Cancel</a><button class="button" type="submit">Save pledge loan</button></footer>
+</form>
+
+<script>
+(() => {
+  const form = document.querySelector('[data-pledge-form]'); if (!form) return;
+  const input = form.querySelector('[data-pledge-customer]');
+  const box = form.querySelector('[data-pledge-customer-suggestions]');
+  const id = form.querySelector('[data-pledge-customer-id]');
+  let timer, controller;
+  input.addEventListener('input', () => {
+    id.value = ''; clearTimeout(timer); const q = input.value.trim();
+    if (q.length < 2) { box.hidden = true; return; }
+    timer = setTimeout(async () => {
+      controller?.abort(); controller = new AbortController();
+      try {
+        const response = await fetch('/api/customers/search?q=' + encodeURIComponent(q), { signal: controller.signal });
+        const data = await response.json(); const rows = data.customers || [];
+        box.replaceChildren(...rows.map((row) => {
+          const button = document.createElement('button'); button.type = 'button';
+          button.textContent = `${row.name}${row.phone ? ' · ' + row.phone : ''}`;
+          button.addEventListener('click', () => { id.value = row.id; input.value = row.name; form.querySelector('[name=customerPhone]').value = row.phone || ''; box.hidden = true; });
+          return button;
+        }));
+        box.hidden = !rows.length;
+      } catch (error) { if (error.name !== 'AbortError') box.hidden = true; }
+    }, 220);
+  });
+})();
+</script>

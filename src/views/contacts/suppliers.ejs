@@ -1,0 +1,27 @@
+<header class="page-header">
+  <div><p class="eyebrow">Purchase partners</p><h1>Suppliers</h1></div>
+  <div class="header-actions"><a class="button ghost" href="/purchases">Purchase register</a><% if (duplicateSupplierProfiles) { %><form method="post" action="/suppliers/merge-duplicates" onsubmit="return confirm('Combine <%= duplicateSupplierProfiles %> duplicate supplier profile<%= duplicateSupplierProfiles === 1 ? '' : 's' %> with the same name? Their purchases, payments and open dues will stay intact under one supplier account.')"><button class="button ghost" type="submit">Combine duplicate names</button></form><% } %><a class="button" href="/purchases/new">+ New purchase</a></div>
+</header>
+<section class="panel register-panel">
+  <div class="panel-heading"><div><h2>Supplier accounts</h2><p><%= pagination.totalItems %> supplier<%= pagination.totalItems === 1 ? '' : 's' %> saved</p></div></div>
+  <form class="search-bar" method="get" action="/suppliers">
+    <input name="q" value="<%= q || '' %>" placeholder="Search supplier, mobile, GSTIN or PAN">
+    <button class="button secondary" type="submit">Search</button>
+    <% if (q) { %><a class="button ghost" href="/suppliers">Clear</a><% } %>
+  </form>
+  <% if (suppliers.length) { %>
+    <div class="table-wrap"><table><thead><tr><th>Supplier</th><th>Contact / tax ID</th><th class="right">Purchases</th><th class="right">Paid</th><th class="right">Outstanding due</th><th></th></tr></thead><tbody>
+      <% suppliers.forEach((supplier) => { %><tr>
+        <td><strong><%= supplier.name %></strong><small><%= supplier.address || '' %></small></td>
+        <td><strong><%= supplier.phone || '—' %></strong><small><%= supplier.gstin || supplier.panNumber || '' %></small></td>
+        <td class="right"><%= money(supplier.purchased) %><small><%= supplier._count?.purchases || 0 %> purchase<%= supplier._count?.purchases === 1 ? '' : 's' %></small></td>
+        <td class="right"><%= money(supplier.paid) %></td>
+        <td class="right"><strong class="<%= supplier.due > 0 ? 'credit-amount' : 'paid-amount' %>"><%= money(supplier.due) %></strong></td>
+        <td><a class="button secondary small" href="/suppliers/<%= supplier.id %>">View account</a></td>
+      </tr><% }) %>
+    </tbody></table></div>
+    <%- include('../_pagination', { pagination }) %>
+  <% } else { %>
+    <div class="empty-state compact"><span>◎</span><h3><%= q ? 'No matching supplier' : 'No suppliers yet' %></h3><p><%= q ? 'Try another supplier name or contact detail.' : 'A supplier is automatically saved when you record the first purchase.' %></p><% if (!q) { %><a class="button" href="/purchases/new">Record first purchase</a><% } %></div>
+  <% } %>
+</section>

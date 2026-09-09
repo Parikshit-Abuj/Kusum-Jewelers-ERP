@@ -141,7 +141,13 @@ async function reserveDocumentNumber(tx, prefix, value = new Date()) {
       ? await tx.sale.findUnique({ where: { invoiceNumber: candidate }, select: { id: true } })
       : prefix === 'SCH'
         ? await tx.schemeEnrollment.findUnique({ where: { enrollmentNumber: candidate }, select: { id: true } })
-        : await tx.urdPurchase.findUnique({ where: { purchaseNumber: candidate }, select: { id: true } });
+        : prefix === 'CO'
+          ? await tx.customerOrder.findUnique({ where: { orderNumber: candidate }, select: { id: true } })
+        : prefix === 'PO'
+          ? await tx.supplierPurchase.findUnique({ where: { purchaseNumber: candidate }, select: { id: true } })
+          : prefix === 'PL'
+            ? await tx.pledgeLoan.findUnique({ where: { pledgeNumber: candidate }, select: { id: true } })
+          : await tx.urdPurchase.findUnique({ where: { purchaseNumber: candidate }, select: { id: true } });
     if (!existing) return candidate;
   }
 }

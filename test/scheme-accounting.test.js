@@ -1,6 +1,24 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { reverseSchemeInstallmentPayment } = require('../src/lib/accounting-reversal');
+const { reverseSchemeInstallmentPayment, reverseSupplierPurchasePayment } = require('../src/lib/accounting-reversal');
+
+test('deleting a supplier Cashbook payment restores the purchase due accurately', async () => {
+  const purchase = { id: 3, paid: 10000, paymentMethod: 'MIXED' };
+  let update;
+  const tx = {
+    $queryRaw: async () => [{ id: 3 }],
+    supplierPurchase: {
+      findUniqueOrThrow: async () => purchase,
+      update: async ({ data }) => { update = data; Object.assign(purchase, data); }
+    },
+    cashbookEntry: {
+      findMany: async () => [{ paymentMethod: 'UPI', amount: 4000 }]
+    }
+  };
+
+  await reverseSupplierPurchasePayment(tx, { id: 41, supplierPurchaseId: 3, amount: 6000 });
+  assert.deepEqual(update, { paid: 4000, paymentMethod: 'UPI' });
+});
 
 test('deleting a linked scheme Cashbook receipt restores that installment and enrollment totals', async () => {
   const enrollment = {

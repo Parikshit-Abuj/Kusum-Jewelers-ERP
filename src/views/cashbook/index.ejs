@@ -90,6 +90,8 @@
             <td>
               <% if (entry.customer) { %>
               <a href="/customers/<%= entry.customer.id %>" style="font-weight: 600;"><%= entry.customer.name %></a>
+              <% } else if (entry.supplierPurchase?.supplier) { %>
+              <span style="font-weight:600"><%= entry.supplierPurchase.supplier.name %></span><small>Supplier</small>
               <% } else { %>
               <span class="muted">—</span>
               <% } %>

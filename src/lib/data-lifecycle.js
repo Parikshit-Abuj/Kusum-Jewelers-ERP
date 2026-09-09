@@ -8,6 +8,8 @@ const RESOURCE_LIST = [
   { key: 'top-selling-items', label: 'Top selling items report', dateLabel: 'Sale date', archiveNote: 'This is a calculated report and cannot be archived.', archiveDisabled: true },
   { key: 'cancelled-sales', label: 'Cancelled invoices', dateLabel: 'Cancelled invoice date', archiveNote: 'Cancelled invoices are audit records and cannot be archived from this screen.', archiveDisabled: true },
   { key: 'urd', label: 'URD purchases', dateLabel: 'URD purchase date', archiveNote: 'Only URD purchases with no amount still payable to the customer can be removed.' },
+  { key: 'pledges', label: 'Pledge loans', dateLabel: 'Pledge date', archiveNote: 'Pledge loans are financial and collateral records. Manage them from Pledge Loans; export this register instead of archiving it here.', archiveDisabled: true },
+  { key: 'supplier-purchases', label: 'Supplier purchases', dateLabel: 'Supplier purchase date', archiveNote: 'Use the Purchase Register to manage supplier purchases. Export is available; purchases are not archived from this screen.', archiveDisabled: true },
   { key: 'cancelled-urd', label: 'Cancelled URD purchases', dateLabel: 'Cancelled URD purchase date', archiveNote: 'Cancelled URD purchases are audit records and cannot be archived from this screen.', archiveDisabled: true },
   { key: 'cashbook', label: 'Daily cashbook', dateLabel: 'Entry date', archiveNote: 'Cashbook entries in the chosen period are permanently removed. Any linked customer balance, invoice payment, URD payout or scheme installment is reversed safely.' },
   { key: 'schemes', label: 'Jewellery savings schemes', dateLabel: 'Scheme start date', archiveNote: 'Scheme records and their Cashbook receipts are retained as financial history. Export this register instead of archiving it here.', archiveDisabled: true },
@@ -301,8 +303,8 @@ function cashbookExportRows(entries, openingBalance = 0) {
       moneyOut: entry.type === 'OUT' ? amount : 0,
       runningBalance,
       reference: entry.reference || '',
-      customerPhone: entry.customer?.phone || '',
-      customerName: entry.customer?.name || '',
+      customerPhone: entry.customer?.phone || entry.supplierPurchase?.supplier?.phone || '',
+      customerName: entry.customer?.name || entry.supplierPurchase?.supplier?.name || '',
       syncLedger: entry.syncLedger ? 'Yes' : 'No',
       notes: str(entry.notes)
     };
@@ -486,6 +488,67 @@ async function getExportPayload(db, key, range, options = {}) {
       return exportEnvelope(resource, range, columns, rows, { sheets: [sheet] });
     }
 
+    // ────────────────────────────────────────────────────────────
+    //  PLEDGE LOANS — Customer collateral, never inventory
+    // ────────────────────────────────────────────────────────────
+    case 'pledges': {
+      const loans = await db.pledgeLoan.findMany({
+        where: { pledgeDate: dateTimeRange(range) },
+        orderBy: [{ pledgeDate: 'asc' }, { id: 'asc' }],
+        include: { customer: true },
+        take: MAX_SOURCE_ROWS + 1
+      });
+      assertExportRows(loans, 'Pledge loan register');
+      const rows = loans.map((loan, index) => ({
+        srNo: index + 1,
+        pledgeDate: exportDate(loan.pledgeDate),
+        pledgeNumber: loan.pledgeNumber,
+        customerName: loan.customer?.name || '',
+        itemDescription: loan.itemDescription,
+        metal: enumLabel(loan.metal),
+        purity: loan.purity || '',
+        grossWeight: num(loan.grossWeight),
+        netWeight: num(loan.netWeight),
+        valuationAmount: num(loan.valuationAmount),
+        principalAmount: num(loan.principalAmount),
+        principalRepaid: num(loan.principalRepaid),
+        principalDue: roundCurrency(Math.max(0, num(loan.principalAmount) - num(loan.principalRepaid))),
+        interestReceived: num(loan.interestReceived),
+        dueDate: loan.dueDate ? exportDate(loan.dueDate) : '',
+        status: enumLabel(loan.status)
+      }));
+      const columns = [
+        col.integer('srNo', 'Sr. No.', 9), col.date('pledgeDate', 'Date'), col.identifier('pledgeNumber', 'Doc-no', 22),
+        col.text('customerName', 'Customer', 28), col.text('itemDescription', 'Jewellery held', 26), col.text('metal', 'Metal', 12),
+        col.text('purity', 'Purity', 12), col.weight('grossWeight', 'Gross-wt'), col.weight('netWeight', 'Net-wt'),
+        col.currency('valuationAmount', 'Valuation'), col.currency('principalAmount', 'Money lent'), col.currency('principalRepaid', 'Principal repaid'),
+        col.currency('principalDue', 'Principal due'), col.currency('interestReceived', 'Interest received'), col.date('dueDate', 'Return due'), col.text('status', 'Status', 14)
+      ];
+      return exportEnvelope(resource, range, columns, rows, { sheets: [{
+        name: 'Pledge Loan Register', title: 'Gold / Silver Pledge Loan Register', subtitle: registerPeriod(range), layout: 'ca-register',
+        columns, rows, totalKeys: ['grossWeight', 'netWeight', 'valuationAmount', 'principalAmount', 'principalRepaid', 'principalDue', 'interestReceived']
+      }] });
+    }
+
+    case 'supplier-purchases': {
+      const purchases = await db.supplierPurchase.findMany({
+        where: { purchaseDate: dateTimeRange(range), cancelledAt: null },
+        orderBy: [{ purchaseDate: 'asc' }, { id: 'asc' }], include: { supplier: true, product: true }, take: MAX_SOURCE_ROWS + 1
+      });
+      assertExportRows(purchases, 'Supplier purchase register');
+      const rows = purchases.map((purchase) => ({
+        purchaseDate: exportDate(purchase.purchaseDate), purchaseNumber: purchase.purchaseNumber,
+        supplierName: purchase.supplier?.name || '', itemName: purchase.itemName, category: purchase.category,
+        metal: enumLabel(purchase.metal), purity: purchase.purity || '', barcode: purchase.barcode || purchase.product?.barcode || '',
+        quantity: Number(purchase.quantity || 1), grossWeight: num(purchase.grossWeight), netWeight: num(purchase.netWeight), ratePerGram: num(purchase.ratePerGram),
+        totalAmount: num(purchase.totalAmount), paid: num(purchase.paid), due: roundCurrency(Math.max(0, num(purchase.totalAmount) - num(purchase.paid))),
+        reference: purchase.reference || ''
+      }));
+      const columns = [col.date('purchaseDate', 'Date'), col.identifier('purchaseNumber', 'Doc-no', 22), col.text('supplierName', 'Supplier', 28), col.text('itemName', 'Item', 26), col.text('category', 'Category', 18), col.text('metal', 'Metal', 12), col.text('purity', 'Purity', 12), col.integer('quantity', 'Pieces'), col.identifier('barcode', 'Barcode', 16), col.weight('grossWeight', 'Gross-wt'), col.weight('netWeight', 'Net-wt'), col.currency('ratePerGram', 'Rate/g'), col.currency('totalAmount', 'Amount'), col.currency('paid', 'Paid'), col.currency('due', 'Due'), col.text('reference', 'Reference', 20)];
+      const sheet = { name: 'Supplier Purchases', title: 'Supplier Purchase Register', subtitle: registerPeriod(range), layout: 'ca-register', columns, rows, totalKeys: ['grossWeight', 'netWeight', 'totalAmount', 'paid', 'due'] };
+      return exportEnvelope(resource, range, columns, rows, { sheets: [sheet] });
+    }
+
     case 'cancelled-urd': {
       const purchases = await db.urdPurchase.findMany({ where: { cancelledAt: { not: null }, purchaseDate: dateTimeRange(range) }, orderBy: [{ cancelledAt: 'asc' }, { id: 'asc' }], include: { customer: true }, take: MAX_SOURCE_ROWS + 1 });
       assertExportRows(purchases, 'Cancelled URD purchase register');
@@ -502,7 +565,7 @@ async function getExportPayload(db, key, range, options = {}) {
         db.cashbookEntry.findMany({
           where: { entryDate: { gte: range.from, lte: range.to } },
           orderBy: [{ entryDate: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
-          include: { customer: true },
+          include: { customer: true, supplierPurchase: { include: { supplier: true } } },
           take: MAX_SOURCE_ROWS + 1
         }),
         db.cashbookEntry.groupBy({
@@ -1145,7 +1208,7 @@ async function archiveData(db, key, range) {
       return { deleted: result.count, skipped: 0, note: 'Current inventory quantity was not adjusted.' };
     }
     if (key === 'customers') {
-      const candidates = await takeArchiveWindow(tx, 'customer', { createdAt: archiveRange }, { id: true, _count: { select: { sales: true, ledger: true, urdPurchases: true, cashbookEntries: true, schemeEnrollments: true } } });
+      const candidates = await takeArchiveWindow(tx, 'customer', { createdAt: archiveRange }, { id: true, _count: { select: { sales: true, ledger: true, urdPurchases: true, cashbookEntries: true, schemeEnrollments: true, pledgeLoans: true } } });
       const ids = candidates.filter((c) => Object.values(c._count).every((n) => n === 0)).map((c) => c.id);
       const result = ids.length ? await tx.customer.deleteMany({ where: { id: { in: ids } } }) : { count: 0 };
       return { deleted: result.count, skipped: candidates.length - ids.length, note: 'Customers with business history were kept.' };
