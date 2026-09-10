@@ -32,7 +32,7 @@ function shouldUppercaseInput(input) {
   if (input.matches('input[type="password"], input[type="email"], input[type="number"], input[type="date"], input[type="file"], input[type="checkbox"], input[type="radio"], input[type="hidden"]')) {
     return false;
   }
-  if (input.matches('[data-no-uppercase], [data-no-uppercase] *, .preserve-case, .preserve-case *')) {
+  if (input.matches('[data-no-uppercase], [data-no-uppercase] *, [data-customer-search], .preserve-case, .preserve-case *')) {
     return false;
   }
   if (input.matches('[name="username"], [name="password"], [name="currentPassword"], [name="newPassword"], [name="confirmPassword"], [name="appUsername"], [name="appPassword"], [name="mysqlUser"], [name="mysqlPassword"], [name="databaseUser"], [name="databasePassword"], [name="mysqlHost"], [name="databaseName"], [name="printerHost"], [name="printerPort"], [name="printerName"]')) {
@@ -99,6 +99,9 @@ document.addEventListener('keydown', (event) => {
 
   const control = event.target;
   if (!isEnterNavigableControl(control)) return;
+  // Customer search has its own suggestion keyboard workflow. Let that
+  // handler consume Enter/arrow keys instead of advancing the form.
+  if (control.matches('[data-customer-search]')) return;
 
   const scope = control.closest('[data-enter-scope]') || control.form;
   if (!scope || scope.matches('[data-disable-enter-navigation]')) return;
@@ -133,6 +136,28 @@ function replaceWithTextElements(container, elements) {
     return element;
   }));
 }
+
+// If a page was restored while the billing module was still loading, keep the
+// review control responsive rather than silently ignoring the click. The full
+// billing module replaces this fallback with the populated review workflow.
+document.addEventListener('click', (event) => {
+  const trigger = event.target?.closest?.('[data-sale-review-open]');
+  if (!trigger || trigger.dataset.reviewBound === '1') return;
+  const modal = document.getElementById('saleReviewModal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+  modal.setAttribute('aria-hidden', 'false');
+  const content = modal.querySelector('[data-sale-review-content]');
+  if (content && !content.textContent.trim()) content.textContent = 'Review the invoice details before generating.';
+  modal.querySelectorAll('[data-sale-review-close]').forEach((close) => {
+    if (close.dataset.reviewFallbackBound === '1') return;
+    close.dataset.reviewFallbackBound = '1';
+    close.addEventListener('click', () => {
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+    });
+  });
+});
 
 /* ── Flash auto-dismiss ──────────────────────────────────────── */
 document.querySelectorAll('.flash').forEach((el) => {
@@ -397,7 +422,7 @@ document.querySelectorAll('.flash').forEach((el) => {
 })();
 
 /* ═══════════════════════════════════════════════════════════════
-   3. BILLING CUSTOMER — phone-first lookup and automatic creation
+   3. BILLING CUSTOMER — name/mobile lookup and automatic creation
    ═══════════════════════════════════════════════════════════════ */
 (function initBillingCustomerLookup() {
   const lookup = document.querySelector('[data-customer-lookup]');
@@ -415,9 +440,15 @@ document.querySelectorAll('.flash').forEach((el) => {
   const panInput = lookup.querySelector('[data-customer-pan]');
   const emailInput = lookup.querySelector('[data-customer-email]');
   const addressInput = lookup.querySelector('[data-customer-address]');
+  const customerSearch = lookup.querySelector('[data-customer-search]');
+  const customerSearchResults = lookup.querySelector('[data-customer-search-results]');
+  const newCustomerButton = lookup.querySelector('[data-new-customer-open]');
   let lookupTimer = null;
   let requestNumber = 0;
   let lastAlertedCustomerId = null;
+  let customerSearchTimer = null;
+  let customerSearchController = null;
+  let customerSearchHighlighted = -1;
 
   // PAN is an identifier, so it remains uppercase. Customer names and
   // addresses use the shared title-case input rule instead.
@@ -429,6 +460,69 @@ document.querySelectorAll('.flash').forEach((el) => {
   }
   enforceUppercase(panInput);
   enforceUppercase(existingPanInput);
+
+  function clearCustomerSearchResults() {
+    if (!customerSearchResults) return;
+    customerSearchResults.replaceChildren();
+    customerSearchResults.hidden = true;
+    customerSearchHighlighted = -1;
+  }
+
+  function selectSearchedCustomer(customer) {
+    if (!customer || !customer.id) return;
+    customerId.value = String(customer.id);
+    if (phoneInput) phoneInput.value = String(customer.phone || '').replace(/\D/g, '');
+    existing.hidden = false;
+    newFields.hidden = true;
+    [nameInput, panInput, emailInput, addressInput].filter(Boolean).forEach((input) => { input.disabled = true; });
+    if (nameInput) nameInput.required = false;
+    if (existingName) existingName.textContent = String(customer.name || '').toUpperCase();
+    if (existingDetails) {
+      existingDetails.textContent = [customer.phone, customer.email, customer.address ? String(customer.address).toUpperCase() : '']
+        .filter(Boolean).join(' · ') || 'Customer selected';
+    }
+    if (existingPanInput) existingPanInput.value = String(customer.panNumber || '').toUpperCase();
+    if (ledgerLink) {
+      ledgerLink.href = `/customers/${customer.id}`;
+      ledgerLink.hidden = false;
+    }
+    status.textContent = 'Existing customer selected. Their profile and ledger will be used for this bill.';
+    status.className = 'customer-lookup-status is-found';
+    if (customerSearch) customerSearch.value = String(customer.name || customer.phone || '');
+    clearCustomerSearchResults();
+  }
+
+  function renderCustomerSearchResults(customers) {
+    if (!customerSearchResults) return;
+    customerSearchResults.replaceChildren();
+    const list = Array.isArray(customers) ? customers : [];
+    if (!list.length) {
+      const empty = document.createElement('div');
+      empty.className = 'customer-search-empty';
+      empty.textContent = 'No matching customers';
+      customerSearchResults.appendChild(empty);
+      customerSearchResults.hidden = false;
+      return;
+    }
+    const fragment = document.createDocumentFragment();
+    customerSearchHighlighted = -1;
+    list.forEach((customer) => {
+      const option = document.createElement('button');
+      option.type = 'button';
+      option.className = 'customer-search-option';
+      option.setAttribute('role', 'option');
+      option.dataset.customerId = String(customer.id || '');
+      const name = document.createElement('strong');
+      name.textContent = String(customer.name || 'Unnamed customer');
+      const phone = document.createElement('small');
+      phone.textContent = customer.phone ? String(customer.phone) : 'Mobile not saved';
+      option.append(name, phone);
+      option.addEventListener('click', () => selectSearchedCustomer(customer));
+      fragment.appendChild(option);
+    });
+    customerSearchResults.appendChild(fragment);
+    customerSearchResults.hidden = false;
+  }
 
   function normalizedPhone() {
     let digits = (phoneInput.value || '').replace(/\D/g, '');
@@ -447,6 +541,7 @@ document.querySelectorAll('.flash').forEach((el) => {
       ? `${phone} is new. Enter the name to create this customer automatically when the bill is saved.`
       : 'Mobile number is optional. Enter the customer name to create their ledger when the bill is saved.';
     status.className = 'customer-lookup-status is-new';
+    clearCustomerSearchResults();
   }
 
   function showExisting(customer) {
@@ -473,6 +568,7 @@ document.querySelectorAll('.flash').forEach((el) => {
       status.textContent = 'Existing customer found. Their profile and ledger will be used for this bill.';
       status.className = 'customer-lookup-status is-found';
     }
+    clearCustomerSearchResults();
   }
 
   function showBalanceAlert(customer, amount) {
@@ -517,6 +613,7 @@ document.querySelectorAll('.flash').forEach((el) => {
     nameInput.required = false;
     status.textContent = message;
     status.className = 'customer-lookup-status';
+    clearCustomerSearchResults();
   }
 
   async function lookupCustomer() {
@@ -546,6 +643,8 @@ document.querySelectorAll('.flash').forEach((el) => {
 
   phoneInput.addEventListener('input', () => {
     clearTimeout(lookupTimer);
+    if (customerSearch) customerSearch.value = '';
+    clearCustomerSearchResults();
     const digits = normalizedPhone();
     if (digits.length >= 10) lookupTimer = setTimeout(lookupCustomer, 350);
     else if (!digits) showNewCustomer('');
@@ -564,6 +663,53 @@ document.querySelectorAll('.flash').forEach((el) => {
     } else if (!existing.hidden && existingPanInput && !existingPanInput.disabled) {
       existingPanInput.focus();
     }
+  });
+
+  if (customerSearch) {
+    customerSearch.addEventListener('input', () => {
+      clearTimeout(customerSearchTimer);
+      if (customerSearchController) customerSearchController.abort();
+      const query = customerSearch.value.trim();
+      if (query.length < 2) {
+        clearCustomerSearchResults();
+        return;
+      }
+      customerSearchTimer = setTimeout(async () => {
+        customerSearchController = new AbortController();
+        try {
+          const response = await fetch(`/api/customers/search?q=${encodeURIComponent(query)}`, { signal: customerSearchController.signal });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || 'Could not search customers.');
+          if (customerSearch.value.trim() === query) renderCustomerSearchResults(data.customers || []);
+        } catch (error) {
+          if (error.name !== 'AbortError') clearCustomerSearchResults();
+        }
+      }, 250);
+    });
+    customerSearch.addEventListener('keydown', (event) => {
+      const options = customerSearchResults ? Array.from(customerSearchResults.querySelectorAll('.customer-search-option')) : [];
+      if (event.key === 'ArrowDown' && options.length) {
+        event.preventDefault();
+        customerSearchHighlighted = Math.min(customerSearchHighlighted + 1, options.length - 1);
+        options.forEach((option, index) => option.classList.toggle('is-highlighted', index === customerSearchHighlighted));
+        options[customerSearchHighlighted]?.scrollIntoView({ block: 'nearest' });
+      } else if (event.key === 'ArrowUp' && options.length) {
+        event.preventDefault();
+        customerSearchHighlighted = Math.max(customerSearchHighlighted - 1, 0);
+        options.forEach((option, index) => option.classList.toggle('is-highlighted', index === customerSearchHighlighted));
+        options[customerSearchHighlighted]?.scrollIntoView({ block: 'nearest' });
+      } else if (event.key === 'Enter' && customerSearchHighlighted >= 0 && options[customerSearchHighlighted]) {
+        event.preventDefault();
+        options[customerSearchHighlighted].click();
+      } else if (event.key === 'Escape') clearCustomerSearchResults();
+    });
+    document.addEventListener('click', (event) => {
+      if (!lookup.contains(event.target)) clearCustomerSearchResults();
+    });
+  }
+  newCustomerButton?.addEventListener('click', () => {
+    showNewCustomer(normalizedPhone());
+    nameInput?.focus();
   });
   showNewCustomer('');
 })();
@@ -613,11 +759,17 @@ document.querySelectorAll('.flash').forEach((el) => {
   const rowsContainer = form.querySelector('[data-rows]');
   const template = form.querySelector('[data-line-template]');
   const addRowBtn = form.querySelector('[data-add-row]');
+  const saveDraftBtn = form.querySelector('[data-save-sale-draft]');
   const itemCountEl = form.querySelector('[data-item-count]');
   const lineEditorModal = form.querySelector('#saleLineEditorModal');
   const lineEditorHost = form.querySelector('[data-line-editor-host]');
   const lineEditorTitle = form.querySelector('#saleLineEditorTitle');
   const lineEditorDone = form.querySelector('[data-line-editor-done]');
+  const reviewModal = form.querySelector('#saleReviewModal');
+  const reviewContent = form.querySelector('[data-sale-review-content]');
+  const reviewOpenBtn = form.querySelector('[data-sale-review-open]');
+  const reviewCloseBtns = form.querySelectorAll('[data-sale-review-close]');
+  const reviewConfirmBtn = form.querySelector('[data-sale-review-confirm]');
   const subtotalEl = form.querySelector('[data-subtotal]');
   const discountInput = form.querySelector('[data-discount]');
   const gstEl = form.querySelector('[data-gst]');
@@ -655,6 +807,7 @@ document.querySelectorAll('.flash').forEach((el) => {
   let draftSaveTimer = null;
   let discardingDraft = false;
   let preservingInitialEditUrd = isEditingSale;
+  let submitInProgress = false;
 
   function editorFor(row) {
     if (!row) return null;
@@ -721,6 +874,9 @@ document.querySelectorAll('.flash').forEach((el) => {
       delete row.dataset.newLine;
       updateLineSummary(row);
       updateFormTotals();
+      // Keep the scanner workflow continuous: after an item is accepted the
+      // next scan can start immediately without reaching for the mouse.
+      setTimeout(() => rowsContainer.querySelector('[data-line-item]:last-child [data-barcode]')?.focus(), 0);
     }
     scheduleDraftSave();
   }
@@ -1058,6 +1214,7 @@ document.querySelectorAll('.flash').forEach((el) => {
     if (!itemCountEl) return;
     const count = rowsContainer.querySelectorAll('[data-line-item]').length;
     itemCountEl.textContent = `${count} item${count === 1 ? '' : 's'}`;
+    rowsContainer.classList.toggle('is-long', count > 5);
   }
 
   /* ── Live totals ─────────────────────────────────────────── */
@@ -1271,6 +1428,139 @@ document.querySelectorAll('.flash').forEach((el) => {
     draftSaveTimer = setTimeout(saveSaleDraft, 180);
   }
 
+  function addReviewRow(section, label, value) {
+    const row = document.createElement('div');
+    row.className = 'sale-review-row';
+    const name = document.createElement('span');
+    name.textContent = label;
+    const amount = document.createElement('strong');
+    amount.textContent = value || '—';
+    row.append(name, amount);
+    section.appendChild(row);
+  }
+
+  function buildInvoiceReview() {
+    if (!reviewContent) return;
+    const fragment = document.createDocumentFragment();
+    const section = (title) => {
+      const block = document.createElement('section');
+      block.className = 'sale-review-section';
+      const heading = document.createElement('h3');
+      heading.textContent = title;
+      block.appendChild(heading);
+      fragment.appendChild(block);
+      return block;
+    };
+
+    const customerSection = section('Customer');
+    const selectedCustomer = existing && !existing.hidden ? existingName?.textContent.trim() : '';
+    const enteredCustomer = form.querySelector('[data-edit-customer-name], [data-customer-name]:not([disabled])')?.value?.trim();
+    addReviewRow(customerSection, 'Name', selectedCustomer || enteredCustomer || 'Walk-in customer');
+    addReviewRow(customerSection, 'Mobile', form.querySelector('[data-customer-phone]')?.value?.trim() || 'Not provided');
+
+    const itemsSection = section('Items');
+    const saleRows = Array.from(rowsContainer.querySelectorAll('[data-line-item]'));
+    if (!saleRows.length) {
+      addReviewRow(itemsSection, 'Items', 'No items added');
+    } else {
+      saleRows.forEach((row, index) => {
+        const item = document.createElement('div');
+        item.className = 'sale-review-item';
+        const number = document.createElement('span');
+        number.textContent = `${index + 1}.`;
+        const detail = document.createElement('div');
+        const itemName = document.createElement('strong');
+        itemName.textContent = row.querySelector('[data-line-summary-name]')?.textContent?.trim() || 'Jewellery item';
+        const itemMeta = document.createElement('small');
+        itemMeta.textContent = [
+          lineField(row, '[data-barcode]')?.value?.trim(),
+          lineField(row, '[data-purity]')?.value?.trim(),
+          lineField(row, '[data-weight]')?.value ? `${lineField(row, '[data-weight]').value} g` : ''
+        ].filter(Boolean).join(' · ') || 'Details pending';
+        detail.append(itemName, itemMeta);
+        const itemAmount = document.createElement('strong');
+        itemAmount.textContent = row.querySelector('[data-line-summary-amount]')?.textContent?.trim() || '₹0.00';
+        item.append(number, detail, itemAmount);
+        itemsSection.appendChild(item);
+      });
+    }
+
+    if (urdEnabled?.checked) {
+      const urdSection = section('Old gold / silver adjustment');
+      addReviewRow(urdSection, 'Metal', urdMetal?.value || '—');
+      addReviewRow(urdSection, 'Purity', urdPurityManual?.value?.trim() || 'Manual purity');
+      addReviewRow(urdSection, 'Net weight', urdNetWeight?.value ? `${urdNetWeight.value} g` : '—');
+      addReviewRow(urdSection, isUrdRefundable ? 'Refund amount' : 'Adjustment', fmt(n(urdAmount?.value)));
+    }
+
+    const paymentSection = section('Payment');
+    addReviewRow(paymentSection, 'Subtotal', subtotalEl?.textContent?.trim());
+    addReviewRow(paymentSection, 'GST', gstEl?.textContent?.trim());
+    addReviewRow(paymentSection, isUrdRefundable ? 'Net refundable' : 'Net payable', netPayableEl?.textContent?.trim());
+    if (paymentMethodInput?.value === 'MIXED') {
+      [[cashPaidInput, 'Cash'], [upiPaidInput, 'UPI'], [cardPaidInput, 'Card'], [bankPaidInput, 'Bank transfer']]
+        .forEach(([input, label]) => { if (n(input?.value) > 0) addReviewRow(paymentSection, label, fmt(n(input.value))); });
+    } else if (!isUrdRefundable) {
+      addReviewRow(paymentSection, paymentMethodInput?.selectedOptions?.[0]?.textContent || 'Payment', fmt(n(paidInput?.value)));
+    }
+    if (isUrdRefundable) {
+      addReviewRow(paymentSection, 'Refund method', urdRefundMethodInput?.selectedOptions?.[0]?.textContent || '—');
+    } else {
+      addReviewRow(paymentSection, 'Balance due', balanceEl?.textContent?.trim());
+    }
+    addReviewRow(paymentSection, 'Final total', totalEl?.textContent?.trim());
+    reviewContent.replaceChildren(fragment);
+  }
+
+  function closeInvoiceReview() {
+    if (!reviewModal) return;
+    reviewModal.style.display = 'none';
+    reviewModal.setAttribute('aria-hidden', 'true');
+    reviewOpenBtn?.focus();
+  }
+
+  if (reviewOpenBtn) {
+    reviewOpenBtn.dataset.reviewBound = '1';
+    reviewOpenBtn.addEventListener('click', () => {
+      buildInvoiceReview();
+      if (!reviewModal) return;
+      reviewModal.style.display = 'flex';
+      reviewModal.setAttribute('aria-hidden', 'false');
+      setTimeout(() => reviewConfirmBtn?.focus(), 0);
+    });
+  }
+  reviewCloseBtns.forEach((button) => button.addEventListener('click', closeInvoiceReview));
+  reviewModal?.addEventListener('click', (event) => {
+    if (event.target === reviewModal) closeInvoiceReview();
+  });
+  reviewConfirmBtn?.addEventListener('click', () => {
+    closeInvoiceReview();
+    form.requestSubmit();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (!event.ctrlKey || event.key !== 'Enter' || !form.contains(document.activeElement)) return;
+    event.preventDefault();
+    buildInvoiceReview();
+    if (!reviewModal) return;
+    reviewModal.style.display = 'flex';
+    reviewModal.setAttribute('aria-hidden', 'false');
+    setTimeout(() => reviewConfirmBtn?.focus(), 0);
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && reviewModal?.style.display === 'flex') closeInvoiceReview();
+  });
+
+  saveDraftBtn?.addEventListener('click', () => {
+    saveSaleDraft();
+    const original = saveDraftBtn.textContent;
+    saveDraftBtn.textContent = 'Draft saved';
+    saveDraftBtn.disabled = true;
+    setTimeout(() => {
+      saveDraftBtn.textContent = original;
+      saveDraftBtn.disabled = false;
+    }, 1200);
+  });
+
   async function restoreSaleDraft() {
     if (isEditingSale) return;
     let draft;
@@ -1327,6 +1617,10 @@ document.querySelectorAll('.flash').forEach((el) => {
   }
 
   form.addEventListener('submit', (event) => {
+    if (submitInProgress) {
+      event.preventDefault();
+      return;
+    }
     const rows = Array.from(rowsContainer.querySelectorAll('[data-line-item]'));
     if (!rows.length) {
       event.preventDefault();
@@ -1386,6 +1680,12 @@ document.querySelectorAll('.flash').forEach((el) => {
       }
       return;
     }
+    submitInProgress = true;
+    form.querySelectorAll('button[type="submit"], [data-sale-review-open], [data-sale-review-confirm], [data-save-sale-draft]').forEach((button) => {
+      button.disabled = true;
+    });
+    const submitButton = form.querySelector('button[type="submit"]');
+    if (submitButton) submitButton.textContent = isEditingSale ? 'Saving invoice…' : 'Generating invoice…';
   });
 
   async function restoreExistingSale() {

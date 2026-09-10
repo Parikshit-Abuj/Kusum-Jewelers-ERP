@@ -216,6 +216,78 @@
     margin-bottom: 10px;
   }
 
+  .customer-search-control {
+    position: relative;
+    display: grid;
+    gap: 4px;
+    margin-bottom: 8px;
+  }
+
+  .customer-search-control label {
+    color: #63584c;
+    font-size: 10.5px;
+    font-weight: 750;
+    letter-spacing: .03em;
+    text-transform: uppercase;
+  }
+
+  .customer-search-control input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 11px;
+    border: 1.5px solid #ded5c5;
+    border-radius: 8px;
+    background: #fff;
+    color: #1a1612;
+    font-size: 13px;
+    font-weight: 550;
+    font-family: inherit;
+  }
+
+  .customer-search-control input:focus {
+    outline: none;
+    border-color: #c9a044;
+    box-shadow: 0 0 0 2.5px rgba(201, 160, 68, .15);
+  }
+
+  .customer-search-results {
+    position: absolute;
+    z-index: 30;
+    top: calc(100% + 23px);
+    left: 0;
+    right: 0;
+    max-height: 220px;
+    overflow-y: auto;
+    border: 1px solid #dfd4c3;
+    border-radius: 9px;
+    background: #fff;
+    box-shadow: 0 12px 28px rgba(46, 33, 15, .16);
+  }
+
+  .customer-search-option {
+    display: flex;
+    width: 100%;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    padding: 9px 11px;
+    border: 0;
+    border-bottom: 1px solid #f0ebe4;
+    background: #fff;
+    color: #2b2319;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .customer-search-option:last-child { border-bottom: 0; }
+  .customer-search-option:hover,
+  .customer-search-option:focus,
+  .customer-search-option.is-highlighted { background: #fff8eb; outline: none; }
+  .customer-search-option strong { font-size: 12.5px; }
+  .customer-search-option small { color: #837665; font-size: 11px; }
+  .customer-search-empty { padding: 11px; color: #837665; font-size: 11.5px; }
+  .customer-new-action { margin: 0 0 8px; justify-self: start; }
+
   /* ── Line Items Scoped Overrides ── */
   .barcode-sale .barcode-lines {
     padding: 0 !important;
@@ -223,6 +295,13 @@
     flex-direction: column !important;
     gap: 12px !important;
     margin-bottom: 14px !important;
+  }
+
+  .barcode-sale .barcode-lines.is-long {
+    max-height: 430px;
+    overflow-y: auto;
+    padding-right: 5px !important;
+    scrollbar-color: #c9a044 #f4eee5;
   }
 
   .barcode-sale .barcode-line {
@@ -632,6 +711,35 @@
     box-shadow: 0 6px 20px rgba(163, 117, 24, 0.35);
   }
 
+  .sale-submit-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
+    gap: 8px;
+    align-items: stretch;
+  }
+
+  .sale-submit-actions .button {
+    min-height: 44px;
+    justify-content: center;
+  }
+
+  .sale-review-modal { z-index: 10020; }
+  .sale-review-modal-card { max-width: 650px !important; }
+  .sale-review-body { display: grid; gap: 8px; padding: 18px 24px !important; max-height: min(62vh, 520px); overflow-y: auto; }
+  .sale-review-section { border: 1px solid #e9e0d3; border-radius: 9px; background: #fffdf9; padding: 10px 12px; }
+  .sale-review-section h3 { margin: 0 0 7px; color: #7a551d; font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase; }
+  .sale-review-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 4px 0; color: #6f6559; font-size: 12px; }
+  .sale-review-row + .sale-review-row { border-top: 1px solid #f0ebe4; }
+  .sale-review-row strong { color: #2b2319; font-size: 12.5px; text-align: right; }
+  .sale-review-item { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: 8px; padding: 7px 0; border-top: 1px solid #f0ebe4; font-size: 12px; }
+  .sale-review-item:first-of-type { border-top: 0; }
+  .sale-review-item small { display: block; color: #837665; font-size: 10.5px; margin-top: 2px; }
+  .sale-review-item > strong { color: #2b2319; text-align: right; }
+  @media (max-width: 520px) {
+    .sale-submit-actions { grid-template-columns: 1fr; }
+    .sale-review-body { padding: 16px !important; }
+  }
+
   /* ── Focused cashier workflow ─────────────────────────────── */
   .billing-header-strip { padding: 10px 16px; }
   .billing-title-text p { margin-top: 1px; }
@@ -757,6 +865,9 @@
 
     <div class="billing-rate-pills">
       <button class="button ghost small" type="button" data-billing-focus-toggle aria-pressed="false" style="border-radius:20px; font-size:11px; padding:3px 8px;">Focus mode</button>
+      <% if (!editingSale) { %>
+      <button class="button ghost small" type="button" data-save-sale-draft style="border-radius:20px; font-size:11px; padding:3px 8px;">Save draft</button>
+      <% } %>
       <% if (!rateInfo.rate) { %>
         <span class="rate-tag" style="border-color:#f5c2c7; background:#fff5f5; color:#842029;">
           Rates not set · <a href="/rates" style="color:#842029; font-weight:750;">Set Daily Rates →</a>
@@ -831,6 +942,12 @@
         <!-- Customer Lookup Component -->
         <section class="customer-lookup" data-customer-lookup>
           <input type="hidden" name="customerId" data-customer-id>
+          <div class="customer-search-control">
+            <label for="billingCustomerSearch">Find existing customer</label>
+            <input id="billingCustomerSearch" type="search" autocomplete="off" spellcheck="false" placeholder="Search by name or mobile" data-customer-search>
+            <div class="customer-search-results" data-customer-search-results role="listbox" hidden></div>
+          </div>
+          <button class="button ghost small customer-new-action" type="button" data-new-customer-open>+ New customer</button>
           <div class="cust-status-badge" data-customer-status>
             Enter a customer name. Mobile number is optional.
           </div>
@@ -1082,9 +1199,12 @@
         </div>
       </div>
 
-      <button class="btn-submit-bill" type="submit">
+      <div class="sale-submit-actions">
+        <button class="button ghost" type="button" data-sale-review-open>Review invoice</button>
+        <button class="btn-submit-bill" type="submit">
         <%= editingSale ? 'Save Invoice Changes →' : 'Generate & Print Bill →' %>
-      </button>
+        </button>
+      </div>
     </aside>
 
     <div class="modal-overlay sale-line-editor-modal" id="saleLineEditorModal" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="saleLineEditorTitle" aria-hidden="true">
@@ -1097,6 +1217,20 @@
         <footer class="sale-line-editor-footer">
           <button class="button ghost" type="button" data-line-editor-cancel>Cancel</button>
           <button class="button" type="button" data-line-editor-done>Done</button>
+        </footer>
+      </section>
+    </div>
+
+    <div class="modal-overlay sale-review-modal" id="saleReviewModal" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="saleReviewTitle" aria-hidden="true">
+      <section class="modal-card sale-review-modal-card" role="document">
+        <header class="modal-header">
+          <div><p class="eyebrow">Final check</p><h2 id="saleReviewTitle">Review invoice</h2></div>
+          <button class="modal-close-btn" type="button" data-sale-review-close aria-label="Close invoice review">&times;</button>
+        </header>
+        <div class="modal-body sale-review-body" data-sale-review-content></div>
+        <footer class="sale-line-editor-footer">
+          <button class="button ghost" type="button" data-sale-review-close>Back to edit</button>
+          <button class="button" type="button" data-sale-review-confirm>Confirm &amp; Generate Invoice</button>
         </footer>
       </section>
     </div>

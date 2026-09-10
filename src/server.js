@@ -1802,7 +1802,7 @@ app.get('/api/customers/search', async (req, res, next) => {
         { phone: { contains: normalizePhone(q) || q } },
         { email: { contains: q } }
       ] },
-      select: { id: true, name: true, phone: true },
+      select: { id: true, name: true, phone: true, email: true, address: true, panNumber: true },
       orderBy: [{ name: 'asc' }, { id: 'asc' }],
       take: 20
     });
@@ -3326,11 +3326,23 @@ app.get('/purchases', async (req, res, next) => {
   try {
     const q = supplierText(req.query.q);
     const state = String(req.query.state || 'ACTIVE').toUpperCase() === 'CANCELLED' ? 'CANCELLED' : 'ACTIVE';
+    const metal = ['GOLD', 'SILVER'].includes(String(req.query.metal || '').toUpperCase()) ? String(req.query.metal).toUpperCase() : 'ALL';
+    const from = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from || '')) ? String(req.query.from) : '';
+    const to = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to || '')) ? String(req.query.to) : '';
+    const minDueValue = Number(req.query.minDue);
+    const maxDueValue = Number(req.query.maxDue);
+    const minDue = Number.isFinite(minDueValue) && minDueValue >= 0 ? roundedMoney(minDueValue) : null;
+    const maxDue = Number.isFinite(maxDueValue) && maxDueValue >= 0 ? roundedMoney(maxDueValue) : null;
     let paymentStatus = ['PENDING', 'PAID'].includes(String(req.query.paymentStatus || '').toUpperCase())
       ? String(req.query.paymentStatus).toUpperCase()
       : 'ALL';
     if (state !== 'ACTIVE') paymentStatus = 'ALL';
     const where = state === 'CANCELLED' ? { cancelledAt: { not: null } } : { cancelledAt: null };
+    if (metal !== 'ALL') where.metal = metal;
+    if (from || to) {
+      const range = localDateTimeRange(from || to, to || from);
+      where.purchaseDate = { ...(from ? { gte: range.gte } : {}), ...(to ? { lte: range.lte } : {}) };
+    }
     // Use MySQL field references rather than filtering after pagination. This
     // keeps the pending-payment register correct and fast with years of POs.
     if (state === 'ACTIVE' && paymentStatus === 'PENDING') {
@@ -3345,20 +3357,28 @@ app.get('/purchases', async (req, res, next) => {
       { supplier: { name: { contains: q } } }, { supplier: { phone: { contains: q } } }, ...metalMatch
       ];
     }
+    if (minDue !== null || maxDue !== null) {
+      const lower = minDue === null ? 0 : minDue;
+      const upper = maxDue === null ? 999999999999 : maxDue;
+      const cancelledPredicate = state === 'CANCELLED' ? Prisma.sql`cancelledAt IS NOT NULL` : Prisma.sql`cancelledAt IS NULL`;
+      const dueRows = await prisma.$queryRaw`SELECT id FROM \`SupplierPurchase\` WHERE ${cancelledPredicate} AND (totalAmount - paid) >= ${lower} AND (totalAmount - paid) <= ${upper}`;
+      const dueIds = dueRows.map((row) => Number(row.id)).filter((value) => Number.isInteger(value));
+      where.id = { in: dueIds };
+    }
     const totalItems = await prisma.supplierPurchase.count({ where });
     const pagination = paginationFor(req, totalItems, req.query.page, 100);
     const purchases = await prisma.supplierPurchase.findMany({
       where, include: { supplier: true, product: true, cashbookEntries: { orderBy: [{ entryDate: 'asc' }, { id: 'asc' }] } }, orderBy: [{ purchaseDate: 'desc' }, { id: 'desc' }],
       skip: (pagination.page - 1) * pagination.pageSize, take: pagination.pageSize
     });
-    res.render('purchases/index', { title: 'Purchase register', purchases, q, state, paymentStatus, pagination });
+    res.render('purchases/index', { title: 'Purchase register', purchases, q, state, paymentStatus, metal, from, to, minDue, maxDue, pagination });
   } catch (error) { next(error); }
 });
 
 app.get('/purchases/new', async (req, res, next) => {
   try {
     const rateInfo = await getRateForDate(prisma, dateInput());
-    res.render('purchases/form', { title: 'New supplier purchase', rateInfo, purchaseNumber: '' });
+    res.render('purchases/form', { title: 'New supplier purchase', rateInfo, purchaseNumber: '', purchase: null, isEdit: false });
   } catch (error) { next(error); }
 });
 
@@ -3400,8 +3420,75 @@ app.post('/purchases', async (req, res, next) => {
       } });
       return record;
     });
-    redirectWith(res, '/purchases', 'message', `Purchase ${purchase.purchaseNumber} saved. Add ${quantity} individual pieces with Batch Add Pieces to create their barcodes.`);
+    const nextPath = String(req.body.action || '') === 'save-add' ? '/purchases/new' : '/purchases';
+    redirectWith(res, nextPath, 'message', `Purchase ${purchase.purchaseNumber} saved. Add ${quantity} individual pieces with Batch Add Pieces to create their barcodes.`);
   } catch (error) { redirectWith(res, '/purchases/new', 'error', error.message || 'Could not save supplier purchase.'); }
+});
+
+app.get('/purchases/:id/edit', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) throw new Error('Purchase not found.');
+    const purchase = await prisma.supplierPurchase.findFirstOrThrow({
+      where: { id, cancelledAt: null }, include: { supplier: true, product: true }
+    });
+    const rateInfo = await getRateForDate(prisma, dateInput(purchase.purchaseDate));
+    res.render('purchases/form', { title: `Edit ${purchase.purchaseNumber}`, rateInfo, purchaseNumber: purchase.purchaseNumber, purchase, isEdit: true });
+  } catch (error) { next(error); }
+});
+
+app.post('/purchases/:id/edit', async (req, res) => {
+  const id = Number(req.params.id);
+  try {
+    if (!Number.isInteger(id) || id <= 0) throw new Error('Purchase not found.');
+    const metal = ['GOLD', 'SILVER'].includes(String(req.body.metal || '').toUpperCase()) ? String(req.body.metal).toUpperCase() : null;
+    const netWeight = number(req.body.netWeight);
+    const grossWeight = number(req.body.grossWeight);
+    const stoneWeight = number(req.body.stoneWeight);
+    const quantity = Math.floor(number(req.body.quantity));
+    const ratePerGram = roundedMoney(number(req.body.ratePerGram));
+    const totalAmount = roundedMoney(number(req.body.totalAmount));
+    const itemName = titleCase(req.body.itemName);
+    const category = titleCase(req.body.category);
+    if (!metal) throw new Error('Choose Gold or Silver.');
+    if (!itemName || !category) throw new Error('Enter item name and category.');
+    if (!Number.isInteger(quantity) || quantity <= 0) throw new Error('Enter the number of pieces received.');
+    if (netWeight <= 0) throw new Error('Net weight must be greater than zero.');
+    if (ratePerGram <= 0 || totalAmount <= 0) throw new Error('Enter a valid rate and purchase amount.');
+    const purchaseDate = dateTimeFromInput(req.body.purchaseDate);
+    const updated = await prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw`SELECT id FROM \`SupplierPurchase\` WHERE id = ${id} FOR UPDATE`;
+      if (!locked.length) throw new Error('Purchase not found.');
+      const current = await tx.supplierPurchase.findFirstOrThrow({
+        where: { id, cancelledAt: null }, include: { product: true, cashbookEntries: { select: { amount: true } } }
+      });
+      const paidFromCashbook = roundedMoney(current.cashbookEntries.reduce((sum, entry) => sum + Number(entry.amount || 0), 0));
+      const recordedPaid = roundedMoney(Math.max(Number(current.paid || 0), paidFromCashbook));
+      if (totalAmount < recordedPaid) throw new Error(`Purchase amount cannot be less than the recorded payments of ${money(recordedPaid)}.`);
+      // A legacy purchase may point directly at one inventory row. Do not let
+      // editing its lot metadata silently disagree with that stock record.
+      if (current.product) {
+        const sameLot = current.metal === metal && current.itemName === itemName && current.category === category
+          && String(current.purity || '') === String(supplierText(req.body.purity).toUpperCase() || '')
+          && Number(current.quantity) === quantity
+          && Number(current.grossWeight) === (grossWeight || netWeight)
+          && Number(current.stoneWeight) === stoneWeight
+          && Number(current.netWeight) === netWeight;
+        if (!sameLot) throw new Error('This purchase is linked to inventory. Its item, metal, purity, pieces and weights cannot be changed after stock was linked. Edit only the supplier, date, amount or reference.');
+      }
+      const supplier = await resolveSupplier(tx, req.body);
+      const record = await tx.supplierPurchase.update({ where: { id }, data: {
+        supplierId: supplier.id, purchaseDate, metal, purity: supplierText(req.body.purity).toUpperCase() || null,
+        itemName, category, quantity, grossWeight: grossWeight || netWeight, stoneWeight, netWeight,
+        ratePerGram, totalAmount, paid: recordedPaid,
+        reference: supplierText(req.body.reference).toUpperCase() || null,
+        notes: supplierText(req.body.notes).toUpperCase() || null
+      } });
+      await upsertItemName(tx, itemName, category, { updateCategory: false });
+      return record;
+    });
+    redirectWith(res, '/purchases', 'message', `${updated.purchaseNumber} updated. Supplier balance and linked payments remain synchronized.`);
+  } catch (error) { redirectWith(res, `/purchases/${id}/edit`, 'error', error.message || 'Could not update supplier purchase.'); }
 });
 
 app.post('/purchases/:id/payments', async (req, res) => {
@@ -3415,7 +3502,7 @@ app.post('/purchases/:id/payments', async (req, res) => {
       const due = roundedMoney(Number(purchase.totalAmount) - Number(purchase.paid));
       if (amount > due) throw new Error(`Payment is greater than the outstanding amount of ${money(due)}.`);
       const updated = await tx.supplierPurchase.update({ where: { id }, data: { paid: { increment: amount }, paymentMethod: Number(purchase.paid) <= 0 || purchase.paymentMethod === paymentMethod ? paymentMethod : 'MIXED' } });
-      await tx.cashbookEntry.create({ data: { entryDate: req.body.entryDate || dateInput(), type: 'OUT', paymentMethod, amount, description: `Supplier payment — ${purchase.purchaseNumber}`, reference: purchase.purchaseNumber, supplierPurchaseId: purchase.id, syncLedger: false, notes: req.body.notes || null } });
+      await tx.cashbookEntry.create({ data: { entryDate: req.body.entryDate || dateInput(), type: 'OUT', paymentMethod, amount, description: `Supplier payment — ${purchase.purchaseNumber}`, reference: supplierText(req.body.reference) || purchase.purchaseNumber, supplierPurchaseId: purchase.id, syncLedger: false, notes: supplierText(req.body.notes) || null } });
       return updated;
     });
     redirectWith(res, '/purchases', 'message', `Supplier payment of ${money(amount)} recorded.`);
@@ -3441,6 +3528,7 @@ app.post('/purchases/:id/payments/:entryId', async (req, res) => {
       if (nextPaid < 0 || nextPaid > Number(purchase.totalAmount)) throw new Error(`Payment total must stay between ₹0.00 and ${money(purchase.totalAmount)}.`);
       await tx.cashbookEntry.update({ where: { id: entry.id }, data: {
         entryDate: req.body.entryDate || entry.entryDate, amount, paymentMethod,
+        reference: supplierText(req.body.reference) || purchase.purchaseNumber,
         notes: supplierText(req.body.notes) || null
       } });
       const payments = await tx.cashbookEntry.findMany({ where: { supplierPurchaseId: purchaseId }, select: { amount: true, paymentMethod: true } });
@@ -3454,9 +3542,25 @@ app.post('/purchases/:id/payments/:entryId', async (req, res) => {
   } catch (error) { redirectWith(res, '/purchases', 'error', error.message || 'Could not update supplier payment.'); }
 });
 
+app.post('/purchases/:id/payments/:entryId/delete', async (req, res) => {
+  try {
+    const purchaseId = Number(req.params.id);
+    const entryId = Number(req.params.entryId);
+    if (!Number.isInteger(purchaseId) || !Number.isInteger(entryId) || purchaseId <= 0 || entryId <= 0) throw new Error('Payment not found.');
+    await prisma.$transaction(async (tx) => {
+      const entry = await tx.cashbookEntry.findFirst({ where: { id: entryId, supplierPurchaseId: purchaseId }, select: { id: true } });
+      if (!entry) throw new Error('Payment not found for this purchase.');
+      await reverseAndDeleteCashbookEntry(tx, entry.id);
+    });
+    redirectWith(res, '/purchases', 'message', 'Supplier payment cancelled. Purchase balance and Cashbook were updated.');
+  } catch (error) { redirectWith(res, '/purchases', 'error', error.message || 'Could not cancel supplier payment.'); }
+});
+
 app.post('/purchases/:id/delete', async (req, res) => {
   try {
     const id = Number(req.params.id);
+    const cancelReason = supplierText(req.body.cancelReason);
+    if (!cancelReason) throw new Error('Enter a cancellation reason.');
     const record = await prisma.$transaction(async (tx) => {
       const purchase = await tx.supplierPurchase.findFirstOrThrow({ where: { id, cancelledAt: null }, include: { product: true } });
       // Purchases entered before lot receiving created one linked inventory item.
@@ -3468,7 +3572,10 @@ app.post('/purchases/:id/delete', async (req, res) => {
         await tx.stockMovement.create({ data: stockMovementSnapshot(purchase.product, 'ADJUSTMENT_OUT', -purchase.product.quantity, `Supplier purchase cancelled · ${purchase.purchaseNumber}`) });
         await tx.product.update({ where: { id: purchase.product.id }, data: { quantity: 0, status: 'INACTIVE' } });
       }
-      return tx.supplierPurchase.update({ where: { id }, data: { cancelledAt: new Date() } });
+      return tx.supplierPurchase.update({ where: { id }, data: {
+        cancelledAt: new Date(),
+        notes: [purchase.notes, `Cancelled: ${cancelReason}`].filter(Boolean).join(' · ')
+      } });
     });
     redirectWith(res, '/purchases', 'message', `${record.purchaseNumber} cancelled. Linked cashbook payouts were reversed; separately barcode-labelled inventory items were left unchanged.`);
   } catch (error) { redirectWith(res, '/purchases', 'error', error.message || 'Could not cancel supplier purchase.'); }
