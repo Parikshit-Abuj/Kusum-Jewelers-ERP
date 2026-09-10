@@ -192,8 +192,7 @@ function salesRegisterColumns() {
     col.currency('total', 'Total'),
     col.currency('urdAdjustment', 'URD'),
     col.currency('discount', 'Discount'),
-    col.currency('netAmount', 'Net-amt'),
-    col.currency('refundAmount', 'Refund')
+    col.currency('netAmount', 'Net-amt')
   ];
 }
 
@@ -257,7 +256,13 @@ function saleRegisterRows(sales, metal = null) {
       const cgstAmount = Math.round((gstAmount / 2) * 100) / 100;
       const total = selectedMetal ? allocate(sale.total) : num(sale.total);
       const urdAdjustment = selectedMetal ? allocate(settlement.saleAdjustment) : settlement.saleAdjustment;
-      const refundAmount = selectedMetal ? allocate(settlement.netRefundable) : settlement.netRefundable;
+      // Keep the CA register's original columns.  When the URD valuation is
+      // greater than the invoice total, the existing Net-amt column carries
+      // the negative excess (for example, 100 - 200 = -100) instead of
+      // introducing a separate Refund column.  Use the full valuation for
+      // this difference; saleAdjustment is intentionally capped at the bill
+      // total for accounting settlement purposes.
+      const urdValuation = selectedMetal ? allocate(settlement.urdValue) : settlement.urdValue;
       return {
         saleDate: exportDate(sale.saleDate),
         invoiceNumber: sale.invoiceNumber,
@@ -271,8 +276,7 @@ function saleRegisterRows(sales, metal = null) {
         total,
         urdAdjustment,
         discount,
-        netAmount: Math.max(0, roundCurrency(total - urdAdjustment)),
-        refundAmount
+        netAmount: roundCurrency(total - urdValuation)
       };
     });
 }
@@ -408,7 +412,7 @@ async function getExportPayload(db, key, range, options = {}) {
           layout: 'ca-register',
           columns,
           rows,
-          totalKeys: ['grossWeight', 'netWeight', 'taxableAmount', 'cgstAmount', 'sgstAmount', 'igstAmount', 'total', 'urdAdjustment', 'discount', 'netAmount', 'refundAmount']
+          totalKeys: ['grossWeight', 'netWeight', 'taxableAmount', 'cgstAmount', 'sgstAmount', 'igstAmount', 'total', 'urdAdjustment', 'discount', 'netAmount']
         };
       });
       return exportEnvelope(resource, range, columns, sheets[0].rows, { sheets });

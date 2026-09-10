@@ -142,11 +142,11 @@ test('sales and URD CA registers keep URD settlement figures accurate', async ()
   const salesRegister = sales.sheets.find((sheet) => sheet.name === 'All');
   assert.deepEqual(sales.sheets.map((sheet) => sheet.name), ['All', 'Gold', 'Silver']);
   assert.equal(salesRegister.layout, 'ca-register');
-  assert.deepEqual(salesRegister.columns.map((column) => column.label), ['Date', 'Doc-no', 'Customer', 'Gr-wt', 'Net-wt', 'Taxable-amt', 'CGST', 'SGST', 'IGST', 'Total', 'URD', 'Discount', 'Net-amt', 'Refund']);
+  assert.deepEqual(salesRegister.columns.map((column) => column.label), ['Date', 'Doc-no', 'Customer', 'Gr-wt', 'Net-wt', 'Taxable-amt', 'CGST', 'SGST', 'IGST', 'Total', 'URD', 'Discount', 'Net-amt']);
   assert.equal(salesRegister.rows[0].invoiceNumber, 'SB/26-27/00001');
   assert.equal(salesRegister.rows[0].urdAdjustment, 100);
-  assert.equal(salesRegister.rows[0].netAmount, 0);
-  assert.equal(salesRegister.rows[0].refundAmount, 50);
+  assert.equal(salesRegister.rows[0].netAmount, -50);
+  assert.equal('refundAmount' in salesRegister.rows[0], false);
 
   const urd = await getExportPayload(db, 'urd', { from: '2026-09-02', to: '2026-09-02' });
   const urdRegister = urd.sheets.find((sheet) => sheet.name === 'URD Purchase Register');
@@ -156,7 +156,7 @@ test('sales and URD CA registers keep URD settlement figures accurate', async ()
   assert.equal(urdRegister.rows[0].remark, 'SB/26-27/00001');
 });
 
-test('a silver sale with a higher gold URD valuation never exports the refund as a sales URD adjustment', async () => {
+test('a silver sale with a higher gold URD valuation exports the excess as a negative net amount', async () => {
   const sale = {
     saleDate: new Date(2026, 8, 2, 10, 0), invoiceNumber: 'SB/26-27/00009', subtotal: 97.09, discount: 0,
     gstAmount: 2.91, total: 100, urdOffset: 150, customer: { name: 'Asha' },
@@ -171,7 +171,7 @@ test('a silver sale with a higher gold URD valuation never exports the refund as
   const silver = sales.sheets.find((sheet) => sheet.name === 'Silver').rows[0];
   const urd = await getExportPayload(db, 'urd', { from: '2026-09-02', to: '2026-09-02' });
   assert.equal(silver.urdAdjustment, 100);
-  assert.equal(silver.netAmount, 0);
+  assert.equal(silver.netAmount, -50);
   assert.equal(urd.rows[0].totalAmount, 150);
   assert.equal(urd.rows[0].remark, 'SB/26-27/00009');
 });
