@@ -7,6 +7,7 @@
   <article class="stat-card accent-gold customer-due-card"><span class="stat-label">Current credit due</span><strong><%= money(outstanding) %></strong><p>Across <%= unpaidCount %> unpaid invoice<%= unpaidCount === 1 ? '' : 's' %></p></article>
   <article class="stat-card customer-stat-card"><span class="stat-label">Recent invoices</span><strong><%= customer.sales.length %></strong><p>Sales recorded for this customer</p></article>
   <article class="stat-card customer-stat-card"><span class="stat-label">Savings schemes</span><strong><%= customer.schemeEnrollments?.length || 0 %></strong><p>Customer scheme records</p></article>
+  <article class="stat-card customer-stat-card"><span class="stat-label">Pledge loans</span><strong><%= customer.pledgeLoans?.filter((loan) => loan.status === 'ACTIVE').length || 0 %></strong><p>Gold / silver currently held</p></article>
 </section>
 <section class="content-grid customer-detail-grid">
   <article class="panel customer-ledger-panel register-panel">
@@ -68,6 +69,16 @@
         <td><a class="button ghost small" href="/schemes/enrollments/<%= enrollment.id %>">View</a></td>
       </tr>
     <% }) %>
+  </tbody></table></div>
+</section>
+<% } %>
+<% if (customer.pledgeLoans?.length) { %>
+<section class="panel" style="margin-top:16px;">
+  <div class="panel-heading"><div><h2>Pledged jewellery</h2><p>Collateral held separately from shop inventory.</p></div><a class="button ghost small" href="/pledges">All pledge loans</a></div>
+  <div class="table-wrap"><table><thead><tr><th>Pledge</th><th>Jewellery</th><th>Date</th><th class="right">Money lent</th><th class="right">Principal due</th><th>Status</th><th></th></tr></thead><tbody>
+    <% customer.pledgeLoans.forEach((loan) => { const principalDue = Math.max(0, Number(loan.principalAmount) - Number(loan.principalRepaid)); %><tr>
+      <td><strong><%= loan.pledgeNumber %></strong></td><td><strong><%= loan.itemDescription %></strong><small><%= loan.metal %><%= loan.purity ? ` · ${loan.purity}` : '' %> · <%= Number(loan.netWeight).toFixed(3) %> g</small></td><td><%= formatDateDisplay(loan.pledgeDate) %></td><td class="right"><%- money(loan.principalAmount) %></td><td class="right"><%- money(principalDue) %></td><td><span class="pill <%= loan.status === 'ACTIVE' ? 'warning' : loan.status === 'RELEASED' ? 'success' : 'danger' %>"><%= loan.status === 'ACTIVE' ? 'Held' : loan.status === 'RELEASED' ? 'Released' : 'Cancelled' %></span></td><td><a class="button ghost small" href="/pledges/<%= loan.id %>">View</a></td>
+    </tr><% }) %>
   </tbody></table></div>
 </section>
 <% } %>

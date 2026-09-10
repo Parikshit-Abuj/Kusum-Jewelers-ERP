@@ -8,19 +8,20 @@ const {
   formatBarcode,
   nextBarcode
 } = require('../src/lib/barcode-sequence');
-const { nextBatchDocumentNumber } = require('../src/lib/helpers');
+const { nextBatchDocumentNumber, nextDocumentNumber } = require('../src/lib/helpers');
 const { migrationChecksumMatches } = require('../src/lib/shop-provisioning');
 
-test('formats five-character Base-36 barcode suffixes', () => {
-  assert.equal(base36Suffix(1), '00001');
-  assert.equal(base36Suffix(10), '0000A');
-  assert.equal(base36Suffix(35), '0000Z');
-  assert.equal(base36Suffix(36), '00010');
-  assert.equal(base36Suffix(BASE36_MAX_SERIAL), 'ZZZZZ');
-  assert.equal(formatBarcode('G', 1), 'G 00001');
-  assert.equal(formatBarcode('S', 1), 'S 00001');
+test('formats compact variable-length Base-36 barcode suffixes', () => {
+  assert.equal(base36Suffix(1), '1');
+  assert.equal(base36Suffix(10), 'A');
+  assert.equal(base36Suffix(35), 'Z');
+  assert.equal(base36Suffix(36), '10');
+  assert.equal(base36Suffix(36 ** 2), '100');
+  assert.equal(base36Suffix(BASE36_MAX_SERIAL), 'ZZZZZZ');
+  assert.equal(formatBarcode('G', 1), 'G 1');
+  assert.equal(formatBarcode('S', 10), 'S A');
   assert.throws(() => base36Suffix(0), /between 1/);
-  assert.throws(() => base36Suffix(BASE36_MAX_SERIAL + 1), /between 1/);
+  assert.throws(() => base36Suffix(BASE36_MAX_SERIAL + 1n), /between 1/);
 });
 
 test('uses an independent Base-36 counter key for each metal series', () => {
@@ -36,28 +37,28 @@ test('allocates a Base-36 barcode with the new counter instead of the legacy cou
     $queryRaw: async () => [{ lastNumber: 36 }]
   };
 
-  assert.equal(await nextBarcode(tx, 'GOLD', '22K'), 'G 00010');
+  assert.equal(await nextBarcode(tx, 'GOLD', '22K'), 'G 10');
   assert.deepEqual(executeValues, ['G_B36']);
 });
 
-test('uses the same five-character Base-36 allocation for silver', async () => {
+test('uses the same variable-length Base-36 allocation for silver', async () => {
   let executeValues = [];
   const tx = {
     $executeRaw: async (strings, ...values) => { executeValues = values; },
     $queryRaw: async () => [{ lastNumber: 1 }]
   };
 
-  assert.equal(await nextBarcode(tx, 'SILVER', '925'), 'S 00001');
+  assert.equal(await nextBarcode(tx, 'SILVER', '925'), 'S 1');
   assert.deepEqual(executeValues, ['S_B36']);
 });
 
 test('refuses to wrap and duplicate a barcode when the Base-36 series is full', async () => {
   const tx = {
     $executeRaw: async () => {},
-    $queryRaw: async () => [{ lastNumber: BASE36_MAX_SERIAL + 1 }]
+    $queryRaw: async () => [{ lastNumber: BASE36_MAX_SERIAL + 1n }]
   };
 
-  await assert.rejects(() => nextBarcode(tx, 'SILVER', '925'), /S Base-36 barcode series is full at S ZZZZZ/);
+  await assert.rejects(() => nextBarcode(tx, 'SILVER', '925'), /S Base-36 barcode series is full at S ZZZZZZ/);
 });
 
 test('generates a concise date-led batch document number with an atomic daily serial', async () => {
@@ -66,6 +67,18 @@ test('generates a concise date-led batch document number with an atomic daily se
     $queryRaw: async () => [{ lastNumber: 7 }]
   };
   assert.equal(await nextBatchDocumentNumber(tx, new Date(2026, 8, 3, 10, 0, 0)), '20260903-07');
+});
+
+test('uses the configured sales prefix and financial-year start month', async () => {
+  const tx = {
+    $executeRaw: async () => {},
+    $queryRaw: async () => [{ lastNumber: 12 }],
+    sale: { findUnique: async () => null }
+  };
+  assert.equal(
+    await nextDocumentNumber(tx, 'SB', new Date(2026, 6, 1, 10, 0, 0), { invoicePrefix: 'KJ', financialYearStartMonth: 7 }),
+    'KJ/26-27/00012'
+  );
 });
 
 test('accepts the known installed checksum for a corrected case-sensitive migration', () => {

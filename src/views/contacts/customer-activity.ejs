@@ -12,7 +12,7 @@
   <ol class="customer-timeline customer-timeline-full">
     <% activity.forEach((event) => { %>
     <li class="timeline-event timeline-<%= event.kind.toLowerCase() %>">
-      <span class="timeline-dot" aria-hidden="true"><%= event.kind === 'SALE' ? '₹' : event.kind === 'PAYMENT' ? '✓' : event.kind === 'URD' ? '⇣' : '◇' %></span>
+      <span class="timeline-dot" aria-hidden="true"><%= event.kind === 'SALE' ? '₹' : event.kind === 'PAYMENT' ? '✓' : event.kind === 'URD' ? '⇣' : event.kind === 'PLEDGE' ? '◇' : '◈' %></span>
       <div class="timeline-copy">
         <% if (event.href) { %><a href="<%= event.href %>"><strong><%= event.title %></strong></a><% } else { %><strong><%= event.title %></strong><% } %>
         <small><%= event.detail %></small>
@@ -22,6 +22,6 @@
     <% }) %>
   </ol>
   <% } else { %>
-  <div class="empty-state compact"><span>◷</span><h3>No activity yet</h3><p>Bills, received payments, URD purchases and scheme enrollments will appear here.</p></div>
+  <div class="empty-state compact"><span>◷</span><h3>No activity yet</h3><p>Bills, received payments, URD purchases, pledge loans and schemes will appear here.</p></div>
   <% } %>
 </section>

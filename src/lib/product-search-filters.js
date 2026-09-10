@@ -4,12 +4,17 @@ function searchText(value) {
 
 function barcodeVariants(value) {
   const barcode = searchText(value);
+  const compact = barcode.replace(/[\s-]+/g, '');
+  const compactBarcode = compact.match(/^([GSJ])([0-9A-Z]{1,6})$/i);
+  const canonical = compactBarcode ? `${compactBarcode[1].toUpperCase()} ${compactBarcode[2].toUpperCase()}` : '';
   if (!barcode) return [];
   return [...new Set([
     barcode,
     barcode.replace(/-/g, ' '),
     barcode.replace(/\s+/g, '-'),
-    barcode.replace(/[\s-]+/g, ''),
+    compact,
+    canonical,
+    canonical.replace(/\s+/g, '-'),
     barcode.replace(/^([A-Za-z]+)(\d.*)$/, '$1 $2'),
     barcode.replace(/^([A-Za-z]+\d+)\s*([A-Za-z0-9]+)$/, '$1 $2')
   ])].filter(Boolean);

@@ -234,7 +234,7 @@ model DailyRate {
 
 model BarcodeSequence {
   prefix     String   @id @db.VarChar(12)
-  lastNumber Int      @default(0)
+  lastNumber BigInt   @default(0) @db.UnsignedBigInt
   updatedAt  DateTime @updatedAt
 }
 
@@ -470,6 +470,35 @@ model AppSession {
   updatedAt DateTime @updatedAt
 
   @@index([expiresAt])
+}
+
+// One shop-wide configuration record. Keeping business identity, invoice
+// defaults and label geometry in MySQL means a normal full database backup
+// carries these settings (including the authorised signature) to a new PC.
+model BusinessSettings {
+  id                      Int      @id @default(1)
+  shopName                String   @default("Kusum Jewellers") @db.VarChar(255)
+  shopAddress             String?  @db.Text
+  gstin                   String?  @db.VarChar(20)
+  panNumber               String?  @db.VarChar(20)
+  primaryPhone            String?  @db.VarChar(30)
+  secondaryPhone          String?  @db.VarChar(30)
+  facebookUrl             String?  @db.VarChar(1000)
+  instagramUrl            String?  @db.VarChar(1000)
+  invoicePrefix           String   @default("SB") @db.VarChar(12)
+  financialYearStartMonth Int      @default(4)
+  defaultGstRate          Decimal  @default(3) @db.Decimal(5, 2)
+  defaultHsnCode          String?  @db.VarChar(50)
+  labelShopName           String   @default("KUSUM JEWELLERS") @db.VarChar(80)
+  labelWidthMm            Decimal  @default(81) @db.Decimal(6, 2)
+  labelHeightMm           Decimal  @default(12) @db.Decimal(6, 2)
+  labelGapMm              Decimal  @default(3) @db.Decimal(6, 2)
+  labelSpeed              Int      @default(2)
+  labelDensity            Int      @default(10)
+  signatureImage          Bytes?   @db.LongBlob
+  signatureMimeType       String?  @db.VarChar(50)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
 }
 
 enum SchemeStatus {

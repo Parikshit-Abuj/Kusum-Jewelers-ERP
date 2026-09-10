@@ -6,7 +6,7 @@
 <section class="panel report-filter-panel">
   <form class="report-filter-form" method="get">
     <label>From<input type="date" name="from" value="<%= filters.from %>"></label><label>To<input type="date" name="to" value="<%= filters.to %>"></label>
-    <label>Search item / barcode<input name="q" value="<%= filters.q %>" placeholder="G 00001, chain…"></label>
+    <label>Search item / barcode<input name="q" value="<%= filters.q %>" placeholder="G 1, chain…"></label>
     <label>Metal<select name="metal"><option value="">All metals</option><% ['GOLD','SILVER','PLATINUM','DIAMOND','OTHER'].forEach((value) => { %><option value="<%= value %>" <%= filters.metal === value ? 'selected' : '' %>><%= value %></option><% }) %></select></label>
     <label>Movement<select name="type"><option value="">All movements</option><% [['OPENING','Opening'],['SALE','Sale'],['ADJUSTMENT_IN','Adjustment in'],['ADJUSTMENT_OUT','Adjustment out']].forEach(([value,label]) => { %><option value="<%= value %>" <%= filters.type === value ? 'selected' : '' %>><%= label %></option><% }) %></select></label>
     <div class="report-filter-actions"><button class="button small" type="submit">Apply filters</button><a class="button ghost small" href="/reports/stock-movements">Reset</a></div>

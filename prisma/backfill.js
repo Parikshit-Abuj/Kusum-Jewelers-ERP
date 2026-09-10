@@ -1,5 +1,5 @@
 const { PrismaClient } = require('@prisma/client');
-const { base36BarcodePrefix, formatBarcode } = require('../src/lib/barcode-sequence');
+const { BASE36_MAX_SERIAL, base36BarcodePrefix, formatBarcode } = require('../src/lib/barcode-sequence');
 
 const prisma = new PrismaClient();
 
@@ -13,10 +13,10 @@ async function main() {
   const updates = [];
   for (const product of products) {
     const prefix = base36BarcodePrefix(product.metal);
-    const match = product.barcode?.match(new RegExp(`^${prefix}\\s+([0-9A-Z]{5})$`, 'i'));
+    const match = product.barcode?.match(new RegExp(`^${prefix}\\s+([0-9A-Z]{1,6})$`, 'i'));
     if (match) {
-      const serial = Number.parseInt(match[1], 36);
-      counters.set(prefix, Math.max(counters.get(prefix) || 0, serial));
+      const serial = BigInt(Number.parseInt(match[1], 36));
+      counters.set(prefix, (counters.get(prefix) || 0n) > serial ? counters.get(prefix) : serial);
     }
   }
 
@@ -24,7 +24,10 @@ async function main() {
     const prefix = base36BarcodePrefix(product.metal);
     let barcode = product.barcode;
     if (!barcode) {
-      const next = (counters.get(prefix) || 0) + 1;
+      const next = (counters.get(prefix) || 0n) + 1n;
+      if (next > BASE36_MAX_SERIAL) {
+        throw new Error(`${prefix} Base-36 barcode series is full at ${prefix} ZZZZZZ. No barcode was written.`);
+      }
       counters.set(prefix, next);
       barcode = formatBarcode(prefix, next);
     }
@@ -57,7 +60,7 @@ async function main() {
       const existing = await tx.barcodeSequence.findUnique({ where: { prefix: sequenceKey } });
       if (!existing) {
         await tx.barcodeSequence.create({ data: { prefix: sequenceKey, lastNumber } });
-      } else if (existing.lastNumber < lastNumber) {
+      } else if (BigInt(String(existing.lastNumber)) < lastNumber) {
         await tx.barcodeSequence.update({ where: { prefix: sequenceKey }, data: { lastNumber } });
       }
     }

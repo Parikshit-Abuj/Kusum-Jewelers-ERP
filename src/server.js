@@ -34,6 +34,7 @@ const { upsertItemName } = require('./lib/item-names');
 const { createInstallmentSchedule, schemeEndDate, isFullInstallmentPayment } = require('./lib/scheme-schedule');
 const { hasConfiguredPassword, passwordMatchesEnvironment, secureTextMatch, usesKnownDefaultPassword } = require('./lib/auth-security');
 const { PrismaSessionStore } = require('./lib/mysql-session-store');
+const { DEFAULT_BUSINESS_SETTINGS, getBusinessSettings, clearBusinessSettingsCache } = require('./lib/business-settings');
 let prisma = createPrisma();
 let databaseHealth = { checkedAt: 0, error: null };
 const app = express();
@@ -43,7 +44,7 @@ app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.set('layout', 'layout');
 app.use(expressLayouts);
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 if (process.env.NODE_ENV === 'development') app.use(require('morgan')('dev'));
 app.use(session({
@@ -60,6 +61,7 @@ app.locals.grams = grams;
 app.locals.dateInput = dateInput;
 app.locals.formatDate = formatDateDisplay;
 app.locals.formatDateDisplay = formatDateDisplay;
+app.locals.businessSettings = DEFAULT_BUSINESS_SETTINGS;
 
 app.use((req, res, next) => {
   res.locals.currentPath = req.path;
@@ -433,6 +435,7 @@ function shopSetupRequired() {
 async function reloadPrismaClient() {
   const previous = prisma;
   prisma = createPrisma();
+  clearBusinessSettingsCache();
   databaseHealth = { checkedAt: 0, error: null };
   await previous.$disconnect().catch(() => {});
 }
@@ -559,7 +562,7 @@ app.get('/login', async (req, res) => {
   if (shopSetupRequired()) return res.redirect('/setup');
   if (await databaseConnectionError()) return redirectWith(res, '/connection-repair', 'error', 'The saved database connection is unavailable. Enter the current database details below.');
   if (req.session?.authenticated) return res.redirect('/');
-  res.render('auth/login', { layout: false, title: 'Sign in', error: req.query.error || null, message: req.query.message || null });
+  res.render('auth/login', { layout: false, title: 'Sign in', businessSettings: await getBusinessSettings(prisma), error: req.query.error || null, message: req.query.message || null });
 });
 
 app.post('/login', async (req, res) => {
@@ -658,7 +661,133 @@ app.use(async (req, res, next) => {
   if (await databaseConnectionError()) {
     return redirectWith(res, '/connection-repair', 'error', 'The saved database connection is unavailable. Enter the current database details below.');
   }
-  return next();
+  try {
+    res.locals.businessSettings = await getBusinessSettings(prisma);
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+});
+
+function optionalText(value, maximumLength = 1000) {
+  const result = String(value || '').trim();
+  if (result.length > maximumLength) throw new Error(`A settings value is longer than ${maximumLength} characters.`);
+  return result || null;
+}
+
+function boundedSetting(value, label, minimum, maximum, integer = false) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < minimum || parsed > maximum || (integer && !Number.isInteger(parsed))) {
+    throw new Error(`${label} must be between ${minimum} and ${maximum}.`);
+  }
+  return parsed;
+}
+
+function safeWebUrl(value, label) {
+  const text = optionalText(value, 1000);
+  if (!text) return null;
+  let parsed;
+  try { parsed = new URL(text); } catch (_) { throw new Error(`${label} must be a complete https:// link.`); }
+  if (!['https:', 'http:'].includes(parsed.protocol)) throw new Error(`${label} must be a web link.`);
+  return parsed.toString();
+}
+
+function signatureFromDataUrl(value) {
+  const text = String(value || '');
+  if (!text) return null;
+  const match = /^data:(image\/(?:png|jpeg));base64,([A-Za-z0-9+/=]+)$/.exec(text);
+  if (!match) throw new Error('Choose a PNG or JPEG signature image.');
+  const image = Buffer.from(match[2], 'base64');
+  if (!image.length || image.length > 1024 * 1024) throw new Error('Signature image must be smaller than 1 MB.');
+  const isPng = image.length >= 8 && image.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  const isJpeg = image.length >= 3 && image[0] === 0xff && image[1] === 0xd8 && image[2] === 0xff;
+  if ((match[1] === 'image/png' && !isPng) || (match[1] === 'image/jpeg' && !isJpeg)) {
+    throw new Error('The selected signature file is not a valid PNG or JPEG image.');
+  }
+  return { signatureImage: image, signatureMimeType: match[1] };
+}
+
+app.get('/business-settings', requireLoopback, async (req, res, next) => {
+  try {
+    res.render('business-settings', {
+      title: 'Business settings',
+      settings: await getBusinessSettings(prisma, { fresh: true }),
+      printer: configuredLabelPrinter()
+    });
+  } catch (error) { next(error); }
+});
+
+app.get('/business-settings/signature', async (req, res, next) => {
+  try {
+    const settings = await getBusinessSettings(prisma);
+    if (!settings.signatureImage) return res.status(404).end();
+    res.setHeader('Content-Type', settings.signatureMimeType || 'image/png');
+    res.setHeader('Cache-Control', 'private, max-age=30');
+    res.send(Buffer.from(settings.signatureImage));
+  } catch (error) { next(error); }
+});
+
+app.post('/business-settings', requireLoopback, async (req, res) => {
+  try {
+    const shopName = optionalText(req.body.shopName, 255);
+    if (!shopName) throw new Error('Shop name is required.');
+    const invoicePrefix = String(req.body.invoicePrefix || '').trim().toUpperCase();
+    if (!/^[A-Z0-9]{1,8}$/.test(invoicePrefix)) throw new Error('Invoice prefix must contain 1 to 8 English letters or numbers.');
+    const signature = signatureFromDataUrl(req.body.signatureData);
+    const removeSignature = req.body.removeSignature === 'on';
+    await prisma.businessSettings.upsert({
+      where: { id: 1 },
+      create: {
+        id: 1,
+        shopName,
+        shopAddress: optionalText(req.body.shopAddress, 5000),
+        gstin: optionalText(req.body.gstin, 20)?.toUpperCase() || null,
+        panNumber: optionalText(req.body.panNumber, 20)?.toUpperCase() || null,
+        primaryPhone: optionalText(req.body.primaryPhone, 30),
+        secondaryPhone: optionalText(req.body.secondaryPhone, 30),
+        facebookUrl: safeWebUrl(req.body.facebookUrl, 'Facebook link'),
+        instagramUrl: safeWebUrl(req.body.instagramUrl, 'Instagram link'),
+        invoicePrefix,
+        financialYearStartMonth: boundedSetting(req.body.financialYearStartMonth, 'Financial-year start month', 1, 12, true),
+        defaultGstRate: boundedSetting(req.body.defaultGstRate, 'Default GST rate', 0, 100),
+        defaultHsnCode: optionalText(req.body.defaultHsnCode, 50)?.toUpperCase() || null,
+        labelShopName: (optionalText(req.body.labelShopName, 80) || shopName).toUpperCase(),
+        labelWidthMm: boundedSetting(req.body.labelWidthMm, 'Label width', 20, 120),
+        labelHeightMm: boundedSetting(req.body.labelHeightMm, 'Label height', 8, 100),
+        labelGapMm: boundedSetting(req.body.labelGapMm, 'Label gap', 0, 20),
+        labelSpeed: boundedSetting(req.body.labelSpeed, 'Label speed', 1, 6, true),
+        labelDensity: boundedSetting(req.body.labelDensity, 'Label density', 0, 15, true),
+        ...(signature || {})
+      },
+      update: {
+        shopName,
+        shopAddress: optionalText(req.body.shopAddress, 5000),
+        gstin: optionalText(req.body.gstin, 20)?.toUpperCase() || null,
+        panNumber: optionalText(req.body.panNumber, 20)?.toUpperCase() || null,
+        primaryPhone: optionalText(req.body.primaryPhone, 30),
+        secondaryPhone: optionalText(req.body.secondaryPhone, 30),
+        facebookUrl: safeWebUrl(req.body.facebookUrl, 'Facebook link'),
+        instagramUrl: safeWebUrl(req.body.instagramUrl, 'Instagram link'),
+        invoicePrefix,
+        financialYearStartMonth: boundedSetting(req.body.financialYearStartMonth, 'Financial-year start month', 1, 12, true),
+        defaultGstRate: boundedSetting(req.body.defaultGstRate, 'Default GST rate', 0, 100),
+        defaultHsnCode: optionalText(req.body.defaultHsnCode, 50)?.toUpperCase() || null,
+        labelShopName: (optionalText(req.body.labelShopName, 80) || shopName).toUpperCase(),
+        labelWidthMm: boundedSetting(req.body.labelWidthMm, 'Label width', 20, 120),
+        labelHeightMm: boundedSetting(req.body.labelHeightMm, 'Label height', 8, 100),
+        labelGapMm: boundedSetting(req.body.labelGapMm, 'Label gap', 0, 20),
+        labelSpeed: boundedSetting(req.body.labelSpeed, 'Label speed', 1, 6, true),
+        labelDensity: boundedSetting(req.body.labelDensity, 'Label density', 0, 15, true),
+        ...(removeSignature ? { signatureImage: null, signatureMimeType: null } : (signature || {}))
+      }
+    });
+    const printerValues = updatePrinterConfiguration({ configPath, currentEnv: process.env, form: req.body });
+    Object.assign(process.env, printerValues);
+    clearBusinessSettingsCache();
+    redirectWith(res, '/business-settings', 'message', 'Business, invoice and label settings saved.');
+  } catch (error) {
+    redirectWith(res, '/business-settings', 'error', error.message || 'Could not save business settings.');
+  }
 });
 
 app.get('/network-setup', requireLoopback, (req, res, next) => {
@@ -912,7 +1041,7 @@ app.post('/labels/test-print', async (req, res) => {
     const tspl = buildTsplJob([{ product: {
       metal: 'GOLD', barcode: 'TSC TEST', name: 'PRINTER TEST',
       grossWeight: 0, stoneWeight: 0, netWeight: 0
-    } }]);
+    } }], await getBusinessSettings(prisma));
     const result = await sendTsplToPrinter(printerTransport, tspl);
     redirectWith(res, '/inventory', 'message', `TSC test label ${printerTransport.mode === 'TCP' ? 'sent to' : 'queued to'} ${printerName}. ${result}`);
   } catch (error) {
@@ -980,7 +1109,7 @@ app.post('/labels/print', express.json(), async (req, res, next) => {
       if (!product.barcode) throw new Error(`${product.name} has no barcode yet.`);
       return Array.from({ length: copies }, (_, copyIndex) => ({ product, copyIndex: copyIndex + 1, copies }));
     });
-    const tspl = buildTsplJob(labels);
+    const tspl = buildTsplJob(labels, await getBusinessSettings(prisma));
     const result = await sendTsplToPrinter(printerTransport, tspl);
     const successMsg = `${labels.length} native TSPL label${labels.length === 1 ? '' : 's'} ${printerTransport.mode === 'TCP' ? 'sent to' : 'queued to'} ${printerName}. ${result}`;
     if (isJson) {
@@ -1404,6 +1533,10 @@ app.get('/customers/:id', async (req, res, next) => {
             include: { schemePlan: true },
             orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
             take: 20
+          },
+          pledgeLoans: {
+            orderBy: [{ pledgeDate: 'desc' }, { id: 'desc' }],
+            take: 20
           }
         }
       }),
@@ -1443,18 +1576,20 @@ app.get('/customers/:id', async (req, res, next) => {
 app.get('/customers/:id/activity', async (req, res, next) => {
   try {
     const customerId = Number(req.params.id);
-    const [customer, sales, payments, purchases, enrollments] = await Promise.all([
+    const [customer, sales, payments, purchases, enrollments, pledgeLoans] = await Promise.all([
       prisma.customer.findUniqueOrThrow({ where: { id: customerId }, select: { id: true, name: true, phone: true } }),
       prisma.sale.findMany({ where: { customerId, cancelledAt: null }, select: { id: true, invoiceNumber: true, saleDate: true, total: true }, orderBy: { saleDate: 'desc' }, take: 30 }),
       prisma.customerLedger.findMany({ where: { customerId, type: { not: 'SALE_CREDIT' } }, select: { createdAt: true, amount: true, paymentMethod: true }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 30 }),
       prisma.urdPurchase.findMany({ where: { customerId, cancelledAt: null }, select: { purchaseNumber: true, purchaseDate: true, totalAmount: true, metal: true }, orderBy: { purchaseDate: 'desc' }, take: 30 }),
-      prisma.schemeEnrollment.findMany({ where: { customerId, status: { not: 'CANCELLED' } }, include: { schemePlan: { select: { name: true } } }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 30 })
+      prisma.schemeEnrollment.findMany({ where: { customerId, status: { not: 'CANCELLED' } }, include: { schemePlan: { select: { name: true } } }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 30 }),
+      prisma.pledgeLoan.findMany({ where: { customerId }, select: { id: true, pledgeNumber: true, pledgeDate: true, itemDescription: true, metal: true, principalAmount: true, principalRepaid: true, status: true }, orderBy: [{ pledgeDate: 'desc' }, { id: 'desc' }], take: 30 })
     ]);
     const activity = [
       ...sales.map((sale) => ({ kind: 'SALE', occurredAt: sale.saleDate, title: sale.invoiceNumber, amount: Number(sale.total), detail: 'Bill generated', href: `/sales/${sale.id}` })),
       ...payments.map((entry) => ({ kind: 'PAYMENT', occurredAt: entry.createdAt, title: 'Payment received', amount: Math.abs(Number(entry.amount)), detail: entry.paymentMethod?.replace('_', ' ') || 'Payment', href: null })),
       ...purchases.map((purchase) => ({ kind: 'URD', occurredAt: purchase.purchaseDate, title: purchase.purchaseNumber, amount: Number(purchase.totalAmount), detail: `${purchase.metal} purchase`, href: `/urd-purchases?q=${encodeURIComponent(purchase.purchaseNumber)}` })),
-      ...enrollments.map((enrollment) => ({ kind: 'SCHEME', occurredAt: enrollment.createdAt, title: enrollment.schemePlan.name, detail: `Scheme joined · ${enrollment.enrollmentNumber}`, href: `/schemes/enrollments/${enrollment.id}` }))
+      ...enrollments.map((enrollment) => ({ kind: 'SCHEME', occurredAt: enrollment.createdAt, title: enrollment.schemePlan.name, detail: `Scheme joined · ${enrollment.enrollmentNumber}`, href: `/schemes/enrollments/${enrollment.id}` })),
+      ...pledgeLoans.map((loan) => ({ kind: 'PLEDGE', occurredAt: loan.pledgeDate, title: loan.pledgeNumber, amount: Math.max(0, Number(loan.principalAmount) - Number(loan.principalRepaid)), detail: `${loan.metal} collateral · ${loan.itemDescription} · ${loan.status.toLowerCase()}`, href: `/pledges/${loan.id}` }))
     ].sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt)).slice(0, 80);
     res.render('contacts/customer-activity', { title: `${customer.name} activity`, customer, activity });
   } catch (error) { next(error); }
@@ -1597,15 +1732,28 @@ app.get('/api/rates', async (req, res, next) => {
 app.get('/api/products/barcode/:barcode', async (req, res, next) => {
   try {
     const raw = decodeURIComponent(req.params.barcode).trim().toUpperCase();
-    // Try the input as-is, then swap dash↔space variants, then fall back to SKU
-    const barcodeVariants = [...new Set([raw, raw.replace(/-/g, ' '), raw.replace(/\s+/g, '-')])];
+    // Try the input as-is, dash↔space variants, and the compact scanner form.
+    // Some Code128 scanners omit the visible space (for example GA for G A).
+    const compact = raw.replace(/[\s-]+/g, '');
+    const compactMatch = compact.match(/^([GSJ])([0-9A-Z]{1,6})$/i);
+    const canonical = compactMatch ? `${compactMatch[1]} ${compactMatch[2]}` : '';
+    const barcodeVariants = [...new Set([
+      raw, raw.replace(/-/g, ' '), raw.replace(/\s+/g, '-'), compact, canonical,
+      canonical.replace(/\s+/g, '-')
+    ].filter(Boolean))];
     let product = null;
     for (const b of barcodeVariants) {
       product = await prisma.product.findUnique({ where: { barcode: b } });
       if (product) break;
     }
-    // SKU fallback
-    if (!product) product = await prisma.product.findFirst({ where: { sku: raw, status: 'AVAILABLE' } });
+    // SKU fallback. Generated labels use the same prefix/suffix with a dash in
+    // the SKU, so try every normalized form before returning not-found.
+    if (!product) {
+      for (const sku of barcodeVariants) {
+        product = await prisma.product.findFirst({ where: { sku, status: 'AVAILABLE' } });
+        if (product) break;
+      }
+    }
     if (!product) return res.status(404).json({ error: `"${raw}" not found. Check the barcode and try again.` });
     if (product.quantity <= 0 || product.status !== 'AVAILABLE') return res.status(409).json({ error: `${product.barcode} is not available in stock.` });
     const rateInfo = await getRateForDate(prisma, req.query.date || dateInput());
@@ -1706,15 +1854,16 @@ app.get('/api/search', async (req, res, next) => {
 
 app.get('/sales/new', async (req, res, next) => {
   try {
-    const rateInfo = await getRateForDate(prisma);
+    const [rateInfo, businessSettings] = await Promise.all([getRateForDate(prisma), getBusinessSettings(prisma)]);
     // Invoice number allocation happens in the save transaction. Merely
     // opening or cancelling a bill cannot consume a number.
-    res.render('sales/form', { title: 'New sale', invoiceNumber: '', rateInfo });
+    res.render('sales/form', { title: 'New sale', invoiceNumber: '', rateInfo, businessSettings });
   } catch (error) { next(error); }
 });
 
 app.post('/sales', async (req, res, next) => {
   try {
+    const businessSettings = await getBusinessSettings(prisma);
     const rows = saleRows(req.body);
     if (!rows.length) return redirectWith(res, '/sales/new', 'error', 'Enter at least one scanned barcode.');
     if (new Set(rows.map((row) => row.productId)).size !== rows.length) {
@@ -1771,7 +1920,7 @@ app.post('/sales', async (req, res, next) => {
       const subtotal = roundedMoney(pricedRows.reduce((sum, row) => sum + row.taxableAmount, 0));
       const appliedDiscount = roundedMoney(Math.min(discount, subtotal));
       const taxable = roundedMoney(Math.max(0, subtotal - appliedDiscount));
-      const gstRate = 3;
+      const gstRate = Number(businessSettings.defaultGstRate);
       const gstAmount = roundedMoney(taxable * gstRate / 100);
       // Round only once, after GST. This is the invoice-level amount used for
       // every payment validation, customer balance, cashbook entry and PDF.
@@ -1798,7 +1947,7 @@ app.post('/sales', async (req, res, next) => {
       const acceptedPaid = payment.paid;
       const balance = roundedMoney(Math.max(0, netPayable - acceptedPaid));
       const sale = await tx.sale.create({ data: {
-        invoiceNumber: await nextDocumentNumber(tx, 'SB', saleDate), customerId, customerPan, saleDate,
+        invoiceNumber: await nextDocumentNumber(tx, 'SB', saleDate, businessSettings), customerId, customerPan, saleDate,
         subtotal, discount: appliedDiscount, gstRate, gstAmount, total, urdOffset: urdAmount, paid: acceptedPaid,
         cashPaid: payment.cashPaid, upiPaid: payment.upiPaid, cardPaid: payment.cardPaid, bankPaid: payment.bankPaid, balance,
         paymentMethod: payment.paymentMethod, notes: req.body.notes ? String(req.body.notes).trim().toUpperCase() : null,
@@ -1910,6 +2059,7 @@ app.get('/sales/:id/edit', async (req, res, next) => {
         panNumber: sale.customerPan || ''
       },
       discount: Number(sale.discount || 0),
+      gstRate: Number(sale.gstRate || 0),
       notes: sale.notes || '',
       initialPayment: {
         paid: initialPaid,
@@ -1953,13 +2103,14 @@ app.get('/sales/:id/edit', async (req, res, next) => {
         paymentMethod: sale.urdPurchase.paymentMethod || 'CASH'
       } : null
     };
-    res.render('sales/form', { title: `Edit ${sale.invoiceNumber}`, invoiceNumber: sale.invoiceNumber, rateInfo, editSale });
+    res.render('sales/form', { title: `Edit ${sale.invoiceNumber}`, invoiceNumber: sale.invoiceNumber, rateInfo, editSale, businessSettings: await getBusinessSettings(prisma) });
   } catch (error) { next(error); }
 });
 
 app.post('/sales/:id/edit', async (req, res, next) => {
   const saleId = Number(req.params.id);
   try {
+    const businessSettings = await getBusinessSettings(prisma);
     const rows = saleRows(req.body);
     if (!rows.length) throw new Error('Keep at least one item on the invoice. A sold barcode is never restored to inventory.');
     const allBarcodes = rows.map((row) => row.barcode).filter(Boolean);
@@ -2148,7 +2299,10 @@ app.post('/sales/:id/edit', async (req, res, next) => {
       const subtotal = roundedMoney(pricedRows.reduce((sum, row) => sum + row.taxableAmount, 0));
       const appliedDiscount = roundedMoney(Math.min(discount, subtotal));
       const taxable = roundedMoney(Math.max(0, subtotal - appliedDiscount));
-      const gstRate = 3;
+      const submittedGstRate = Number(req.body.gstRate);
+      const gstRate = Number.isFinite(submittedGstRate) && submittedGstRate >= 0 && submittedGstRate <= 100
+        ? submittedGstRate
+        : Number(businessSettings.defaultGstRate);
       const gstAmount = roundedMoney(taxable * gstRate / 100);
       const total = roundToNearestRupee(roundedMoney(taxable + gstAmount));
       const urdAmount = includeUrdPurchase ? Math.max(0, roundedMoney(number(req.body.urdTotalAmount))) : 0;
@@ -2414,7 +2568,7 @@ app.get('/sales/:id/invoice.pdf', async (req, res, next) => {
   try {
     const sale = await prisma.sale.findFirst({ where: { id: Number(req.params.id), cancelledAt: null }, include: { customer: true, urdPurchase: true, items: { include: { product: true } } } });
     if (!sale) return res.status(404).render('not-found', { title: 'Invoice not found' });
-    await writeSaleInvoice(res, sale);
+    await writeSaleInvoice(res, sale, await getBusinessSettings(prisma));
   } catch (error) { next(error); }
 });
 
@@ -2639,6 +2793,55 @@ app.get('/pledges/:id', async (req, res, next) => {
     });
     res.render('pledges/detail', { title: loan.pledgeNumber, loan, outstanding: pledgeOutstanding(loan) });
   } catch (error) { next(error); }
+});
+
+// A pledge can be corrected without creating a second account. The customer is
+// intentionally edited from Customer details, keeping one customer identity
+// across sales, schemes, URD and pledges. The original Cashbook payout is
+// corrected in the same transaction so cash flow never drifts from the loan.
+app.post('/pledges/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  try {
+    const metal = ['GOLD', 'SILVER'].includes(String(req.body.metal || '').toUpperCase())
+      ? String(req.body.metal).toUpperCase()
+      : null;
+    const itemDescription = titleCase(req.body.itemDescription);
+    const quantity = Math.floor(number(req.body.quantity));
+    const grossWeight = Math.max(0, number(req.body.grossWeight));
+    const stoneWeight = Math.max(0, number(req.body.stoneWeight));
+    const netWeight = Math.max(0, number(req.body.netWeight));
+    const valuationAmount = roundedMoney(Math.max(0, number(req.body.valuationAmount)));
+    const principalAmount = roundedMoney(Math.max(0, number(req.body.principalAmount)));
+    const monthlyInterestRate = Math.max(0, Math.min(99.99, number(req.body.monthlyInterestRate)));
+    const pledgeDate = dateTimeFromInput(req.body.pledgeDate);
+    const dueDate = req.body.dueDate ? dateTimeFromInput(req.body.dueDate) : null;
+    if (!Number.isInteger(id) || id <= 0 || !metal || !itemDescription || !Number.isInteger(quantity) || quantity <= 0 || netWeight <= 0 || principalAmount <= 0) {
+      throw new Error('Complete the collateral and loan details correctly.');
+    }
+    if (dueDate && dueDate < pledgeDate) throw new Error('Return due date cannot be before the pledge date.');
+    const payoutMethod = receiptPaymentMethod(req.body.payoutMethod);
+    await prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw`SELECT id FROM \`PledgeLoan\` WHERE id = ${id} FOR UPDATE`;
+      if (!locked.length) throw new Error('Pledge loan not found.');
+      const current = await tx.pledgeLoan.findUniqueOrThrow({ where: { id } });
+      if (current.status !== 'ACTIVE') throw new Error('Only an active pledge can be edited.');
+      if (principalAmount < Number(current.principalRepaid)) throw new Error(`Money lent cannot be less than the already repaid principal of ${money(current.principalRepaid)}.`);
+      const notes = supplierText(req.body.notes) || null;
+      const payout = await tx.cashbookEntry.findFirst({ where: { pledgeLoanId: id, type: 'OUT' }, orderBy: { id: 'asc' } });
+      if (!payout) throw new Error('The original pledge payout is missing from Cashbook. Restore a verified backup before correcting this record.');
+      await tx.pledgeLoan.update({ where: { id }, data: {
+        pledgeDate, dueDate, metal, itemDescription, purity: supplierText(req.body.purity).toUpperCase() || null,
+        quantity, grossWeight: grossWeight || netWeight, stoneWeight, netWeight,
+        valuationAmount, principalAmount, monthlyInterestRate, notes
+      } });
+      await tx.cashbookEntry.update({ where: { id: payout.id }, data: {
+        entryDate: dateInput(pledgeDate), paymentMethod: payoutMethod, amount: principalAmount, notes
+      } });
+    });
+    redirectWith(res, `/pledges/${id}`, 'message', 'Pledge details and original Cashbook payout corrected.');
+  } catch (error) {
+    redirectWith(res, `/pledges/${id}`, 'error', error.message || 'Could not update this pledge.');
+  }
 });
 
 app.post('/pledges/:id/payments', async (req, res) => {

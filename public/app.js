@@ -321,7 +321,7 @@ document.querySelectorAll('.flash').forEach((el) => {
 
     if (barcodePreview) {
       const prefix = getBarcodePrefixPreview(metal, purity);
-      barcodePreview.textContent = `${prefix} 00001`;
+      barcodePreview.textContent = `${prefix} 1`;
     }
 
     const metalRate = getMetalRate(metal, purity);
@@ -1023,7 +1023,7 @@ document.querySelectorAll('.flash').forEach((el) => {
         qtyInput.value = '1';
         const hsn = row.querySelector('[data-hsn-code]');
         const huid = row.querySelector('[data-huid-code]');
-        if (hsn) hsn.value = values.hsnCode || '';
+        if (hsn) hsn.value = values.hsnCode !== undefined ? (values.hsnCode || '') : (form.dataset.defaultHsn || '');
         if (huid) huid.value = values.huidCode || '';
         if (values.productName) row.dataset.productName = values.productName;
         if (values.productMeta) row.dataset.productMeta = values.productMeta;
@@ -1072,7 +1072,8 @@ document.querySelectorAll('.flash').forEach((el) => {
     subtotal = roundMoney(subtotal);
     const discount = roundMoney(n(discountInput ? discountInput.value : 0));
     const taxable = roundMoney(Math.max(0, subtotal - discount));
-    const gst = roundMoney(taxable * 0.03);
+    const gstRate = Math.max(0, n(form.dataset.gstRate || form.querySelector('input[name="gstRate"]')?.value || 3));
+    const gst = roundMoney(taxable * gstRate / 100);
     // Match the server exactly: GST is calculated first, then the final invoice is
     // rounded to the nearest whole rupee before payment/credit calculations.
     const beforeRoundOff = roundMoney(taxable + gst);

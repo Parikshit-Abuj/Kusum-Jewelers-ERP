@@ -5,7 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>
-    <%= title %> · Kusum ERP
+    <%= title %> · <%= businessSettings?.shopName || 'Kusum ERP' %>
   </title>
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/workspace.css" media="screen">
@@ -420,7 +420,7 @@
       <main class="login-card">
         <div class="login-logo">K</div>
         <div class="login-heading">
-          <p class="eyebrow">Kusum ERP</p>
+          <p class="eyebrow"><%= businessSettings?.shopName || 'Kusum ERP' %></p>
           <h1>Welcome back</h1>
           <p class="muted">Sign in to continue to your ERP workspace.</p>
         </div>
@@ -441,7 +441,7 @@
                 </form>
                 <div class="login-footer">
                   <a href="/connection-repair">Set up or change this PC's database connection</a>
-                  <div class="version">Kusum ERP v1.0</div>
+                  <div class="version"><%= businessSettings?.shopName || 'Kusum ERP' %> · ERP v1.0</div>
                 </div>
       </main>
     </div>

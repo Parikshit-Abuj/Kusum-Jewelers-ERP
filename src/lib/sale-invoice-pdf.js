@@ -114,6 +114,7 @@ function formattedDateTime(value) {
 }
 
 function invoiceHeader(doc, sale, continuation = false) {
+  const settings = sale._businessSettings || {};
   const title = continuation ? 'TAX INVOICE - CONTINUED' : 'TAX INVOICE';
   // The shop's pre-printed sheet already carries the visual header. Keep this
   // as the small form label directly above the customer information block.
@@ -139,7 +140,7 @@ function invoiceHeader(doc, sale, continuation = false) {
 
   labelValue(doc, 'Invoice No.', sale.invoiceNumber, 326, 410, y + 8, 148, 9.0);
   labelValue(doc, 'Date & Time', formattedDateTime(sale.saleDate), 326, 410, y + 24, 148, 8.2);
-  labelValue(doc, 'GSTIN No.', '27ABDFK0780F1ZG', 326, 410, y + 43, 148, 8.5);
+  labelValue(doc, 'GSTIN No.', settings.gstin || '-', 326, 410, y + 43, 148, 8.5);
   labelValue(doc, 'GST Type', 'SGST + CGST', 326, 410, y + 59, 148, 8.5);
   return y + height + 5;
 }
@@ -174,6 +175,7 @@ function qrText(value, fallback = '') {
 }
 
 function invoiceQrPayload(sale) {
+  const settings = sale._businessSettings || {};
   const items = (sale.items || []).map((item, index) => {
     const product = item.product || {};
     const itemName = qrText(item.productName || product.name, 'Jewellery item');
@@ -184,7 +186,7 @@ function invoiceQrPayload(sale) {
   const settlement = urdSettlement(sale.total, sale.urdOffset);
   const refund = urdRefundDetails(sale);
   return [
-    'KUSUM JEWELLERS - SALES INVOICE',
+    `${qrText(settings.shopName, 'KUSUM JEWELLERS').toUpperCase()} - SALES INVOICE`,
     `Invoice: ${qrText(sale.invoiceNumber, '—')}`,
     `Customer: ${qrText(sale.customer?.name, 'Walk-in customer')}`,
     'Items:',
@@ -202,6 +204,7 @@ function compactQrText(value, maximum = 56) {
 }
 
 function compactInvoiceQrPayload(sale) {
+  const settings = sale._businessSettings || {};
   // Phone scanner QR codes have a finite capacity. This compact form keeps
   // every sold line, its weight, paid value and due value when an unusually
   // long customer/item description does not fit in the full readable form.
@@ -213,7 +216,7 @@ function compactInvoiceQrPayload(sale) {
   const settlement = urdSettlement(sale.total, sale.urdOffset);
   const refund = urdRefundDetails(sale);
   return [
-    `KUSUM|INV:${qrText(sale.invoiceNumber, '—')}`,
+    `${compactQrText(settings.shopName || 'KUSUM', 30).toUpperCase()}|INV:${qrText(sale.invoiceNumber, '—')}`,
     `CUSTOMER:${compactQrText(sale.customer?.name || 'Walk-in customer', 72)}`,
     `ITEMS:${items.join('; ')}`,
     `PAID:Rs.${amount(sale.paid)}`,
@@ -247,7 +250,7 @@ async function invoiceQrImage(sale) {
   // Do not let a very large invoice fail to produce its tax PDF. The full
   // invoice remains the source of truth if a normal phone QR code cannot hold
   // all item text within its physical capacity.
-  return QRCode.toBuffer(`KUSUM JEWELLERS\nInvoice: ${qrText(sale.invoiceNumber, '—')}\nSee this invoice for complete item details.`, options);
+  return QRCode.toBuffer(`${qrText(sale._businessSettings?.shopName, 'KUSUM JEWELLERS').toUpperCase()}\nInvoice: ${qrText(sale.invoiceNumber, '—')}\nSee this invoice for complete item details.`, options);
 }
 
 function drawItem(doc, item, y) {
@@ -377,7 +380,8 @@ function footerTotals(doc, sale, y) {
   return y + footerHeight;
 }
 
-function signatureBox(doc, y, qrImage) {
+function signatureBox(doc, y, qrImage, sale) {
+  const settings = sale._businessSettings || {};
   const height = 82;
   const split = page.left + 108;
   box(doc, page.left, y, page.right - page.left, height);
@@ -389,26 +393,28 @@ function signatureBox(doc, y, qrImage) {
   doc.fillColor('#111').font('Helvetica-Bold').fontSize(6.6).text('SCAN INVOICE DETAILS', page.left + 4, y + 67, { width: split - page.left - 8, align: 'center' });
 
   const signatureWidth = page.right - split - 20;
-  doc.font('Helvetica-Bold').fontSize(9.2).text('For Kusum Jewellers', split + 10, y + 6, { width: signatureWidth, align: 'center' });
-  if (!fs.existsSync(authorisedSignaturePath)) {
+  doc.font('Helvetica-Bold').fontSize(9.2).text(`For ${settings.shopName || 'Kusum Jewellers'}`, split + 10, y + 6, { width: signatureWidth, align: 'center' });
+  const signatureImage = settings.signatureImage ? Buffer.from(settings.signatureImage) : authorisedSignaturePath;
+  if (!settings.signatureImage && !fs.existsSync(authorisedSignaturePath)) {
     throw new Error('The authorised signature image is missing from the ERP installation.');
   }
-  doc.image(authorisedSignaturePath, split + 10, y + 16, { fit: [signatureWidth, 42], align: 'center', valign: 'center' });
+  doc.image(signatureImage, split + 10, y + 16, { fit: [signatureWidth, 42], align: 'center', valign: 'center' });
   doc.font('Helvetica-Bold').fontSize(9.2).text('Authorised Signatory', split + 10, y + 66, { width: signatureWidth, align: 'center' });
 }
 
-async function writeSaleInvoice(res, sale) {
-  const qrImage = await invoiceQrImage(sale);
-  const doc = new PDFDocument({ size: 'A4', margin: 0, info: { Title: `Tax Invoice ${sale.invoiceNumber}` } });
-  const filename = `${sale.invoiceNumber.replace(/[^A-Za-z0-9-]/g, '_')}.pdf`;
+async function writeSaleInvoice(res, sale, businessSettings = {}) {
+  const invoice = { ...sale, _businessSettings: businessSettings };
+  const qrImage = await invoiceQrImage(invoice);
+  const doc = new PDFDocument({ size: 'A4', margin: 0, info: { Title: `Tax Invoice ${invoice.invoiceNumber}` } });
+  const filename = `${invoice.invoiceNumber.replace(/[^A-Za-z0-9-]/g, '_')}.pdf`;
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
   doc.pipe(res);
 
-  const tableY = invoiceHeader(doc, sale);
-  const itemsEnd = renderItems(doc, sale, tableY);
-  const footerEnd = footerTotals(doc, sale, itemsEnd + 2);
-  signatureBox(doc, footerEnd, qrImage);
+  const tableY = invoiceHeader(doc, invoice);
+  const itemsEnd = renderItems(doc, invoice, tableY);
+  const footerEnd = footerTotals(doc, invoice, itemsEnd + 2);
+  signatureBox(doc, footerEnd, qrImage, invoice);
   doc.end();
 }
 

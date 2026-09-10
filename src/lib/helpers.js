@@ -97,12 +97,13 @@ function grams(value) {
   return `${Number(value || 0).toFixed(3)} g`;
 }
 
-function indianFinancialYear(value = new Date()) {
+function indianFinancialYear(value = new Date(), startMonth = 4) {
   const parts = localDateParts(value);
   const calendarYear = Number(parts.year);
-  // India's financial year runs from 1 April through 31 March. Use the shop
-  // PC's local date, consistently with all other operational document dates.
-  const startYear = Number(parts.month) < 4 ? calendarYear - 1 : calendarYear;
+  const firstMonth = Math.min(12, Math.max(1, Number(startMonth) || 4));
+  // Use the configured financial-year start month and the shop PC's local
+  // date, consistently with all other operational document dates.
+  const startYear = Number(parts.month) < firstMonth ? calendarYear - 1 : calendarYear;
   const endYear = startYear + 1;
   return {
     key: `${startYear}-${endYear}`,
@@ -110,11 +111,15 @@ function indianFinancialYear(value = new Date()) {
   };
 }
 
-async function reserveDocumentNumber(tx, prefix, value = new Date()) {
+async function reserveDocumentNumber(tx, prefix, value = new Date(), options = {}) {
   const day = dateInput(value).replaceAll('-', '');
   const isFinancialYearDocument = prefix === 'SB' || prefix === 'UR';
-  const financialYear = isFinancialYearDocument ? indianFinancialYear(value) : null;
-  const key = isFinancialYearDocument ? `${prefix}-${financialYear.key}` : `${prefix}-${day}`;
+  const documentPrefix = prefix === 'SB'
+    ? String(options.invoicePrefix || 'SB').trim().toUpperCase()
+    : prefix;
+  const financialYear = isFinancialYearDocument ? indianFinancialYear(value, options.financialYearStartMonth) : null;
+  const keyPrefix = prefix === 'SB' && documentPrefix !== 'SB' ? `SB-${documentPrefix}` : prefix;
+  const key = isFinancialYearDocument ? `${keyPrefix}-${financialYear.key}` : `${prefix}-${day}`;
   // LAST_INSERT_ID(expr) is scoped to this MySQL connection. Combined with an
   // interactive Prisma transaction, it atomically reserves a counter value
   // for every LAN client, including the very first request of a new day.
@@ -133,7 +138,7 @@ async function reserveDocumentNumber(tx, prefix, value = new Date()) {
     }
     const serial = String(lastNumber).padStart(isFinancialYearDocument ? 5 : 4, '0');
     const candidate = prefix === 'SB'
-      ? `SB/${financialYear.label}/${serial}`
+      ? `${documentPrefix}/${financialYear.label}/${serial}`
       : prefix === 'UR'
         ? `UR/${financialYear.label}/${serial}`
       : prefix === 'INV' ? `${day}${serial}` : `${prefix}-${day}-${serial}`;
@@ -152,14 +157,14 @@ async function reserveDocumentNumber(tx, prefix, value = new Date()) {
   }
 }
 
-async function nextDocumentNumber(db, prefix, value = new Date()) {
+async function nextDocumentNumber(db, prefix, value = new Date(), options = {}) {
   // Prisma's root client has $transaction; its interactive transaction client
   // intentionally does not. This permits the same helper in GET previews and
   // inside sale/URD save transactions without nested transactions.
   if (typeof db.$transaction === 'function') {
-    return db.$transaction((tx) => reserveDocumentNumber(tx, prefix, value));
+    return db.$transaction((tx) => reserveDocumentNumber(tx, prefix, value, options));
   }
-  return reserveDocumentNumber(db, prefix, value);
+  return reserveDocumentNumber(db, prefix, value, options);
 }
 
 async function reserveBatchNumber(tx, value = new Date()) {
@@ -239,3 +244,4 @@ module.exports = {
   money, grams, formatDateDisplay, nextDocumentNumber, nextBatchDocumentNumber, barcodePrefix,
   metalRateFromDailyRate, makingAmount
 };
+

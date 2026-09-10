@@ -49,7 +49,23 @@ function replaceAll(template, replacements) {
   );
 }
 
-function buildTsplLabel(product) {
+function applyLabelSettings(template, settings = {}) {
+  const width = Number(settings.labelWidthMm || 81);
+  const height = Number(settings.labelHeightMm || 12);
+  const gap = Number(settings.labelGapMm ?? 3);
+  const speed = Number(settings.labelSpeed || 2);
+  const density = Number(settings.labelDensity ?? 10);
+  const shopName = cleanTsplValue(settings.labelShopName || 'KUSUM JEWELLERS', 'Label shop name', 36);
+  const tsplNumber = (value) => Number.isInteger(value) ? String(value) : String(value);
+  return template
+    .replace(/^SIZE .*$/m, `SIZE ${width.toFixed(1)} mm, ${tsplNumber(height)} mm`)
+    .replace(/^GAP .*$/m, `GAP ${gap} mm, 0 mm`)
+    .replace(/^SPEED .*$/m, `SPEED ${speed}`)
+    .replace(/^DENSITY .*$/m, `DENSITY ${density}`)
+    .replaceAll('KUSUM JEWELLERS', shopName);
+}
+
+function buildTsplLabel(product, settings = {}) {
   if (!product.barcode) throw new Error(`${product.name} has no barcode.`);
   const kind = labelKind(product);
   const barcode = cleanTsplValue(product.barcode, 'Barcode');
@@ -68,11 +84,11 @@ function buildTsplLabel(product) {
         '<stn_wt3>': weight(product.stoneWeight),
         '<net_wt>': weight(product.netWeight)
       };
-  return replaceAll(templates[kind], replacements).replace(/\r?\n/g, '\r\n').trimEnd() + '\r\n';
+  return replaceAll(applyLabelSettings(templates[kind], settings), replacements).replace(/\r?\n/g, '\r\n').trimEnd() + '\r\n';
 }
 
-function buildTsplJob(labels) {
-  return labels.map(({ product }) => buildTsplLabel(product)).join('\r\n');
+function buildTsplJob(labels, settings = {}) {
+  return labels.map(({ product }) => buildTsplLabel(product, settings)).join('\r\n');
 }
 
 function nativePrintScript() {

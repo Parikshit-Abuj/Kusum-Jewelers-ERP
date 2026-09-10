@@ -25,6 +25,19 @@ test('silver labels retain the supplied TSC SILVER.PRN layout and use a unique b
   assert.match(tspl, /TEXT 400,85,"ROMAN\.TTF",180,1,8,"Silver Payal"/);
 });
 
+test('applies configured shop text and TSC label parameters without changing item geometry', () => {
+  const tspl = buildTsplLabel({
+    metal: 'SILVER', barcode: 'S 00002', name: 'Silver Ring',
+    grossWeight: 4, stoneWeight: 0, netWeight: 4
+  }, {
+    labelShopName: 'ABC JEWELLERS', labelWidthMm: 80, labelHeightMm: 15,
+    labelGapMm: 2, labelSpeed: 3, labelDensity: 11
+  });
+  assert.match(tspl, /^SIZE 80\.0 mm, 15 mm\r\nGAP 2 mm, 0 mm\r\nSPEED 3\r\nDENSITY 11/m);
+  assert.match(tspl, /TEXT 620,92,"ROMAN\.TTF",180,1,8,"ABC JEWELLERS"/);
+  assert.match(tspl, /BARCODE 620,69,"128M",24,0,180,1,2,"!104S 00002"/);
+});
+
 test('does not silently corrupt characters unsupported by the supplied CODEPAGE 1252 label templates', () => {
   assert.throws(() => buildTsplLabel({
     metal: 'GOLD', barcode: 'G 00001', name: 'हार', grossWeight: 1, stoneWeight: 0, netWeight: 1

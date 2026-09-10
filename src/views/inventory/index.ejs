@@ -27,7 +27,7 @@
   <form class="search-bar inventory-filter-form" method="get">
     <label>Item name<input name="itemName" value="<%= inventoryFilters.itemName %>" placeholder="Ring, chain, payal…"></label>
     <label>Weight (g)<input name="weight" type="number" min="0" step="0.001" value="<%= inventoryFilters.weight %>" placeholder="18.250"></label>
-    <label>Barcode<input name="barcode" value="<%= inventoryFilters.barcode %>" placeholder="G 00001"></label>
+    <label>Barcode<input name="barcode" value="<%= inventoryFilters.barcode %>" placeholder="G 1 or G A"></label>
     <button class="button secondary" type="submit">Search</button>
     <% if (hasInventoryFilters) { %><a class="button ghost" href="/inventory">Clear</a><% } %>
   </form>

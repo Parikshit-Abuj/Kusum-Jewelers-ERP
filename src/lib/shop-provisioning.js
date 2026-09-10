@@ -206,6 +206,7 @@ function printerFormValues(form) {
 
 const REQUIRED_RUNTIME_SCHEMA = {
   AppSession: ['id', 'data', 'expiresAt'],
+  BusinessSettings: ['id', 'shopName', 'invoicePrefix', 'financialYearStartMonth', 'defaultGstRate', 'defaultHsnCode', 'signatureImage', 'labelWidthMm', 'labelHeightMm'],
   BarcodeSequence: ['prefix', 'lastNumber', 'updatedAt'],
   Customer: ['id', 'name', 'phone', 'panNumber', 'createdAt', 'updatedAt'],
   DailyRate: ['id', 'rateDate', 'gold22k', 'gold24k', 'silver'],

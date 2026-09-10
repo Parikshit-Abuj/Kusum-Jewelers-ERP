@@ -783,7 +783,7 @@
     <a href="#invoice-items"><b>2</b> Items</a>
     <a href="#invoice-payment"><b>3</b> Payment</a>
   </nav>
-  <form class="transaction-layout barcode-sale" method="post" action="<%= editingSale ? `/sales/${editSale.id}/edit` : '/sales' %>" data-barcode-sale data-edit-sale="<%= editingSale ? 'true' : 'false' %>" novalidate>
+  <form class="transaction-layout barcode-sale" method="post" action="<%= editingSale ? `/sales/${editSale.id}/edit` : '/sales' %>" data-barcode-sale data-edit-sale="<%= editingSale ? 'true' : 'false' %>" data-default-hsn="<%= businessSettings?.defaultHsnCode || '' %>" data-gst-rate="<%= editingSale ? Number(editSale.gstRate) : Number(businessSettings?.defaultGstRate ?? 3) %>" novalidate>
 
     <!-- Left Main Area -->
     <section class="transaction-main">
@@ -951,7 +951,7 @@
                 <div class="line-header-row">
                   <div class="barcode-field-wrap">
                     <label>Scan / Type Barcode</label>
-                  <input name="barcode" autocomplete="off" placeholder="e.g. G 00001" data-barcode>
+                  <input name="barcode" autocomplete="off" placeholder="e.g. G 1 or S A" data-barcode>
                   </div>
                   <input type="hidden" name="productId" data-product-id>
                   <input type="hidden" name="saleItemId" data-sale-item-id>
@@ -1007,7 +1007,7 @@
       </div>
 
       <div class="summary-row">
-        <span>GST (3%)</span>
+        <span>GST (<%= editingSale ? Number(editSale.gstRate) : Number(businessSettings?.defaultGstRate ?? 3) %>%)</span>
         <strong data-gst>₹0.00</strong>
       </div>
 
@@ -1016,7 +1016,7 @@
         <strong data-round-off>₹0.00</strong>
       </div>
 
-      <input name="gstRate" type="hidden" value="3">
+      <input name="gstRate" type="hidden" value="<%= editingSale ? Number(editSale.gstRate) : Number(businessSettings?.defaultGstRate ?? 3) %>">
 
       <div class="summary-total-box">
         <span>Invoice Total</span>

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title><%= title %> · Kusum ERP</title>
+    <title><%= title %> · <%= businessSettings?.shopName || 'Kusum ERP' %></title>
     <link rel="stylesheet" href="/styles.css">
     <link rel="stylesheet" href="/workspace.css" media="screen">
     <link rel="stylesheet" href="/refinement.css" media="screen">
@@ -18,7 +18,7 @@
         </button>
         <a class="mobile-brand" href="/">
           <span class="brand-mark-sm">K</span>
-          <strong>Kusum ERP</strong>
+          <strong><%= businessSettings?.shopName || 'Kusum ERP' %></strong>
         </a>
       </div>
       <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
@@ -26,7 +26,7 @@
       <aside class="sidebar" id="appSidebar">
         <a class="brand" href="/">
           <span class="brand-mark">K</span>
-          <span>Kusum ERP<small>Jewelry management</small></span>
+          <span><%= businessSettings?.shopName || 'Kusum ERP' %><small>Jewelry management</small></span>
         </a>
         <% const navigationGroups = [
           { name: 'Workspace', links: [
@@ -37,7 +37,7 @@
           { name: 'Manage', links: [
             ['/rates', 'Daily rates', 'trend'], ['/item-names', 'Item Names', 'grid'],
             ['/reports', 'Reports', 'chart'], ['/data-management', 'Export & archive', 'download'],
-            ['/network-setup', 'Network PCs', 'network']
+            ['/network-setup', 'Network PCs', 'network'], ['/business-settings', 'Business Settings', 'grid']
           ] }
         ]; const activeSection = navigationGroups.flatMap(group => group.links).find(([url]) => url === '/' ? currentPath === '/' : currentPath.startsWith(url)); %>
         <nav aria-label="Main navigation">

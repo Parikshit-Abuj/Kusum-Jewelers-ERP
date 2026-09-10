@@ -18,6 +18,12 @@ test('invalid weight does not accidentally filter available stock', () => {
   assert.equal(weightClause(''), null);
 });
 
+test('barcode filters normalize compact variable-length Base-36 labels', () => {
+  const clauses = productSearchClauses({ barcode: 'GA' });
+  assert.ok(clauses[0].OR.some((entry) => entry.barcode?.contains === 'G A'));
+  assert.ok(clauses[0].OR.some((entry) => entry.sku?.contains === 'G-A'));
+});
+
 test('all URD purity controls are handwritten fields, without preset purity dropdowns', () => {
   const files = [
     path.join(__dirname, '..', 'src', 'views', 'urd-purchases', 'form.ejs'),
