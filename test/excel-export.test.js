@@ -146,6 +146,22 @@ test('wraps long scheme customer and payment details without allowing text to ov
   assert.ok(sheet.getRow(5).height > 18);
 });
 
+test('stores a single scheme paid date as a real Excel date', async () => {
+  const workbookBytes = await buildExcelExport({
+    title: 'Scheme date validation', columns: [], rows: [],
+    sheets: [{
+      name: 'Month 1', title: 'Month 1 Scheme Report', subtitle: 'Monthly collection status', layout: 'ca-register',
+      columns: [{ key: 'paidDate', label: 'Paid Date', type: 'date-list', width: 20 }],
+      rows: [{ paidDate: '5-Sep-26' }]
+    }]
+  });
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(workbookBytes);
+  const cell = workbook.getWorksheet('Month 1').getCell('A5');
+  assert.ok(cell.value instanceof Date);
+  assert.equal(cell.numFmt, 'd-mmm-yy');
+});
+
 test('renders the compact customer ledger register without filters or unnecessary columns', async () => {
   const workbookBytes = await buildExcelExport({
     title: 'Kusum ERP - Customer ledger validation',

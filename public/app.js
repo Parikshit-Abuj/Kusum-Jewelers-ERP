@@ -77,6 +77,16 @@ document.addEventListener('submit', (event) => {
   form.querySelectorAll('input[type="text"], input[type="search"], input:not([type]), textarea, [data-uppercase], [data-title-case]').forEach(convertInputToUppercase);
 });
 
+document.querySelectorAll('[data-merge-duplicates-form]').forEach((form) => {
+  form.addEventListener('submit', (event) => {
+    const count = Number(form.dataset.duplicateCount || 0);
+    const suffix = count === 1 ? '' : 's';
+    if (!window.confirm(`Combine ${count} duplicate supplier profile${suffix} with the same name? Their purchases, payments and open dues will stay intact under one supplier account.`)) {
+      event.preventDefault();
+    }
+  });
+});
+
 
 /* ── Form Enter navigation ───────────────────────────────────
    Cashiers enter a large amount of data from the keyboard. Enter moves to
@@ -1453,7 +1463,12 @@ document.querySelectorAll('.flash').forEach((el) => {
     };
 
     const customerSection = section('Customer');
-    const selectedCustomer = existing && !existing.hidden ? existingName?.textContent.trim() : '';
+    // Customer lookup lives in its own module, so resolve its elements from
+    // the billing form here instead of relying on another closure's locals.
+    const existingCustomerBox = form.querySelector('[data-existing-customer]');
+    const existingCustomerName = form.querySelector('[data-existing-name]');
+    const selectedCustomer = existingCustomerBox && !existingCustomerBox.hidden
+      ? existingCustomerName?.textContent.trim() : '';
     const enteredCustomer = form.querySelector('[data-edit-customer-name], [data-customer-name]:not([disabled])')?.value?.trim();
     addReviewRow(customerSection, 'Name', selectedCustomer || enteredCustomer || 'Walk-in customer');
     addReviewRow(customerSection, 'Mobile', form.querySelector('[data-customer-phone]')?.value?.trim() || 'Not provided');
@@ -1809,46 +1824,6 @@ function updateInventoryLabelBatchState() {
   updateInventoryLabelBatchState();
 })();
 
-/* ── Inventory list / card view ──────────────────────────────── */
-(function initInventoryView() {
-  const cardGrid = document.querySelector('[data-inventory-cards]');
-  const listView = document.querySelector('.inventory-list-view');
-  const switches = document.querySelectorAll('[data-inventory-view]');
-  if (!cardGrid || !listView || !switches.length) return;
-
-  const applyView = (view) => {
-    const cards = view === 'cards';
-    cardGrid.hidden = !cards;
-    listView.hidden = cards;
-    switches.forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.inventoryView === view)));
-    try { localStorage.setItem('kusum-erp-inventory-view', view); } catch (_) {}
-  };
-  let saved = 'list';
-  try { saved = localStorage.getItem('kusum-erp-inventory-view') || 'list'; } catch (_) {}
-  applyView(saved === 'cards' ? 'cards' : 'list');
-  switches.forEach((button) => button.addEventListener('click', () => applyView(button.dataset.inventoryView)));
-
-  document.querySelectorAll('[data-inventory-card-select]').forEach((button) => {
-    button.addEventListener('click', () => {
-      const target = document.querySelector(`[data-label-select][value="${CSS.escape(button.dataset.inventoryCardSelect)}"]`);
-      if (!target || target.disabled) return;
-      target.checked = !target.checked;
-      updateInventoryLabelBatchState();
-      button.classList.toggle('is-selected', target.checked);
-      button.textContent = target.checked ? 'Label selected' : 'Select label';
-    });
-  });
-  document.addEventListener('change', (event) => {
-    if (!event.target.matches('[data-label-select], [data-label-select-all]')) return;
-    document.querySelectorAll('[data-inventory-card-select]').forEach((button) => {
-      const target = document.querySelector(`[data-label-select][value="${CSS.escape(button.dataset.inventoryCardSelect)}"]`);
-      const selected = Boolean(target?.checked);
-      button.classList.toggle('is-selected', selected);
-      button.textContent = selected ? 'Label selected' : 'Select label';
-    });
-  });
-})();
-
 /* ═══════════════════════════════════════════════════════════════
    ITEM NAME AUTOCOMPLETE — inventory form
    ═══════════════════════════════════════════════════════════════ */
@@ -2076,6 +2051,15 @@ function updateInventoryLabelBatchState() {
   const loadModalCloseBtn = document.getElementById('batchLoadDocCloseBtn');
   const loadModalCancelBtn = document.getElementById('batchLoadDocCancelBtn');
   const docListTbody = document.getElementById('batchDocListTbody');
+  const docFilterForm = document.getElementById('batchDocFilterForm');
+  const docSearchInput = document.getElementById('batchDocSearchInput');
+  const docDateInput = document.getElementById('batchDocDateInput');
+  const docClearFiltersBtn = document.getElementById('batchDocClearFilters');
+  const docPagination = document.getElementById('batchDocPagination');
+  const docPrevBtn = document.getElementById('batchDocPrevBtn');
+  const docNextBtn = document.getElementById('batchDocNextBtn');
+  const docPageLabel = document.getElementById('batchDocPageLabel');
+  let batchDocsPage = 1;
 
   const entryPanel = document.getElementById('batchEntryPanel');
   const entryTitle = document.getElementById('batchEntryTitle');
@@ -2381,6 +2365,7 @@ function updateInventoryLabelBatchState() {
     if (!loadModal) return;
     loadModal.style.display = 'flex';
     loadModal.setAttribute('aria-hidden', 'false');
+    batchDocsPage = 1;
     fetchBatchDocsList();
   }
 
@@ -2393,14 +2378,46 @@ function updateInventoryLabelBatchState() {
   loadDocBtn?.addEventListener('click', openLoadDocModal);
   loadModalCloseBtn?.addEventListener('click', closeLoadDocModal);
   loadModalCancelBtn?.addEventListener('click', closeLoadDocModal);
+  docFilterForm?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    batchDocsPage = 1;
+    fetchBatchDocsList();
+  });
+  docClearFiltersBtn?.addEventListener('click', () => {
+    if (docSearchInput) docSearchInput.value = '';
+    if (docDateInput) docDateInput.value = '';
+    batchDocsPage = 1;
+    fetchBatchDocsList();
+  });
+  docPrevBtn?.addEventListener('click', () => {
+    if (batchDocsPage <= 1) return;
+    batchDocsPage -= 1;
+    fetchBatchDocsList();
+  });
+  docNextBtn?.addEventListener('click', () => {
+    if (docNextBtn.disabled) return;
+    batchDocsPage += 1;
+    fetchBatchDocsList();
+  });
 
   async function fetchBatchDocsList() {
     if (!docListTbody) return;
     docListTbody.innerHTML = '<tr><td colspan="6" class="center muted" style="padding: 24px;">Loading batch documents...</td></tr>';
     try {
-      const res = await fetch('/api/inventory/batch-docs');
-      if (!res.ok) throw new Error('Failed to load batch list');
+      const params = new URLSearchParams({ page: String(batchDocsPage) });
+      if (docSearchInput?.value.trim()) params.set('q', docSearchInput.value.trim());
+      if (docDateInput?.value) params.set('date', docDateInput.value);
+      const res = await fetch(`/api/inventory/batch-docs?${params.toString()}`);
+      if (!res.ok) {
+        let message = 'Failed to load batch list';
+        try { message = (await res.json()).error || message; } catch (_) {}
+        throw new Error(message);
+      }
       const data = await res.json();
+      if (docPagination) docPagination.hidden = false;
+      if (docPageLabel) docPageLabel.textContent = `Page ${data.page || batchDocsPage}`;
+      if (docPrevBtn) docPrevBtn.disabled = (data.page || batchDocsPage) <= 1;
+      if (docNextBtn) docNextBtn.disabled = !data.hasNext;
       if (!data.docs || data.docs.length === 0) {
         docListTbody.innerHTML = '<tr><td colspan="6" class="center muted" style="padding: 28px;">No Batch Documents found yet. Create one by adding pieces!</td></tr>';
         return;
@@ -2428,6 +2445,7 @@ function updateInventoryLabelBatchState() {
       });
 
     } catch (err) {
+      if (docPagination) docPagination.hidden = true;
       docListTbody.innerHTML = `<tr><td colspan="6" class="center text-danger" style="padding: 20px;">Error loading batches: ${escapeHtml(err.message)}</td></tr>`;
     }
   }

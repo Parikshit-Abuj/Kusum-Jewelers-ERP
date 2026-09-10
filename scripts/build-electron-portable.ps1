@@ -63,8 +63,7 @@ New-Item -ItemType Directory -Path $outputPath -Force | Out-Null
   --ignore='^/(?!electron-main\.js$|package\.json$|public(?:/|$)|src(?:/|$)|prisma(?:/|$)|scripts(?:/|$)|node_modules(?:/|$)).*' `
   --ignore='^/scripts/(?!print-tspl\.ps1$|list-printers\.ps1$).*' `
   --ignore='^/prisma/(?!schema\.prisma$|migrations(?:/|$)).*' `
-  --ignore='^/src/excel-runtime/node_modules(?:/|$)' `
-  --ignore='^/src/excel-runtime/verify-export\.mjs$'
+  --ignore='^/src/excel-runtime/node_modules(?:/|$)'
 if ($LASTEXITCODE -ne 0) { throw 'Could not package the Electron desktop ERP.' }
 
 $applicationDirectory = Join-Path $outputPath 'Kusum ERP-win32-x64'

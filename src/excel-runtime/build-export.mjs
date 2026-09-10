@@ -34,9 +34,26 @@ function dateOnlyValue(value) {
   return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day ? date : null;
 }
 
+function dateListValue(value) {
+  const text = String(value || '').trim();
+  const isoDate = dateOnlyValue(text);
+  if (isoDate) return isoDate;
+  const match = /^(\d{1,2})-([A-Za-z]{3})-(\d{2})$/.exec(text);
+  if (!match) return null;
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const month = months.findIndex((name) => name.toLowerCase() === match[2].toLowerCase());
+  if (month < 0) return null;
+  const date = new Date(Date.UTC(2000 + Number(match[3]), month, Number(match[1]), 12));
+  return date.getUTCDate() === Number(match[1]) ? date : null;
+}
+
 function cellValue(value, type) {
   if (value === null || value === undefined || (['text', 'identifier'].includes(type) && value === '')) return null;
   if (type === 'identifier') return { richText: [{ text: String(value) }] };
+  if (type === 'date-list') {
+    const stableDate = dateListValue(value);
+    return stableDate || String(value);
+  }
   if (type === 'date') {
     const dateText = String(value);
     const stableDate = dateOnlyValue(dateText);
@@ -44,12 +61,18 @@ function cellValue(value, type) {
     const date = value instanceof Date ? value : new Date(value);
     return Number.isNaN(date.getTime()) ? dateText : date;
   }
-  if (['currency', 'number', 'integer', 'weight'].includes(type)) return Number(value || 0);
+  if (['currency', 'number', 'integer', 'weight'].includes(type)) {
+    if (value === '' || value === null || value === undefined) return 0;
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) throw new Error(`Cannot export non-numeric value "${String(value)}" as ${type}.`);
+    return numeric;
+  }
   return String(value);
 }
 
 function numberFormat(type) {
   if (type === 'date') return 'd-mmm-yy';
+  if (type === 'date-list') return 'd-mmm-yy';
   if (type === 'currency') return '[$₹-en-IN]#,##0.00;[Red]-[$₹-en-IN]#,##0.00';
   if (type === 'weight') return '0.000;[Red]-0.000';
   if (type === 'integer') return '#,##0;[Red]-#,##0';
@@ -91,8 +114,9 @@ function mergeAcross(sheet, row, lastColumn) {
 }
 
 function applyCaRegisterCellFormat(cell, type, alignment = 'left', wrapText = false) {
-  cell.alignment = { vertical: 'middle', horizontal: alignment, wrapText };
-  if (type === 'date') cell.numFmt = 'd-mmm-yy';
+  const shouldWrap = wrapText || type === 'text';
+  cell.alignment = { vertical: 'middle', horizontal: alignment, wrapText: shouldWrap };
+  if (type === 'date' || type === 'date-list') cell.numFmt = 'd-mmm-yy';
   else if (type === 'currency' || type === 'number') cell.numFmt = '#,##0.00;[Red]-#,##0.00';
   else if (type === 'weight') cell.numFmt = '#,##0.000;[Red]-#,##0.000';
   else if (type === 'integer') cell.numFmt = '#,##0;[Red]-#,##0';
@@ -101,7 +125,7 @@ function applyCaRegisterCellFormat(cell, type, alignment = 'left', wrapText = fa
 
 function caRegisterRowHeight(row, columns) {
   const lines = columns.reduce((maximum, column) => {
-    if (!column.wrap) return maximum;
+    if (!column.wrap && column.type !== 'text') return maximum;
     const value = String(row[column.key] || '');
     const estimatedLines = value.split(/\r?\n/).reduce(
       (total, line) => total + Math.max(1, Math.ceil(line.length / Math.max(8, (column.width || 16) - 2))),
@@ -121,7 +145,7 @@ function addCaRegisterWorksheet(workbook, spec, index, usedNames) {
   const headerRow = 4;
   const dataStart = headerRow + 1;
   const sheet = workbook.addWorksheet(sheetName(spec.name, index, usedNames), {
-    views: [{ showGridLines: true }]
+    views: [{ state: 'frozen', ySplit: headerRow, showGridLines: true }]
   });
   sheet.properties.defaultRowHeight = 18;
   sheet.columns = columns.map((column) => ({ key: column.key, width: column.width || 16 }));

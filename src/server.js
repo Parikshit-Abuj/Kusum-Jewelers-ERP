@@ -1131,24 +1131,80 @@ app.all(['/api/inventory/batch-docs/reserve', '/api/inventory/batch-docs/next'],
 
 app.get('/api/inventory/batch-docs', async (req, res, next) => {
   try {
-    const batchGroups = await prisma.product.groupBy({
-      by: ['batchDocNo'],
-      where: { batchDocNo: { not: null } },
-      _count: { id: true },
-      _sum: { netWeight: true, sellingPrice: true },
-      orderBy: { batchDocNo: 'desc' },
-      take: 30
-    });
-    const docs = await Promise.all(batchGroups.map(async (bg) => {
-      const sample = await prisma.product.findFirst({
-        where: { batchDocNo: bg.batchDocNo },
-        select: { name: true, category: true, metal: true, purity: true, createdAt: true, makingChargeType: true, makingChargeValue: true, location: true }
-      });
+    const pageSize = 30;
+    const requestedPage = Number(req.query.page || 1);
+    const page = Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+    const q = String(req.query.q || '').trim();
+    const date = String(req.query.date || '').trim();
+    if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({ error: 'Choose a valid batch date.' });
+    }
+    let dateRange = null;
+    if (date) {
+      try {
+        dateRange = localDateTimeRange(date, date);
+      } catch (_) {
+        return res.status(400).json({ error: 'Choose a valid batch date.' });
+      }
+    }
+
+    const searchClause = q
+      ? Prisma.sql`AND (m.batchDocNo LIKE ${`%${q}%`}
+        OR m.name LIKE ${`%${q}%`}
+        OR m.category LIKE ${`%${q}%`}
+        OR m.barcode LIKE ${`%${q}%`})`
+      : Prisma.empty;
+    const dateClause = dateRange
+      ? Prisma.sql`AND m.createdAt >= ${dateRange.gte} AND m.createdAt <= ${dateRange.lte}`
+      : Prisma.empty;
+
+    // Read one extra group so the client can render a reliable Next button
+    // without a second COUNT query. The list remains bounded at 30 batches
+    // per page, while older batches stay reachable through pagination/search.
+    // The inner query identifies matching batches; the outer query totals
+    // every piece in each matched batch, even for a barcode-specific search.
+    const batchGroups = await prisma.$queryRaw(Prisma.sql`
+      SELECT p.batchDocNo, COUNT(p.id) AS pieceCount,
+             COALESCE(SUM(p.netWeight), 0) AS totalWeight,
+             COALESCE(SUM(p.sellingPrice), 0) AS totalValue
+      FROM Product p
+      WHERE p.batchDocNo IS NOT NULL
+        AND p.batchDocNo IN (
+          SELECT DISTINCT m.batchDocNo
+          FROM Product m
+          WHERE m.batchDocNo IS NOT NULL ${searchClause} ${dateClause}
+        )
+      GROUP BY p.batchDocNo
+      ORDER BY p.batchDocNo DESC
+      LIMIT ${pageSize + 1} OFFSET ${(page - 1) * pageSize}
+    `);
+    const visibleGroups = batchGroups.slice(0, pageSize);
+    const batchNumbers = visibleGroups.map((group) => group.batchDocNo).filter(Boolean);
+    let samples = [];
+    if (batchNumbers.length) {
+      // Fetch one representative product for every visible batch in a single
+      // statement. This replaces the previous one-query-per-batch N+1 loop.
+      samples = await prisma.$queryRaw(Prisma.sql`
+        SELECT p.batchDocNo, p.name, p.category, p.metal, p.purity,
+               p.createdAt, p.makingChargeType, p.makingChargeValue, p.location
+        FROM Product p
+        INNER JOIN (
+          SELECT batchDocNo, MIN(id) AS firstId
+          FROM Product
+          WHERE batchDocNo IN (${Prisma.join(batchNumbers)})
+          GROUP BY batchDocNo
+        ) firstBatch ON firstBatch.batchDocNo = p.batchDocNo
+                    AND firstBatch.firstId = p.id
+      `);
+    }
+    const sampleByBatch = new Map(samples.map((sample) => [sample.batchDocNo, sample]));
+    const docs = visibleGroups.map((bg) => {
+      const sample = sampleByBatch.get(bg.batchDocNo);
       return {
         batchDocNo: bg.batchDocNo,
-        pieceCount: bg._count.id,
-        totalWeight: Number(bg._sum.netWeight || 0),
-        totalValue: Number(bg._sum.sellingPrice || 0),
+        pieceCount: Number(bg.pieceCount || 0),
+        totalWeight: Number(bg.totalWeight || 0),
+        totalValue: Number(bg.totalValue || 0),
         createdAt: sample?.createdAt,
         name: sample?.name,
         category: sample?.category,
@@ -1158,8 +1214,8 @@ app.get('/api/inventory/batch-docs', async (req, res, next) => {
         makingChargeValue: sample?.makingChargeValue,
         location: sample?.location
       };
-    }));
-    res.json({ docs });
+    });
+    res.json({ docs, page, pageSize, hasNext: batchGroups.length > pageSize, q, date });
   } catch (error) { next(error); }
 });
 

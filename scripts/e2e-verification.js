@@ -1,6 +1,7 @@
 require('dotenv').config();
 const path = require('path');
 const express = require('express');
+const ExcelJS = require('exceljs');
 const { createPrisma } = require('../src/lib/prisma');
 const { getExportPayload, RESOURCE_LIST, resourceFor, parseDateRange } = require('../src/lib/data-lifecycle');
 const { buildExcelExport } = require('../src/lib/excel-export');
@@ -331,9 +332,20 @@ async function runEndToEndVerification() {
       const buffer = await buildExcelExport(payload);
       console.log(`   ✔ Exported ${res.label} (.xlsx) — Size: ${buffer.length} bytes, Rows: ${payload.rows.length}, Title: "${payload.title}"`);
 
-      // Verify every sheet generates valid Excel data
+      // Reopen the generated workbook so this check validates the actual XLSX
+      // package, not just the in-memory export payload.
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(buffer);
+      if (workbook.worksheets.length !== (payload.sheets || []).length) {
+        throw new Error(`${res.key} workbook sheet count does not match its payload`);
+      }
+
+      // Verify every sheet has a valid Excel structure.
       if (payload.sheets && payload.sheets.length) {
         const sheetNames = payload.sheets.map(s => s.name);
+        if (workbook.worksheets.some((sheet, index) => sheet.name !== sheetNames[index])) {
+          throw new Error(`${res.key} workbook sheet names do not match its payload`);
+        }
         console.log(`     → Sheets: ${sheetNames.join(', ')}`);
         for (const sheet of payload.sheets) {
           if (!Array.isArray(sheet.rows) || !Array.isArray(sheet.columns) || sheet.columns.length === 0) {

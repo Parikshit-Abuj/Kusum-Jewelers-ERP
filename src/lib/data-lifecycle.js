@@ -12,7 +12,7 @@ const RESOURCE_LIST = [
   { key: 'supplier-purchases', label: 'Supplier purchases', dateLabel: 'Supplier purchase date', archiveNote: 'Use the Purchase Register to manage supplier purchases. Export is available; purchases are not archived from this screen.', archiveDisabled: true },
   { key: 'cancelled-urd', label: 'Cancelled URD purchases', dateLabel: 'Cancelled URD purchase date', archiveNote: 'Cancelled URD purchases are audit records and cannot be archived from this screen.', archiveDisabled: true },
   { key: 'cashbook', label: 'Daily cashbook', dateLabel: 'Entry date', archiveNote: 'Cashbook entries in the chosen period are permanently removed. Any linked customer balance, invoice payment, URD payout or scheme installment is reversed safely.' },
-  { key: 'schemes', label: 'Jewellery savings schemes', dateLabel: 'Scheme start date', archiveNote: 'Scheme records and their Cashbook receipts are retained as financial history. Export this register instead of archiving it here.', archiveDisabled: true },
+  { key: 'schemes', label: 'Jewellery savings schemes', dateLabel: 'Scheme activity date', archiveNote: 'Scheme records and their Cashbook receipts are retained as financial history. Export this register instead of archiving it here.', archiveDisabled: true },
   { key: 'inventory', label: 'Inventory records', dateLabel: 'Created date', archiveNote: 'Only zero-stock records can be removed. Sold barcode items are automatically removed when billed.' },
   { key: 'stock-movements', label: 'Stock movements', dateLabel: 'Movement date', archiveNote: 'Movement history can be removed without changing current stock quantity.' },
   { key: 'customers', label: 'Customer directory', dateLabel: 'Customer created date', archiveNote: 'Only customers with no sales, URD, cashbook or ledger history can be removed.' },
@@ -108,7 +108,16 @@ function schemeInstallmentPaymentSummary(installment = {}) {
       : [];
   const paid = savedPayments
     .filter((payment) => Number(payment.amount || 0) > 0 && payment.paymentDate)
-    .sort((a, b) => String(a.paymentDate).localeCompare(String(b.paymentDate)));
+    // Prisma returns Date objects for DateTime fields. Comparing their
+    // display strings (for example, "Mon Sep..." and "Tue Aug...") sorts by
+    // weekday/month text rather than chronology, which can render split
+    // payments in the wrong order. Compare timestamps so the export always
+    // shows the real payment dates in sequence.
+    .sort((a, b) => {
+      const aTime = new Date(a.paymentDate).getTime();
+      const bTime = new Date(b.paymentDate).getTime();
+      return (Number.isFinite(aTime) ? aTime : 0) - (Number.isFinite(bTime) ? bTime : 0);
+    });
   if (!paid.length) return { paidDates: '', paymentType: '' };
 
   // An installment may be paid in parts on different dates. Keep every
@@ -155,6 +164,7 @@ function exportEnvelope(resource, range, columns, rows, options = {}) {
 // ── Column helpers ─────────────────────────────────────────────
 const col = {
   date:     (key, label = 'Date')   => ({ key, label, type: 'date', width: 14 }),
+  dateList: (key, label = 'Date', width = 20) => ({ key, label, type: 'date-list', width }),
   text:     (key, label, width = 20) => ({ key, label, type: 'text', width }),
   identifier: (key, label, width = 18) => ({ key, label, type: 'identifier', width }),
   currency: (key, label)            => ({ key, label, type: 'currency', width: 18 }),
@@ -162,12 +172,6 @@ const col = {
   integer:  (key, label, width = 12) => ({ key, label, type: 'integer', width }),
   weight:   (key, label)            => ({ key, label, type: 'weight', width: 13 })
 };
-
-function pruneEmptyColumns(columns, rows) {
-  // Financial registers must keep a stable schema. A zero GST, balance,
-  // stone weight or payment column is meaningful and must not disappear.
-  return columns;
-}
 
 function salesExportScope(value) {
   const scope = String(value || 'ALL').trim().toUpperCase();
@@ -188,7 +192,8 @@ function salesRegisterColumns() {
     col.currency('total', 'Total'),
     col.currency('urdAdjustment', 'URD'),
     col.currency('discount', 'Discount'),
-    col.currency('netAmount', 'Net-amt')
+    col.currency('netAmount', 'Net-amt'),
+    col.currency('refundAmount', 'Refund')
   ];
 }
 
@@ -205,10 +210,10 @@ function isGoldSilverOnlyMixedSale(sale) {
 // contains both metals.  Rounding both shares independently can create or
 // lose one paisa.  Gold takes the normal rounded value and Silver receives
 // the exact remainder, so the two registers always reconcile to All sales.
-function mixedMetalAllocatedAmount(amount, selectedMetal, allItemTaxable, goldItemTaxable, selectedItemTaxable, isMixedGoldSilverOnly) {
-  if (!selectedMetal || allItemTaxable <= 0) return num(amount);
-  if (!isMixedGoldSilverOnly) return roundCurrency(num(amount) * (selectedItemTaxable / allItemTaxable));
-  const goldAmount = roundCurrency(num(amount) * (goldItemTaxable / allItemTaxable));
+function mixedMetalAllocatedAmount(amount, selectedMetal, allItemBasis, goldItemBasis, selectedItemBasis, isMixedGoldSilverOnly) {
+  if (!selectedMetal || allItemBasis <= 0) return num(amount);
+  if (!isMixedGoldSilverOnly) return roundCurrency(num(amount) * (selectedItemBasis / allItemBasis));
+  const goldAmount = roundCurrency(num(amount) * (goldItemBasis / allItemBasis));
   return selectedMetal === 'GOLD' ? goldAmount : roundCurrency(num(amount) - goldAmount);
 }
 
@@ -221,13 +226,25 @@ function saleRegisterRows(sales, metal = null) {
       const items = selectedMetal ? sale.items.filter((item) => item.productMetal === selectedMetal) : sale.items;
       const grossWeight = items.reduce((sum, item) => sum + num(item.grossWeight) * Number(item.quantity || 0), 0);
       const netWeight = items.reduce((sum, item) => sum + num(item.weight) * Number(item.quantity || 0), 0);
-      const allItemTaxable = sale.items.reduce((sum, item) => sum + num(item.taxableAmount), 0);
+      // Use taxable value for proportional allocation, but fall back to
+      // weight and finally quantity when old/imported rows have no taxable
+      // amount. This keeps Gold + Silver sheets reconcilable instead of
+      // duplicating the full invoice into both sheets.
+      const itemBasis = (item) => {
+        const taxable = num(item.taxableAmount);
+        if (taxable > 0) return taxable;
+        const weight = num(item.weight) * Number(item.quantity || 0);
+        if (weight > 0) return weight;
+        return Math.max(0, Number(item.quantity || 0));
+      };
+      const allItemBasis = sale.items.reduce((sum, item) => sum + itemBasis(item), 0);
+      const selectedItemBasis = items.reduce((sum, item) => sum + itemBasis(item), 0);
       const selectedItemTaxable = items.reduce((sum, item) => sum + num(item.taxableAmount), 0);
-      const goldItemTaxable = sale.items
+      const goldItemBasis = sale.items
         .filter((item) => item.productMetal === 'GOLD')
-        .reduce((sum, item) => sum + num(item.taxableAmount), 0);
+        .reduce((sum, item) => sum + itemBasis(item), 0);
       const mixedGoldSilverOnly = isGoldSilverOnlyMixedSale(sale);
-      const allocate = (amount) => mixedMetalAllocatedAmount(amount, selectedMetal, allItemTaxable, goldItemTaxable, selectedItemTaxable, mixedGoldSilverOnly);
+      const allocate = (amount) => mixedMetalAllocatedAmount(amount, selectedMetal, allItemBasis, goldItemBasis, selectedItemBasis, mixedGoldSilverOnly);
       const discount = selectedMetal ? allocate(sale.discount) : num(sale.discount);
       const taxableAmount = selectedMetal
         ? mixedGoldSilverOnly
@@ -240,6 +257,7 @@ function saleRegisterRows(sales, metal = null) {
       const cgstAmount = Math.round((gstAmount / 2) * 100) / 100;
       const total = selectedMetal ? allocate(sale.total) : num(sale.total);
       const urdAdjustment = selectedMetal ? allocate(settlement.saleAdjustment) : settlement.saleAdjustment;
+      const refundAmount = selectedMetal ? allocate(settlement.netRefundable) : settlement.netRefundable;
       return {
         saleDate: exportDate(sale.saleDate),
         invoiceNumber: sale.invoiceNumber,
@@ -253,7 +271,8 @@ function saleRegisterRows(sales, metal = null) {
         total,
         urdAdjustment,
         discount,
-        netAmount: Math.max(0, roundCurrency(total - urdAdjustment))
+        netAmount: Math.max(0, roundCurrency(total - urdAdjustment)),
+        refundAmount
       };
     });
 }
@@ -362,17 +381,21 @@ async function getExportPayload(db, key, range, options = {}) {
   switch (key) {
 
     // ────────────────────────────────────────────────────────────
-    //  SALES — Line items + Invoice summary
+    //  SALES — CA register with All/Gold/Silver sheets
     // ────────────────────────────────────────────────────────────
     case 'sales': {
+      const scope = salesExportScope(options.salesMetal);
       const sales = await db.sale.findMany({
-        where: { saleDate: dateTimeRange(range), cancelledAt: null },
+        where: {
+          saleDate: dateTimeRange(range),
+          cancelledAt: null,
+          ...(scope !== 'ALL' ? { items: { some: { productMetal: scope } } } : {})
+        },
         orderBy: [{ saleDate: 'asc' }, { id: 'asc' }],
         include: { customer: true, urdPurchase: true, items: { include: { product: true } } },
         take: MAX_SOURCE_ROWS + 1
       });
       assertExportRows(sales, 'Sales register');
-      const scope = salesExportScope(options.salesMetal);
       const selectedMetals = scope === 'ALL' ? [null, 'GOLD', 'SILVER'] : [scope];
       const columns = salesRegisterColumns();
       const sheets = selectedMetals.map((metal) => {
@@ -385,7 +408,7 @@ async function getExportPayload(db, key, range, options = {}) {
           layout: 'ca-register',
           columns,
           rows,
-          totalKeys: ['grossWeight', 'netWeight', 'taxableAmount', 'cgstAmount', 'sgstAmount', 'igstAmount', 'total', 'urdAdjustment', 'discount', 'netAmount']
+          totalKeys: ['grossWeight', 'netWeight', 'taxableAmount', 'cgstAmount', 'sgstAmount', 'igstAmount', 'total', 'urdAdjustment', 'discount', 'netAmount', 'refundAmount']
         };
       });
       return exportEnvelope(resource, range, columns, sheets[0].rows, { sheets });
@@ -436,7 +459,7 @@ async function getExportPayload(db, key, range, options = {}) {
     }
 
     case 'cancelled-sales': {
-      const sales = await db.sale.findMany({ where: { cancelledAt: { not: null }, saleDate: dateTimeRange(range) }, orderBy: [{ cancelledAt: 'asc' }, { id: 'asc' }], include: { customer: true, items: true }, take: MAX_SOURCE_ROWS + 1 });
+      const sales = await db.sale.findMany({ where: { cancelledAt: dateTimeRange(range) }, orderBy: [{ cancelledAt: 'asc' }, { id: 'asc' }], include: { customer: true, items: true }, take: MAX_SOURCE_ROWS + 1 });
       assertExportRows(sales, 'Cancelled invoice register');
       const rows = sales.map((sale) => ({ saleDate: exportDate(sale.saleDate), cancelledAt: exportDate(sale.cancelledAt), invoiceNumber: sale.invoiceNumber, customerPhone: sale.customer?.phone || '', customerName: sale.customer?.name || 'Walk-in customer', itemCount: sale.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0), total: num(sale.total), paid: num(sale.paid), urdValuation: num(sale.urdOffset), itemNames: sale.items.map((item) => item.productName || item.productBarcode || 'Jewellery item').join('; ') }));
       const columns = [col.date('saleDate', 'Invoice date'), col.date('cancelledAt', 'Cancelled date'), col.identifier('invoiceNumber', 'Invoice no.', 20), col.identifier('customerPhone', 'Customer phone', 16), col.text('customerName', 'Customer'), col.integer('itemCount', 'Items'), col.currency('total', 'Invoice total'), col.currency('paid', 'Amount paid'), col.currency('urdValuation', 'URD valuation'), col.text('itemNames', 'Items', 42)];
@@ -514,6 +537,7 @@ async function getExportPayload(db, key, range, options = {}) {
         principalRepaid: num(loan.principalRepaid),
         principalDue: roundCurrency(Math.max(0, num(loan.principalAmount) - num(loan.principalRepaid))),
         interestReceived: num(loan.interestReceived),
+        totalAmountReceived: roundCurrency(num(loan.principalRepaid) + num(loan.interestReceived)),
         dueDate: loan.dueDate ? exportDate(loan.dueDate) : '',
         status: enumLabel(loan.status)
       }));
@@ -522,11 +546,12 @@ async function getExportPayload(db, key, range, options = {}) {
         col.text('customerName', 'Customer', 28), col.text('itemDescription', 'Jewellery held', 26), col.text('metal', 'Metal', 12),
         col.text('purity', 'Purity', 12), col.weight('grossWeight', 'Gross-wt'), col.weight('netWeight', 'Net-wt'),
         col.currency('valuationAmount', 'Valuation'), col.currency('principalAmount', 'Money lent'), col.currency('principalRepaid', 'Principal repaid'),
-        col.currency('principalDue', 'Principal due'), col.currency('interestReceived', 'Interest received'), col.date('dueDate', 'Return due'), col.text('status', 'Status', 14)
+        col.currency('principalDue', 'Principal due'), col.currency('interestReceived', 'Interest received'),
+        col.currency('totalAmountReceived', 'Total amount received'), col.date('dueDate', 'Return due'), col.text('status', 'Status', 14)
       ];
       return exportEnvelope(resource, range, columns, rows, { sheets: [{
         name: 'Pledge Loan Register', title: 'Gold / Silver Pledge Loan Register', subtitle: registerPeriod(range), layout: 'ca-register',
-        columns, rows, totalKeys: ['grossWeight', 'netWeight', 'valuationAmount', 'principalAmount', 'principalRepaid', 'principalDue', 'interestReceived']
+        columns, rows, totalKeys: ['grossWeight', 'netWeight', 'valuationAmount', 'principalAmount', 'principalRepaid', 'principalDue', 'interestReceived', 'totalAmountReceived']
       }] });
     }
 
@@ -550,9 +575,9 @@ async function getExportPayload(db, key, range, options = {}) {
     }
 
     case 'cancelled-urd': {
-      const purchases = await db.urdPurchase.findMany({ where: { cancelledAt: { not: null }, purchaseDate: dateTimeRange(range) }, orderBy: [{ cancelledAt: 'asc' }, { id: 'asc' }], include: { customer: true }, take: MAX_SOURCE_ROWS + 1 });
+      const purchases = await db.urdPurchase.findMany({ where: { cancelledAt: dateTimeRange(range) }, orderBy: [{ cancelledAt: 'asc' }, { id: 'asc' }], include: { customer: true }, take: MAX_SOURCE_ROWS + 1 });
       assertExportRows(purchases, 'Cancelled URD purchase register');
-      const rows = purchases.map((p) => ({ purchaseDate: exportDate(p.purchaseDate), cancelledAt: exportDate(p.cancelledAt), purchaseNumber: p.purchaseNumber, customerPhone: p.customer?.phone || '', customerName: p.customer?.name || '', metal: p.metal, purity: p.purity || '', netWeight: num(p.netWeight), totalAmount: num(p.totalAmount), saleOffset: num(p.saleOffset), paid: num(p.paid), description: str(p.description) }));
+      const rows = purchases.map((p) => ({ purchaseDate: exportDate(p.purchaseDate), cancelledAt: exportDate(p.cancelledAt), purchaseNumber: p.purchaseNumber, customerPhone: p.customer?.phone || '', customerName: p.customer?.name || '', metal: enumLabel(p.metal), purity: p.purity || '', netWeight: num(p.netWeight), totalAmount: num(p.totalAmount), saleOffset: num(p.saleOffset), paid: num(p.paid), description: str(p.description) }));
       const columns = [col.date('purchaseDate', 'Purchase date'), col.date('cancelledAt', 'Cancelled date'), col.identifier('purchaseNumber', 'URD no.', 22), col.identifier('customerPhone', 'Customer phone', 16), col.text('customerName', 'Customer'), col.text('metal', 'Metal', 12), col.text('purity', 'Purity', 12), col.weight('netWeight', 'Net wt. (g)'), col.currency('totalAmount', 'Valuation'), col.currency('saleOffset', 'Sale adjustment'), col.currency('paid', 'Payout / refund'), col.text('description', 'Description', 30)];
       return exportEnvelope(resource, range, columns, rows, { sheets: [{ name: 'Cancelled URD Purchases', title: 'Cancelled URD Purchases', subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | ${rows.length} cancelled purchase${rows.length === 1 ? '' : 's'}`, columns, rows, infoRows: [{ label: 'Cancelled purchases', value: rows.length, type: 'integer' }, { label: 'Cancelled valuation', value: rows.reduce((sum, p) => sum + p.totalAmount, 0), type: 'currency' }] }] });
     }
@@ -597,7 +622,7 @@ async function getExportPayload(db, key, range, options = {}) {
         col.text('syncLedger', 'Ledger synced', 14),
         col.text('notes', 'Notes', 30)
       ];
-      const columns = pruneEmptyColumns(allColumns, rows);
+      const columns = allColumns;
 
       // Per-method grouping
       const grouped = CASHBOOK_METHODS.map((method) => {
@@ -696,7 +721,10 @@ async function getExportPayload(db, key, range, options = {}) {
       // movements exports instead.
       const products = await db.product.findMany({
         where: {
-          createdAt: dateTimeRange(range),
+          // Inventory is a stock snapshot. Include every available record
+          // created on or before the selected end date, not only records
+          // created inside the reporting window.
+          createdAt: { lte: dateTimeRange(range).lte },
           status: 'AVAILABLE',
           quantity: { gt: 0 }
         },
@@ -750,7 +778,7 @@ async function getExportPayload(db, key, range, options = {}) {
         col.text('location', 'Location', 16),
         col.text('notes', 'Notes', 30)
       ];
-      const columns = pruneEmptyColumns(allColumns, rows);
+      const columns = allColumns;
 
       const summaryColumns = [
         col.text('metal', 'Metal', 12),
@@ -768,7 +796,7 @@ async function getExportPayload(db, key, range, options = {}) {
         {
           name: 'All records',
           title: `Inventory - All individual records`,
-          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | ${rows.length} record${rows.length === 1 ? '' : 's'} with barcode details`,
+          subtitle: `Stock as of ${displayDate(range.to)} (${localTimeZoneName()}) | ${rows.length} record${rows.length === 1 ? '' : 's'} with barcode details`,
           columns,
           rows,
           infoRows: inventoryInfoRows(rows)
@@ -776,7 +804,7 @@ async function getExportPayload(db, key, range, options = {}) {
         {
           name: 'Item summary',
           title: `Inventory - Item-wise summary`,
-          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | Grouped by metal, item, category and purity`,
+          subtitle: `Stock as of ${displayDate(range.to)} (${localTimeZoneName()}) | Grouped by metal, item, category and purity`,
           columns: summaryColumns,
           rows: inventorySummaryRows(rows),
           infoRows: inventoryInfoRows(rows)
@@ -789,7 +817,7 @@ async function getExportPayload(db, key, range, options = {}) {
         sheets.push({
           name: METAL_LABELS[metal],
           title: `Inventory - ${METAL_LABELS[metal]} records`,
-          subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | ${metalRows.length} ${METAL_LABELS[metal].toLowerCase()} item${metalRows.length === 1 ? '' : 's'}`,
+          subtitle: `Stock as of ${displayDate(range.to)} (${localTimeZoneName()}) | ${metalRows.length} ${METAL_LABELS[metal].toLowerCase()} item${metalRows.length === 1 ? '' : 's'}`,
           columns,
           rows: metalRows,
           infoRows: inventoryInfoRows(metalRows)
@@ -834,7 +862,7 @@ async function getExportPayload(db, key, range, options = {}) {
         col.weight('netWeight', 'Net wt. (g)'),
         col.text('note', 'Note', 32)
       ];
-      const columns = pruneEmptyColumns(allColumns, rows);
+      const columns = allColumns;
 
       const quantityIn = rows.filter((row) => row.quantity > 0).reduce((total, row) => total + row.quantity, 0);
       const quantityOut = rows.filter((row) => row.quantity < 0).reduce((total, row) => total + Math.abs(row.quantity), 0);
@@ -868,7 +896,9 @@ async function getExportPayload(db, key, range, options = {}) {
       assertExportRows(customers, 'Customer directory');
       const customerBalances = customers.length ? await db.customerLedger.groupBy({
         by: ['customerId'],
-        where: { customerId: { in: customers.map((customer) => customer.id) } },
+        // Directory balances must be reproducible for the selected period;
+        // do not include ledger entries created after the export's end date.
+        where: { customerId: { in: customers.map((customer) => customer.id) }, createdAt: { lte: dateTimeRange(range).lte } },
         _sum: { amount: true }
       }) : [];
       const balanceByCustomer = new Map(customerBalances.map((entry) => [entry.customerId, num(entry._sum.amount)]));
@@ -897,7 +927,7 @@ async function getExportPayload(db, key, range, options = {}) {
         col.integer('schemeCount', 'Savings schemes'),
         col.currency('outstanding', 'Outstanding due')
       ];
-      const columns = pruneEmptyColumns(allColumns, rows);
+      const columns = allColumns;
       const totalDue = rows.reduce((s, r) => s + r.outstanding, 0);
 
       return exportEnvelope(resource, range, columns, rows, {
@@ -923,7 +953,25 @@ async function getExportPayload(db, key, range, options = {}) {
         // A cancelled enrollment remains safely in the database and
         // Cashbook history, but it is not an active scheme customer and must
         // not appear in the normal CA scheme register.
-        where: { startDate: dateTimeRange(range), status: { not: 'CANCELLED' } },
+        // Include active customers enrolled in the period OR customers who
+        // received a payment in the period. This keeps calendar exports
+        // useful when an August installment is actually paid in September.
+        where: {
+          status: { not: 'CANCELLED' },
+          OR: [
+            { startDate: dateTimeRange(range) },
+            {
+              installments: {
+                some: {
+                  OR: [
+                    { paymentDate: { gte: range.from, lte: range.to } },
+                    { payments: { some: { paymentDate: { gte: range.from, lte: range.to } } } }
+                  ]
+                }
+              }
+            }
+          ]
+        },
         orderBy: [{ startDate: 'asc' }, { id: 'asc' }],
         include: {
           customer: true,
@@ -1037,7 +1085,7 @@ async function getExportPayload(db, key, range, options = {}) {
         col.currency('silver', 'Silver / g'),
         col.text('note', 'Note', 34)
       ];
-      const columns = pruneEmptyColumns(allColumns, rows);
+      const columns = allColumns;
 
       return exportEnvelope(resource, range, columns, rows, {
         sheets: [{
@@ -1106,7 +1154,7 @@ async function getSchemePlanExportPayload(db, schemePlanId, options = {}) {
     { ...col.text('customerName', 'Name', 40), wrap: true },
     col.identifier('customerPhone', 'Mobile No.', 16),
     ...(month === null ? [] : [
-      col.text('paidDates', 'Paid Date', 20),
+      col.dateList('paidDates', 'Paid Date', 20),
       { ...col.text('paymentType', 'Payment Type', 34), wrap: true }
     ]),
     { ...col.currency('amount', 'Amount'), width: 16 }

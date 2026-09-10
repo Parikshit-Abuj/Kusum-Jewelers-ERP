@@ -1,6 +1,6 @@
 <header class="page-header">
   <div><p class="eyebrow">Purchase partners</p><h1>Suppliers</h1></div>
-  <div class="header-actions"><a class="button ghost" href="/purchases">Purchase register</a><% if (duplicateSupplierProfiles) { %><form method="post" action="/suppliers/merge-duplicates" onsubmit="return confirm('Combine <%= duplicateSupplierProfiles %> duplicate supplier profile<%= duplicateSupplierProfiles === 1 ? '' : 's' %> with the same name? Their purchases, payments and open dues will stay intact under one supplier account.')"><button class="button ghost" type="submit">Combine duplicate names</button></form><% } %><a class="button" href="/purchases/new">+ New purchase</a></div>
+  <div class="header-actions"><a class="button ghost" href="/purchases">Purchase register</a><% if (duplicateSupplierProfiles) { %><form method="post" action="/suppliers/merge-duplicates" data-merge-duplicates-form data-duplicate-count="<%= duplicateSupplierProfiles %>"><button class="button ghost" type="submit">Combine duplicate names</button></form><% } %><a class="button" href="/purchases/new">+ New purchase</a></div>
 </header>
 <section class="panel register-panel">
   <div class="panel-heading"><div><h2>Supplier accounts</h2><p><%= pagination.totalItems %> supplier<%= pagination.totalItems === 1 ? '' : 's' %> saved</p></div></div>

@@ -1,3 +1,11 @@
+<style>
+  /* Keep the connection-authorisation form focused; the host/IP card is no
+     longer shown in the UI. Connection values remain available to the setup
+     workflow and are not changed by this presentation-only rule. */
+  .network-main-grid { grid-template-columns: 1fr !important; }
+  .network-main-grid .network-left-panel { display: none !important; }
+</style>
+
 <header class="page-header">
   <div>
     <p class="eyebrow">Multi-PC Showroom Network</p>

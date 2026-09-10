@@ -142,10 +142,11 @@ test('sales and URD CA registers keep URD settlement figures accurate', async ()
   const salesRegister = sales.sheets.find((sheet) => sheet.name === 'All');
   assert.deepEqual(sales.sheets.map((sheet) => sheet.name), ['All', 'Gold', 'Silver']);
   assert.equal(salesRegister.layout, 'ca-register');
-  assert.deepEqual(salesRegister.columns.map((column) => column.label), ['Date', 'Doc-no', 'Customer', 'Gr-wt', 'Net-wt', 'Taxable-amt', 'CGST', 'SGST', 'IGST', 'Total', 'URD', 'Discount', 'Net-amt']);
+  assert.deepEqual(salesRegister.columns.map((column) => column.label), ['Date', 'Doc-no', 'Customer', 'Gr-wt', 'Net-wt', 'Taxable-amt', 'CGST', 'SGST', 'IGST', 'Total', 'URD', 'Discount', 'Net-amt', 'Refund']);
   assert.equal(salesRegister.rows[0].invoiceNumber, 'SB/26-27/00001');
   assert.equal(salesRegister.rows[0].urdAdjustment, 100);
   assert.equal(salesRegister.rows[0].netAmount, 0);
+  assert.equal(salesRegister.rows[0].refundAmount, 50);
 
   const urd = await getExportPayload(db, 'urd', { from: '2026-09-02', to: '2026-09-02' });
   const urdRegister = urd.sheets.find((sheet) => sheet.name === 'URD Purchase Register');
@@ -401,4 +402,20 @@ test('scheme monthly export includes unpaid, partly paid and fully paid active c
     ['Fully Paid', 5000, '9-Sep-26']
   ]);
   assert.equal(payload.rows[1].paymentType, 'Cash ₹1000.00 + UPI ₹1500.00');
+});
+
+test('scheme month export keeps an August due installment paid in September', async () => {
+  const plan = { id: 11, name: 'August Due Scheme', durationMonths: 12 };
+  const enrollment = {
+    id: 4, enrollmentNumber: 'SCH-0004', totalPaid: 5000,
+    customer: { name: 'Ravi', phone: '9000000011' },
+    installments: [{ installmentNumber: 1, dueDate: '2026-08-31', paidAmount: 5000, paymentDate: '2026-09-02', paymentMethod: 'CASH' }]
+  };
+  const db = {
+    schemePlan: { findUnique: async () => plan },
+    schemeEnrollment: { findMany: async () => [enrollment] }
+  };
+  const payload = await getSchemePlanExportPayload(db, 11, { month: 1 });
+  assert.equal(payload.rows[0].amount, 5000);
+  assert.equal(payload.rows[0].paidDates, '2-Sep-26');
 });
