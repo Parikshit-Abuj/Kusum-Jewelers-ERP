@@ -25,6 +25,7 @@
   <div class="header-actions">
     <a class="button ghost" href="<%= backTo %>">← Back to <%= plan.name %></a>
     <a class="button ghost" href="/schemes">All Schemes</a>
+    <a class="button ghost" href="/schemes/enrollments/<%= enrollment.id %>/receipt.pdf" target="_blank" rel="noopener">Consolidated receipt</a>
   </div>
 </header>
 
@@ -137,6 +138,7 @@
               <% if ((inst.status === 'PENDING' || displayStatus === 'OVERDUE') && enrollment.status === 'ACTIVE') { %>
               <button type="button" class="button ghost small" onclick="document.getElementById('scheme-installment-id').value='<%= inst.id %>'; document.getElementById('scheme-installment-label').textContent='Month <%= inst.installmentNumber %>'; document.getElementById('scheme-record-payment').showModal()">Record</button>
               <% } else if (inst.status === 'PAID' && enrollment.status !== 'CANCELLED') { %>
+                <a class="button ghost small" href="/schemes/enrollments/<%= enrollment.id %>/installments/<%= inst.id %>/receipt.pdf" target="_blank" rel="noopener">Receipt</a>
                 <button type="button" class="button ghost small" onclick="document.getElementById('scheme-payment-edit-<%= inst.id %>').showModal()">Edit payment</button>
                 <dialog id="scheme-payment-edit-<%= inst.id %>" class="scheme-payment-dialog">
                   <form method="dialog" class="dialog-close-row"><button type="submit" class="icon-button" aria-label="Close">×</button></form>
@@ -145,6 +147,7 @@
                   <form method="post" action="/schemes/enrollments/<%= enrollment.id %>/installments/<%= inst.id %>/edit-payment" data-scheme-split-payment data-monthly-amount="<%= Number(plan.monthlyAmount) %>" onsubmit="return confirm('Update this scheme payment and its Cashbook entries?')">
                     <input type="hidden" name="paymentMethod" value="MIXED">
                     <label>Payment date<input name="paymentDate" type="date" required value="<%= latestPaidDate || todayStr %>"></label>
+                    <label>Narration <span class="muted">(optional)</span><textarea name="narration" rows="2" maxlength="1000" placeholder="Optional payment narration"><%= inst.notes || '' %></textarea></label>
                     <div class="scheme-payment-input-grid">
                       <label>Cash<input name="cashPaid" type="number" min="0" step="0.01" value="<%= paidByMethod.CASH || '' %>"></label>
                       <label>UPI<input name="upiPaid" type="number" min="0" step="0.01" value="<%= paidByMethod.UPI || '' %>"></label>
@@ -175,6 +178,7 @@
           </select>
         </label>
         <label>Payment date<input name="paymentDate" type="date" required value="<%= todayStr %>"></label>
+        <label>Narration <span class="muted">(optional)</span><textarea name="narration" rows="2" maxlength="1000" placeholder="Optional payment narration"></textarea></label>
         <div class="scheme-payment-input-grid">
           <label>Cash<input name="cashPaid" type="number" min="0" step="0.01" placeholder="0.00"></label>
           <label>UPI<input name="upiPaid" type="number" min="0" step="0.01" placeholder="0.00"></label>

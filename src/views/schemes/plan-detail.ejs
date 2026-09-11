@@ -176,7 +176,7 @@
                 </div>
               </div>
               <% if (phoneDigits.length >= 10) { %>
-              <% const schemeWaText = encodeURIComponent(`Namaste ${enr.customer?.name || 'Customer'},\n\nThis is regarding your ${plan.name} savings scheme with Kusum ERP.`); %>
+              <% const schemeShopName = businessSettings?.shopName || 'Jewellery ERP'; const schemeWaText = encodeURIComponent(`Namaste ${enr.customer?.name || 'Customer'},\n\nThis is regarding your ${plan.name} savings scheme with ${schemeShopName}.`); %>
               <a href="whatsapp://send?phone=91<%= phoneDigits.slice(-10) %>&text=<%= schemeWaText %>" class="icon-button whatsapp-icon" title="Open WhatsApp Desktop chat" style="flex-shrink:0;">
                 💬
               </a>

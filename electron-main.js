@@ -125,6 +125,9 @@ async function openErpWindow() {
       minWidth: 1040,
       minHeight: 720,
       title: 'Kusum ERP',
+      // Use the Windows icon asset so the title bar/taskbar and packaged
+      // executable consistently show the Kusum Jewelers mark.
+      icon: path.join(__dirname, 'public', 'kusum-app-icon.ico'),
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,

@@ -27,7 +27,7 @@
       <td class="right"><strong><%- money(loan.principalAmount) %></strong><small>Repaid: <%- money(loan.principalRepaid) %></small></td>
       <td class="right"><strong class="<%= outstanding > 0 ? 'credit-amount' : 'paid-amount' %>"><%- money(outstanding) %></strong><small>Interest: <%- money(loan.interestReceived) %></small></td>
       <td><span class="pill <%= loan.status === 'ACTIVE' ? 'warning' : loan.status === 'RELEASED' ? 'success' : 'danger' %>"><%= loan.status === 'ACTIVE' ? 'Held' : loan.status === 'RELEASED' ? 'Released' : 'Cancelled' %></span></td>
-      <td class="actions"><a class="button ghost small" href="/pledges/<%= loan.id %>"><%= loan.status === 'ACTIVE' ? 'Manage' : 'View' %><%= loan._count.payments ? ` (${loan._count.payments})` : '' %></a></td>
+      <td class="actions"><a class="button ghost small" href="/pledges/<%= loan.id %>"><%= loan.status === 'ACTIVE' ? 'Manage' : 'View' %><%= loan._count.payments ? ` (${loan._count.payments})` : '' %></a><a class="button ghost small" href="/pledges/<%= loan.id %>/invoice.pdf" target="_blank" rel="noopener">PDF</a></td>
     </tr><% }) %>
     </tbody></table></div>
     <%- include('../_pagination', { pagination }) %>

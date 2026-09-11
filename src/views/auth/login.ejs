@@ -7,6 +7,7 @@
   <title>
     <%= title %> · <%= businessSettings?.shopName || 'Kusum ERP' %>
   </title>
+  <link rel="icon" type="image/png" href="/kusum-app-icon.png">
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/workspace.css" media="screen">
   <style>
@@ -220,18 +221,28 @@
     }
 
     .login-logo {
-      width: 52px;
-      height: 52px;
-      display: inline-grid;
-      place-items: center;
-      background: linear-gradient(135deg, #f0c164, #9d6512);
-      color: #2d1c06;
-      border-radius: 15px;
-      font-family: Georgia, serif;
-      font-size: 20px;
-      font-weight: 900;
-      box-shadow: inset 0 1px 2px #ffe7ad, 0 6px 24px rgba(212, 162, 60, .25);
-      margin-bottom: 28px;
+      width: 148px;
+      height: 148px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      background: #ffffff;
+      border: 1px solid rgba(212, 162, 60, .25);
+      border-radius: 22px;
+      box-shadow: 0 10px 30px rgba(212, 162, 60, .18);
+      margin-bottom: 24px;
+    }
+
+    .app-logo-image {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .login-logo .app-logo-image {
+      padding: 5px;
     }
 
     .login-heading {
@@ -418,7 +429,7 @@
 
     <div class="login-form-panel">
       <main class="login-card">
-        <div class="login-logo">K</div>
+        <div class="login-logo"><img src="/kusum-app-logo.png" alt="Kusum Jewelers" class="app-logo-image"></div>
         <div class="login-heading">
           <p class="eyebrow"><%= businessSettings?.shopName || 'Kusum ERP' %></p>
           <h1>Welcome back</h1>

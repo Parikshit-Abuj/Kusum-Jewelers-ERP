@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title><%= repair ? 'Repair ERP Connection' : 'Shop Setup' %> · Kusum ERP</title>
   <link rel="stylesheet" href="/styles.css">
+  <link rel="icon" type="image/png" href="/kusum-app-icon.png">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -40,18 +41,25 @@
     }
 
     .setup-logo {
-      width: 56px;
-      height: 56px;
-      display: inline-grid;
-      place-items: center;
-      background: linear-gradient(135deg, #f0c164, #9d6512);
-      color: #2d1c06;
-      border-radius: 16px;
-      font-family: Georgia, serif;
-      font-size: 22px;
-      font-weight: 900;
-      box-shadow: inset 0 1px 2px #ffe7ad, 0 6px 20px rgba(212, 162, 60, 0.28);
+      width: 138px;
+      height: 138px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      background: #ffffff;
+      border: 1px solid rgba(212, 162, 60, .25);
+      border-radius: 22px;
+      box-shadow: 0 10px 30px rgba(212, 162, 60, .18);
       margin-bottom: 18px;
+    }
+
+    .app-logo-image {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      padding: 5px;
     }
 
     .setup-eyebrow {
@@ -328,7 +336,7 @@
   <div class="setup-container">
     <main class="setup-card">
       <div class="setup-header">
-        <div class="setup-logo">K</div>
+        <div class="setup-logo"><img src="/kusum-app-logo.png" alt="Kusum Jewelers" class="app-logo-image"></div>
         <p class="setup-eyebrow">Kusum ERP</p>
         <h1 class="setup-title"><%= repair ? 'Repair ERP Connection' : 'Set Up Shop ERP' %></h1>
         <p class="setup-subtitle">

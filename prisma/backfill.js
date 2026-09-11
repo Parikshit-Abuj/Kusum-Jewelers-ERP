@@ -7,16 +7,42 @@ async function main() {
   if (process.env.KUSUM_ALLOW_BARCODE_BACKFILL !== 'yes') {
     throw new Error('Barcode backfill is a one-time maintenance tool and is disabled for safety. It must not be run against a live shop database by accident.');
   }
-  const products = await prisma.product.findMany({ orderBy: { createdAt: 'asc' } });
+  const [products, stockMovements, saleItems] = await Promise.all([
+    prisma.product.findMany({ orderBy: { createdAt: 'asc' } }),
+    // Sold products are removed from Product, so their last barcode is kept
+    // in StockMovement/SaleItem history. Include those records when advancing
+    // the counter or a backfill can reuse an already billed label.
+    prisma.stockMovement.findMany({
+      where: { productBarcode: { not: null } },
+      select: { productBarcode: true }
+    }),
+    prisma.saleItem.findMany({
+      where: { productBarcode: { not: null } },
+      select: { productBarcode: true }
+    })
+  ]);
   const counters = new Map();
 
+  const historicalBarcodes = [
+    ...products.map((product) => ({ barcode: product.barcode, metal: product.metal })),
+    ...stockMovements.map((row) => ({ barcode: row.productBarcode, metal: null })),
+    ...saleItems.map((row) => ({ barcode: row.productBarcode, metal: null }))
+  ];
+
   const updates = [];
-  for (const product of products) {
-    const prefix = base36BarcodePrefix(product.metal);
-    const match = product.barcode?.match(new RegExp(`^${prefix}\\s+([0-9A-Z]{1,6})$`, 'i'));
+  for (const record of historicalBarcodes) {
+    const fallbackPrefix = record.metal ? base36BarcodePrefix(record.metal) : null;
+    const match = String(record.barcode || '').match(/^([GSJ])\s+([0-9A-Z]{1,6})$/i);
     if (match) {
-      const serial = BigInt(Number.parseInt(match[1], 36));
+      const serial = BigInt(Number.parseInt(match[2], 36));
+      const prefix = match[1].toUpperCase();
       counters.set(prefix, (counters.get(prefix) || 0n) > serial ? counters.get(prefix) : serial);
+    } else if (fallbackPrefix) {
+      const legacyMatch = String(record.barcode || '').match(new RegExp(`^${fallbackPrefix}\\s+([0-9A-Z]{1,6})$`, 'i'));
+      if (legacyMatch) {
+        const serial = BigInt(Number.parseInt(legacyMatch[1], 36));
+        counters.set(fallbackPrefix, (counters.get(fallbackPrefix) || 0n) > serial ? counters.get(fallbackPrefix) : serial);
+      }
     }
   }
 

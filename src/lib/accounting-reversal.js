@@ -109,10 +109,36 @@ async function reverseCustomerOrderAdvance(tx, entry) {
   // Incoming receipts increase the recorded advance; outgoing cancellation
   // refunds are tracked separately. Deleting either entry reverses only its
   // own side and never turns a refund into a second advance.
-  const data = entry.type === 'IN'
-    ? { customerAdvance: roundedMoney(Math.max(0, Number(order.customerAdvance) - Number(entry.amount))) }
-    : { refundedAmount: roundedMoney(Math.max(0, Number(order.refundedAmount) - Number(entry.amount))) };
-  await tx.customerOrder.update({ where: { id: order.id }, data });
+  if (entry.type === 'IN') {
+    const customerAdvance = roundedMoney(Math.max(0, Number(order.customerAdvance) - Number(entry.amount)));
+    await tx.customerOrder.update({ where: { id: order.id }, data: { customerAdvance } });
+    if (order.status === 'CANCELLED') {
+      await tx.customerLedger.deleteMany({ where: { customerId: order.customerId, type: 'ADJUSTMENT', reference: order.orderNumber } });
+      return;
+    }
+    const due = roundedMoney(Math.max(0, Number(order.quotedAmount) - customerAdvance));
+    const adjustments = await tx.customerLedger.findMany({
+      where: { customerId: order.customerId, type: 'ADJUSTMENT', reference: order.orderNumber },
+      orderBy: { id: 'asc' }, select: { id: true }
+    });
+    if (due > 0) {
+      if (adjustments.length) {
+        await tx.customerLedger.update({ where: { id: adjustments[0].id }, data: { amount: due } });
+        if (adjustments.length > 1) await tx.customerLedger.deleteMany({ where: { id: { in: adjustments.slice(1).map((row) => row.id) } } });
+      } else {
+        await tx.customerLedger.create({ data: {
+          customerId: order.customerId, type: 'ADJUSTMENT', amount: due,
+          reference: order.orderNumber, note: `Customer order balance — ${order.orderNumber}`
+        } });
+      }
+    } else if (adjustments.length) {
+      await tx.customerLedger.deleteMany({ where: { id: { in: adjustments.map((row) => row.id) } } });
+    }
+  } else {
+    await tx.customerOrder.update({ where: { id: order.id }, data: {
+      refundedAmount: roundedMoney(Math.max(0, Number(order.refundedAmount) - Number(entry.amount)))
+    } });
+  }
 }
 
 // A pledge payment is a customer receipt, but it belongs to collateral loan

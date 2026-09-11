@@ -117,6 +117,20 @@ test('writes a plain CA register without colours or filter arrows, with working 
   assert.equal(sheet.getCell('A4').fill.fgColor?.argb, undefined);
 });
 
+test('renders the configured shop name in a CA register heading', async () => {
+  const workbookBytes = await buildExcelExport({
+    title: 'Kusum ERP - Sales invoices', shopName: 'Asha Jewellers', columns: [], rows: [],
+    sheets: [{
+      name: 'All', title: 'All Sales Register', subtitle: 'From 1-Sep-26 To 1-Sep-26', layout: 'ca-register',
+      columns: [{ key: 'amount', label: 'Net-amt', type: 'currency', width: 18 }],
+      rows: [{ amount: 100 }]
+    }]
+  });
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(workbookBytes);
+  assert.equal(workbook.getWorksheet('All').getCell('A1').value, 'Asha Jewellers');
+});
+
 test('wraps long scheme customer and payment details without allowing text to overlap adjacent cells', async () => {
   const workbookBytes = await buildExcelExport({
     title: 'Scheme report validation', columns: [], rows: [],

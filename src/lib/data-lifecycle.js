@@ -151,13 +151,17 @@ function makingLabel(value) {
 }
 
 function exportEnvelope(resource, range, columns, rows, options = {}) {
+  const shopName = String(options.shopName || 'Jewellery ERP').trim() || 'Jewellery ERP';
   return {
-    title: `Kusum ERP - ${resource.label}`,
+    title: `${shopName} - ${resource.label}`,
     subtitle: `${resource.dateLabel}: ${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | ${rows.length} row${rows.length === 1 ? '' : 's'}`,
     columns,
     rows,
     filename: `${resource.key}-${range.from}-to-${range.to}.xlsx`,
-    ...options
+    ...options,
+    // The Excel renderer uses this for the report heading. Keep a safe
+    // fallback for callers that build payloads without loading settings.
+    shopName
   };
 }
 
@@ -381,6 +385,13 @@ function inventorySummaryRows(rows) {
 async function getExportPayload(db, key, range, options = {}) {
   const resource = resourceFor(key);
   assertExportRange(range);
+  const makeExportEnvelope = (columns, rows, envelopeOptions = {}) => exportEnvelope(
+    resource,
+    range,
+    columns,
+    rows,
+    { ...envelopeOptions, shopName: options.shopName, metadata: options.metadata }
+  );
 
   switch (key) {
 
@@ -415,7 +426,7 @@ async function getExportPayload(db, key, range, options = {}) {
           totalKeys: ['grossWeight', 'netWeight', 'taxableAmount', 'cgstAmount', 'sgstAmount', 'igstAmount', 'total', 'urdAdjustment', 'discount', 'netAmount']
         };
       });
-      return exportEnvelope(resource, range, columns, sheets[0].rows, { sheets });
+      return makeExportEnvelope(columns, sheets[0].rows, { sheets });
     }
 
     case 'top-selling-items': {
@@ -456,7 +467,7 @@ async function getExportPayload(db, key, range, options = {}) {
         });
       }
       const allRows = sheets.flatMap((sheet) => sheet.rows);
-      return exportEnvelope(resource, range, columns, allRows, {
+      return makeExportEnvelope(columns, allRows, {
         filename: `top-selling-items-${range.from}-to-${range.to}.xlsx`,
         sheets
       });
@@ -467,7 +478,7 @@ async function getExportPayload(db, key, range, options = {}) {
       assertExportRows(sales, 'Cancelled invoice register');
       const rows = sales.map((sale) => ({ saleDate: exportDate(sale.saleDate), cancelledAt: exportDate(sale.cancelledAt), invoiceNumber: sale.invoiceNumber, customerPhone: sale.customer?.phone || '', customerName: sale.customer?.name || 'Walk-in customer', itemCount: sale.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0), total: num(sale.total), paid: num(sale.paid), urdValuation: num(sale.urdOffset), itemNames: sale.items.map((item) => item.productName || item.productBarcode || 'Jewellery item').join('; ') }));
       const columns = [col.date('saleDate', 'Invoice date'), col.date('cancelledAt', 'Cancelled date'), col.identifier('invoiceNumber', 'Invoice no.', 20), col.identifier('customerPhone', 'Customer phone', 16), col.text('customerName', 'Customer'), col.integer('itemCount', 'Items'), col.currency('total', 'Invoice total'), col.currency('paid', 'Amount paid'), col.currency('urdValuation', 'URD valuation'), col.text('itemNames', 'Items', 42)];
-      return exportEnvelope(resource, range, columns, rows, { sheets: [{ name: 'Cancelled Invoices', title: 'Cancelled Invoices', subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | ${rows.length} cancelled invoice${rows.length === 1 ? '' : 's'}`, columns, rows, infoRows: [{ label: 'Cancelled invoices', value: rows.length, type: 'integer' }, { label: 'Cancelled invoice value', value: rows.reduce((sum, row) => sum + row.total, 0), type: 'currency' }] }] });
+      return makeExportEnvelope(columns, rows, { sheets: [{ name: 'Cancelled Invoices', title: 'Cancelled Invoices', subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | ${rows.length} cancelled invoice${rows.length === 1 ? '' : 's'}`, columns, rows, infoRows: [{ label: 'Cancelled invoices', value: rows.length, type: 'integer' }, { label: 'Cancelled invoice value', value: rows.reduce((sum, row) => sum + row.total, 0), type: 'currency' }] }] });
     }
 
     // ────────────────────────────────────────────────────────────
@@ -512,7 +523,7 @@ async function getExportPayload(db, key, range, options = {}) {
         rows,
         totalKeys: ['grossWeight', 'netWeight', 'totalAmount']
       };
-      return exportEnvelope(resource, range, columns, rows, { sheets: [sheet] });
+      return makeExportEnvelope(columns, rows, { sheets: [sheet] });
     }
 
     // ────────────────────────────────────────────────────────────
@@ -553,7 +564,7 @@ async function getExportPayload(db, key, range, options = {}) {
         col.currency('principalDue', 'Principal due'), col.currency('interestReceived', 'Interest received'),
         col.currency('totalAmountReceived', 'Total amount received'), col.date('dueDate', 'Return due'), col.text('status', 'Status', 14)
       ];
-      return exportEnvelope(resource, range, columns, rows, { sheets: [{
+      return makeExportEnvelope(columns, rows, { sheets: [{
         name: 'Pledge Loan Register', title: 'Gold / Silver Pledge Loan Register', subtitle: registerPeriod(range), layout: 'ca-register',
         columns, rows, totalKeys: ['grossWeight', 'netWeight', 'valuationAmount', 'principalAmount', 'principalRepaid', 'principalDue', 'interestReceived', 'totalAmountReceived']
       }] });
@@ -575,7 +586,7 @@ async function getExportPayload(db, key, range, options = {}) {
       }));
       const columns = [col.date('purchaseDate', 'Date'), col.identifier('purchaseNumber', 'Doc-no', 22), col.text('supplierName', 'Supplier', 28), col.text('itemName', 'Item', 26), col.text('category', 'Category', 18), col.text('metal', 'Metal', 12), col.text('purity', 'Purity', 12), col.integer('quantity', 'Pieces'), col.identifier('barcode', 'Barcode', 16), col.weight('grossWeight', 'Gross-wt'), col.weight('netWeight', 'Net-wt'), col.currency('ratePerGram', 'Rate/g'), col.currency('totalAmount', 'Amount'), col.currency('paid', 'Paid'), col.currency('due', 'Due'), col.text('reference', 'Reference', 20)];
       const sheet = { name: 'Supplier Purchases', title: 'Supplier Purchase Register', subtitle: registerPeriod(range), layout: 'ca-register', columns, rows, totalKeys: ['grossWeight', 'netWeight', 'totalAmount', 'paid', 'due'] };
-      return exportEnvelope(resource, range, columns, rows, { sheets: [sheet] });
+      return makeExportEnvelope(columns, rows, { sheets: [sheet] });
     }
 
     case 'cancelled-urd': {
@@ -583,7 +594,7 @@ async function getExportPayload(db, key, range, options = {}) {
       assertExportRows(purchases, 'Cancelled URD purchase register');
       const rows = purchases.map((p) => ({ purchaseDate: exportDate(p.purchaseDate), cancelledAt: exportDate(p.cancelledAt), purchaseNumber: p.purchaseNumber, customerPhone: p.customer?.phone || '', customerName: p.customer?.name || '', metal: enumLabel(p.metal), purity: p.purity || '', netWeight: num(p.netWeight), totalAmount: num(p.totalAmount), saleOffset: num(p.saleOffset), paid: num(p.paid), description: str(p.description) }));
       const columns = [col.date('purchaseDate', 'Purchase date'), col.date('cancelledAt', 'Cancelled date'), col.identifier('purchaseNumber', 'URD no.', 22), col.identifier('customerPhone', 'Customer phone', 16), col.text('customerName', 'Customer'), col.text('metal', 'Metal', 12), col.text('purity', 'Purity', 12), col.weight('netWeight', 'Net wt. (g)'), col.currency('totalAmount', 'Valuation'), col.currency('saleOffset', 'Sale adjustment'), col.currency('paid', 'Payout / refund'), col.text('description', 'Description', 30)];
-      return exportEnvelope(resource, range, columns, rows, { sheets: [{ name: 'Cancelled URD Purchases', title: 'Cancelled URD Purchases', subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | ${rows.length} cancelled purchase${rows.length === 1 ? '' : 's'}`, columns, rows, infoRows: [{ label: 'Cancelled purchases', value: rows.length, type: 'integer' }, { label: 'Cancelled valuation', value: rows.reduce((sum, p) => sum + p.totalAmount, 0), type: 'currency' }] }] });
+      return makeExportEnvelope(columns, rows, { sheets: [{ name: 'Cancelled URD Purchases', title: 'Cancelled URD Purchases', subtitle: `${displayDate(range.from)} to ${displayDate(range.to)} (${localTimeZoneName()}) | ${rows.length} cancelled purchase${rows.length === 1 ? '' : 's'}`, columns, rows, infoRows: [{ label: 'Cancelled purchases', value: rows.length, type: 'integer' }, { label: 'Cancelled valuation', value: rows.reduce((sum, p) => sum + p.totalAmount, 0), type: 'currency' }] }] });
     }
 
     // ────────────────────────────────────────────────────────────
@@ -711,7 +722,7 @@ async function getExportPayload(db, key, range, options = {}) {
         });
       }
 
-      return exportEnvelope(resource, range, columns, rows, { sheets });
+      return makeExportEnvelope(columns, rows, { sheets });
     }
 
     // ────────────────────────────────────────────────────────────
@@ -828,7 +839,7 @@ async function getExportPayload(db, key, range, options = {}) {
         });
       }
 
-      return exportEnvelope(resource, range, columns, rows, { sheets });
+      return makeExportEnvelope(columns, rows, { sheets });
     }
 
     // ────────────────────────────────────────────────────────────
@@ -870,7 +881,7 @@ async function getExportPayload(db, key, range, options = {}) {
 
       const quantityIn = rows.filter((row) => row.quantity > 0).reduce((total, row) => total + row.quantity, 0);
       const quantityOut = rows.filter((row) => row.quantity < 0).reduce((total, row) => total + Math.abs(row.quantity), 0);
-      return exportEnvelope(resource, range, columns, rows, {
+      return makeExportEnvelope(columns, rows, {
         sheets: [{
           name: 'Stock movements',
           title: 'Stock Movement Register',
@@ -894,7 +905,15 @@ async function getExportPayload(db, key, range, options = {}) {
       const customers = await db.customer.findMany({
         where: { createdAt: dateTimeRange(range) },
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-        include: { _count: { select: { sales: true, urdPurchases: true, schemeEnrollments: true } } },
+        include: {
+          _count: {
+            select: {
+              sales: { where: { cancelledAt: null } },
+              urdPurchases: { where: { cancelledAt: null } },
+              schemeEnrollments: { where: { status: { not: 'CANCELLED' } } }
+            }
+          }
+        },
         take: MAX_SOURCE_ROWS + 1
       });
       assertExportRows(customers, 'Customer directory');
@@ -934,7 +953,7 @@ async function getExportPayload(db, key, range, options = {}) {
       const columns = allColumns;
       const totalDue = rows.reduce((s, r) => s + r.outstanding, 0);
 
-      return exportEnvelope(resource, range, columns, rows, {
+      return makeExportEnvelope(columns, rows, {
         sheets: [{
           name: 'Customer directory',
           title: `Customer Directory`,
@@ -953,6 +972,7 @@ async function getExportPayload(db, key, range, options = {}) {
     //  JEWELLERY SAVINGS SCHEMES
     // ────────────────────────────────────────────────────────────
     case 'schemes': {
+      const schemeDateRange = dateTimeRange(range);
       const enrollments = await db.schemeEnrollment.findMany({
         // A cancelled enrollment remains safely in the database and
         // Cashbook history, but it is not an active scheme customer and must
@@ -963,7 +983,10 @@ async function getExportPayload(db, key, range, options = {}) {
         where: {
           status: { not: 'CANCELLED' },
           OR: [
-            { startDate: dateTimeRange(range) },
+            // Include active enrollments whose scheme overlaps the selected
+            // period, even when that customer has not paid yet. This keeps a
+            // monthly register complete and lets it show amount 0.
+            { startDate: { lte: schemeDateRange.lte }, endDate: { gte: schemeDateRange.gte } },
             {
               installments: {
                 some: {
@@ -1006,7 +1029,7 @@ async function getExportPayload(db, key, range, options = {}) {
         customerPhone: enrollment.customer?.phone || '',
         amount: num(enrollment.totalPaid)
       }));
-      return exportEnvelope(resource, range, columns, rows, {
+      return makeExportEnvelope(columns, rows, {
         sheets: [{
           name: 'Scheme Register', title: 'Scheme Register', subtitle: registerPeriod(range), layout: 'ca-register',
           columns, rows, totalKeys: ['amount']
@@ -1056,7 +1079,7 @@ async function getExportPayload(db, key, range, options = {}) {
         col.currency('due', 'Due', 16)
       ];
 
-      return exportEnvelope(resource, range, columns, rows, {
+      return makeExportEnvelope(columns, rows, {
         sheets: [{
           name: 'Customer ledger',
           title: 'Customer Ledger Register',
@@ -1091,7 +1114,7 @@ async function getExportPayload(db, key, range, options = {}) {
       ];
       const columns = allColumns;
 
-      return exportEnvelope(resource, range, columns, rows, {
+      return makeExportEnvelope(columns, rows, {
         sheets: [{
           name: 'Daily rates',
           title: 'Daily Metal Rate Register',
@@ -1177,10 +1200,13 @@ async function getSchemePlanExportPayload(db, schemePlanId, options = {}) {
     };
   });
   const reportLabel = month === null ? 'Consolidated Scheme Report' : `Month ${month} Scheme Report`;
+  const shopName = String(options.shopName || 'Jewellery ERP').trim() || 'Jewellery ERP';
   return {
-    title: `Kusum ERP - ${plan.name}`,
+    title: `${shopName} - ${plan.name}`,
     subtitle: `${plan.name} · ${reportLabel}`,
     filename: `scheme-${planId}-${month === null ? 'consolidated' : `month-${month}`}.xlsx`,
+    shopName,
+    metadata: options.metadata,
     columns,
     rows,
     sheets: [{

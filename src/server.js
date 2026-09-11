@@ -18,7 +18,9 @@ dotenv.config({ path: configPath });
 process.env.SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(48).toString('base64url');
 const { createPrisma } = require('./lib/prisma');
 const { writeUrdPurchaseInvoice } = require('./lib/urd-invoice-pdf');
+const { writePledgeLoanInvoice } = require('./lib/pledge-invoice-pdf');
 const { writeSaleInvoice } = require('./lib/sale-invoice-pdf');
+const { writeSchemeInstallmentReceipt, writeSchemeConsolidatedReceipt, paymentParts } = require('./lib/scheme-payment-pdf');
 const { buildTsplJob, checkTcpPrinter, sendTsplToPrinter } = require('./lib/tspl-labels');
 const { resolveTscPrinter, cachedTscPrinterStatus } = require('./lib/windows-printers');
 const { provisionShopDatabase, enableNetworkSharing, updatePrinterConfiguration, updateLoginConfiguration, parseDatabaseConnection, isLocalHost, runBundledMigrations, verifyClientConnection } = require('./lib/shop-provisioning');
@@ -81,6 +83,20 @@ app.get('/favicon.ico', (req, res) => res.status(204).end());
 function redirectWith(res, route, type, message) {
   const separator = route.includes('?') ? '&' : '?';
   res.redirect(`${route}${separator}${type}=${encodeURIComponent(message)}`);
+}
+
+function excelBusinessMetadata(settings = {}) {
+  const shopName = String(settings.shopName || '').trim();
+  return {
+    shopName,
+    address: String(settings.shopAddress || '').trim(),
+    gstin: String(settings.gstin || '').trim(),
+    panNumber: String(settings.panNumber || '').trim(),
+    primaryPhone: String(settings.primaryPhone || '').trim(),
+    secondaryPhone: String(settings.secondaryPhone || '').trim(),
+    creator: shopName,
+    lastModifiedBy: shopName
+  };
 }
 
 function schemePlanReturnPath(value, planId) {
@@ -336,41 +352,54 @@ async function allocateCustomerPayment(tx, { customerId, amount, paymentMethod, 
     throw new Error(`Payment is greater than the outstanding amount of ${money(outstanding)}.`);
   }
 
-  const openSales = await tx.sale.findMany({
-    where: { customerId, cancelledAt: null, balance: { gt: 0 } },
-    orderBy: [{ saleDate: 'asc' }, { id: 'asc' }]
-  });
   let remaining = roundedMoney(amount);
-  for (const sale of openSales) {
-    if (remaining <= 0) break;
-    const currentBalance = Number(sale.balance);
-    const currentPaid = Number(sale.paid);
-    const allocation = roundedMoney(Math.min(remaining, currentBalance));
-    const nextPaymentMethod = currentPaid <= 0 || sale.paymentMethod === 'CREDIT'
-      ? paymentMethod
-      : sale.paymentMethod === paymentMethod ? sale.paymentMethod : 'MIXED';
-    await tx.sale.update({
-      where: { id: sale.id },
-      data: {
-        paid: roundedMoney(currentPaid + allocation),
-        balance: Math.max(0, roundedMoney(currentBalance - allocation)),
-        paymentMethod: nextPaymentMethod,
-        ...receiptMethodAmounts(paymentMethod, allocation)
-      }
+  let after = null;
+  // Process oldest invoices in bounded pages so a large customer history does
+  // not load every open sale into memory in one request.
+  while (remaining > 0) {
+    const where = {
+      customerId, cancelledAt: null, balance: { gt: 0 },
+      ...(after ? { OR: [{ saleDate: { gt: after.saleDate } }, { saleDate: after.saleDate, id: { gt: after.id } }] } : {})
+    };
+    const openSales = await tx.sale.findMany({
+      where,
+      select: { id: true, invoiceNumber: true, saleDate: true, balance: true, paid: true, paymentMethod: true },
+      orderBy: [{ saleDate: 'asc' }, { id: 'asc' }], take: 200
     });
-    await tx.customerLedger.create({
-      data: {
-        customerId,
-        saleId: sale.id,
-        type: 'PAYMENT_RECEIVED',
-        amount: -allocation,
-        paymentMethod,
-        cashbookEntryId,
-        reference,
-        note: note || `Payment received against ${sale.invoiceNumber}`
-      }
-    });
-    remaining = roundedMoney(remaining - allocation);
+    if (!openSales.length) break;
+    for (const sale of openSales) {
+      if (remaining <= 0) break;
+      const currentBalance = Number(sale.balance);
+      const currentPaid = Number(sale.paid);
+      const allocation = roundedMoney(Math.min(remaining, currentBalance));
+      const nextPaymentMethod = currentPaid <= 0 || sale.paymentMethod === 'CREDIT'
+        ? paymentMethod
+        : sale.paymentMethod === paymentMethod ? sale.paymentMethod : 'MIXED';
+      await tx.sale.update({
+        where: { id: sale.id },
+        data: {
+          paid: roundedMoney(currentPaid + allocation),
+          balance: Math.max(0, roundedMoney(currentBalance - allocation)),
+          paymentMethod: nextPaymentMethod,
+          ...receiptMethodAmounts(paymentMethod, allocation)
+        }
+      });
+      await tx.customerLedger.create({
+        data: {
+          customerId,
+          saleId: sale.id,
+          type: 'PAYMENT_RECEIVED',
+          amount: -allocation,
+          paymentMethod,
+          cashbookEntryId,
+          reference,
+          note: note || `Payment received against ${sale.invoiceNumber}`
+        }
+      });
+      remaining = roundedMoney(remaining - allocation);
+    }
+    const last = openSales[openSales.length - 1];
+    after = { saleDate: last.saleDate, id: last.id };
   }
 
   // Any amount left after invoices pays down a manual loan/adjustment. Without
@@ -847,7 +876,12 @@ app.post('/data/export', async (req, res) => {
   try {
     resource = resourceFor(req.body.resource);
     range = parseDateRange(req.body);
-    const payload = await getExportPayload(prisma, resource.key, range, { salesMetal: req.body.salesMetal });
+    const businessSettings = await getBusinessSettings(prisma);
+    const payload = await getExportPayload(prisma, resource.key, range, {
+      salesMetal: req.body.salesMetal,
+      shopName: businessSettings.shopName,
+      metadata: excelBusinessMetadata(businessSettings)
+    });
     const workbook = await buildExcelExport(payload);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${payload.filename}"`);
@@ -2742,6 +2776,33 @@ async function resolveOrderCustomer(tx, body) {
   } });
 }
 
+// Keep the customer's order balance visible in the same ledger used by the
+// credit sheet.  A positive adjustment is the amount still due on the order;
+// each advance receipt is a linked negative payment entry.
+async function syncCustomerOrderDueLedger(tx, order) {
+  const due = roundedMoney(Math.max(0, Number(order.quotedAmount || 0) - Number(order.customerAdvance || 0)));
+  const existing = await tx.customerLedger.findMany({
+    where: { customerId: order.customerId, type: 'ADJUSTMENT', reference: order.orderNumber },
+    orderBy: { id: 'asc' },
+    select: { id: true }
+  });
+  if (due > 0) {
+    if (existing.length) {
+      await tx.customerLedger.update({ where: { id: existing[0].id }, data: {
+        amount: due, note: `Customer order balance — ${order.orderNumber}`
+      } });
+      if (existing.length > 1) await tx.customerLedger.deleteMany({ where: { id: { in: existing.slice(1).map((row) => row.id) } } });
+    } else {
+      await tx.customerLedger.create({ data: {
+        customerId: order.customerId, type: 'ADJUSTMENT', amount: due,
+        reference: order.orderNumber, note: `Customer order balance — ${order.orderNumber}`
+      } });
+    }
+  } else if (existing.length) {
+    await tx.customerLedger.deleteMany({ where: { id: { in: existing.map((row) => row.id) } } });
+  }
+}
+
 /* ── Pledge Loans (customer gold/silver held as security) ── */
 function pledgeStatus(value) {
   const normalized = String(value || 'ACTIVE').toUpperCase();
@@ -2776,11 +2837,15 @@ app.get('/pledges', async (req, res, next) => {
       skip: (pagination.page - 1) * pagination.pageSize,
       take: pagination.pageSize
     });
-    const activeTotals = loans.filter((loan) => loan.status === 'ACTIVE').reduce((totals, loan) => ({
-      lent: totals.lent + Number(loan.principalAmount || 0),
-      repaid: totals.repaid + Number(loan.principalRepaid || 0),
-      outstanding: totals.outstanding + pledgeOutstanding(loan)
-    }), { lent: 0, repaid: 0, outstanding: 0 });
+    // Summary cards must cover every matching active pledge, not only the
+    // current paginated page shown below.
+    const activeAggregate = await prisma.pledgeLoan.aggregate({
+      where: { ...where, status: 'ACTIVE' },
+      _sum: { principalAmount: true, principalRepaid: true }
+    });
+    const lent = Number(activeAggregate._sum.principalAmount || 0);
+    const repaid = Number(activeAggregate._sum.principalRepaid || 0);
+    const activeTotals = { lent, repaid, outstanding: roundedMoney(Math.max(0, lent - repaid)) };
     res.render('pledges/index', { title: 'Pledge loans', loans, q, status, metal, pagination, activeTotals, pledgeOutstanding });
   } catch (error) { next(error); }
 });
@@ -2848,6 +2913,26 @@ app.get('/pledges/:id', async (req, res, next) => {
       }
     });
     res.render('pledges/detail', { title: loan.pledgeNumber, loan, outstanding: pledgeOutstanding(loan) });
+  } catch (error) { next(error); }
+});
+
+app.get('/pledges/:id/invoice.pdf', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) throw new Error('Pledge loan not found.');
+    const [loan, businessSettings] = await Promise.all([
+      prisma.pledgeLoan.findUnique({
+        where: { id },
+        include: {
+          customer: true,
+          payments: { orderBy: [{ paymentDate: 'asc' }, { id: 'asc' }] },
+          cashbookEntries: { where: { type: 'OUT' }, orderBy: { id: 'asc' }, take: 1 }
+        }
+      }),
+      getBusinessSettings(prisma)
+    ]);
+    if (!loan) return res.status(404).render('not-found', { title: 'Pledge receipt not found' });
+    await writePledgeLoanInvoice(res, loan, businessSettings);
   } catch (error) { next(error); }
 });
 
@@ -3058,15 +3143,129 @@ app.post('/customer-orders', async (req, res) => {
         quotedAmount, customerAdvance: advance, advancePaymentMethod: method,
         notes: supplierText(req.body.notes) || null
       } });
-      if (advance > 0) await tx.cashbookEntry.create({ data: {
-        entryDate: dateInput(orderDate), type: 'IN', paymentMethod: method, amount: advance,
-        description: `Customer order advance — ${record.orderNumber}`, reference: record.orderNumber,
-        customerId: customer.id, customerOrderId: record.id, syncLedger: false, notes: record.notes
-      } });
+      if (advance > 0) {
+        const cashbookEntry = await tx.cashbookEntry.create({ data: {
+          entryDate: dateInput(orderDate), type: 'IN', paymentMethod: method, amount: advance,
+          description: `Customer order advance — ${record.orderNumber}`, reference: record.orderNumber,
+          customerId: customer.id, customerOrderId: record.id, syncLedger: true, notes: record.notes
+        } });
+        await tx.customerLedger.create({ data: {
+          customerId: customer.id, type: 'PAYMENT_RECEIVED', amount: -advance,
+          paymentMethod: method, cashbookEntryId: cashbookEntry.id,
+          reference: record.orderNumber, note: `Advance received for customer order ${record.orderNumber}`
+        } });
+      }
+      await syncCustomerOrderDueLedger(tx, record);
       return record;
     });
     redirectWith(res, '/customer-orders', 'message', `Customer order ${order.orderNumber} saved.`);
   } catch (error) { redirectWith(res, '/customer-orders/new', 'error', error.message || 'Could not save customer order.'); }
+});
+
+app.get('/customer-orders/:id/edit', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) throw new Error('Customer order not found.');
+    const order = await prisma.customerOrder.findFirstOrThrow({
+      where: { id, status: { not: 'CANCELLED' } }, include: { customer: true, supplier: true }
+    });
+    res.render('customer-orders/form', { title: `Edit ${order.orderNumber}`, order, editing: true });
+  } catch (error) { next(error); }
+});
+
+app.post('/customer-orders/:id/edit', async (req, res) => {
+  const id = Number(req.params.id);
+  try {
+    if (!Number.isInteger(id) || id <= 0) throw new Error('Customer order not found.');
+    const metal = ['GOLD', 'SILVER'].includes(String(req.body.metal || '').toUpperCase()) ? String(req.body.metal).toUpperCase() : null;
+    const itemName = titleCase(req.body.itemName);
+    const quantity = Math.floor(number(req.body.quantity));
+    const quotedAmount = roundedMoney(Math.max(0, number(req.body.quotedAmount)));
+    const orderDate = dateTimeFromInput(req.body.orderDate);
+    const dueDate = req.body.dueDate ? dateTimeFromInput(req.body.dueDate) : null;
+    if (!metal) throw new Error('Choose Gold or Silver.');
+    if (!itemName) throw new Error('Enter the ordered item.');
+    if (!Number.isInteger(quantity) || quantity <= 0) throw new Error('Enter the number of pieces ordered.');
+    await prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw`SELECT id FROM \`CustomerOrder\` WHERE id = ${id} FOR UPDATE`;
+      if (!locked.length) throw new Error('Customer order not found.');
+      const current = await tx.customerOrder.findUniqueOrThrow({ where: { id } });
+      if (current.status === 'CANCELLED') throw new Error('A cancelled customer order cannot be edited.');
+      if (quotedAmount > 0 && Number(current.customerAdvance) > quotedAmount) {
+        throw new Error(`Quoted amount cannot be less than the recorded advance of ${money(current.customerAdvance)}.`);
+      }
+      const customer = await resolveOrderCustomer(tx, req.body);
+      await tx.customer.update({ where: { id: customer.id }, data: {
+        name: titleCase(req.body.customerName),
+        phone: normalizePhone(req.body.customerPhone) || null,
+        address: titleCase(req.body.customerAddress) || null,
+        panNumber: String(req.body.customerPan || '').trim().toUpperCase() || null
+      } });
+      const selectedSellerId = Number(req.body.sellerId);
+      const supplier = Number.isInteger(selectedSellerId) && selectedSellerId > 0
+        ? await tx.supplier.findUniqueOrThrow({ where: { id: selectedSellerId } })
+        : supplierText(req.body.sellerName)
+          ? await resolveSupplier(tx, { supplierName: req.body.sellerName, supplierPhone: req.body.sellerPhone })
+          : null;
+      const oldCashbookEntries = await tx.cashbookEntry.findMany({ where: { customerOrderId: id }, select: { id: true } });
+      await tx.customerOrder.update({ where: { id }, data: {
+        customerId: customer.id, supplierId: supplier?.id || null, orderDate, dueDate, itemName,
+        category: titleCase(req.body.category) || null, metal,
+        purity: supplierText(req.body.purity).toUpperCase() || null, quantity,
+        targetGrossWeight: Math.max(0, number(req.body.targetGrossWeight)),
+        targetNetWeight: Math.max(0, number(req.body.targetNetWeight)), quotedAmount,
+        notes: supplierText(req.body.notes) || null
+      } });
+      if (oldCashbookEntries.length) {
+        const ids = oldCashbookEntries.map((entry) => entry.id);
+        await tx.cashbookEntry.updateMany({ where: { id: { in: ids } }, data: { customerId: customer.id } });
+        await tx.customerLedger.updateMany({ where: { cashbookEntryId: { in: ids } }, data: { customerId: customer.id } });
+      }
+      if (current.customerId !== customer.id) {
+        await tx.customerLedger.deleteMany({ where: { customerId: current.customerId, type: 'ADJUSTMENT', reference: current.orderNumber } });
+      }
+      await syncCustomerOrderDueLedger(tx, { ...current, customerId: customer.id, quotedAmount });
+    });
+    redirectWith(res, '/customer-orders', 'message', 'Customer order updated.');
+  } catch (error) { redirectWith(res, `/customer-orders/${id}/edit`, 'error', error.message || 'Could not update customer order.'); }
+});
+
+app.post('/customer-orders/:id/payments', async (req, res) => {
+  const id = Number(req.params.id);
+  try {
+    const amount = roundedMoney(number(req.body.amount));
+    const paymentMethod = receiptPaymentMethod(req.body.paymentMethod);
+    const paymentDate = dateInput(dateTimeFromInput(req.body.paymentDate || dateInput()));
+    if (!Number.isInteger(id) || id <= 0 || amount <= 0) throw new Error('Enter a valid advance amount.');
+    await prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw`SELECT id FROM \`CustomerOrder\` WHERE id = ${id} FOR UPDATE`;
+      if (!locked.length) throw new Error('Customer order not found.');
+      const order = await tx.customerOrder.findUniqueOrThrow({ where: { id } });
+      if (order.status === 'CANCELLED') throw new Error('A cancelled customer order cannot receive payment.');
+      if (Number(order.quotedAmount) <= 0) throw new Error('Set a quoted amount before recording another advance.');
+      const due = roundedMoney(Math.max(0, Number(order.quotedAmount) - Number(order.customerAdvance)));
+      if (amount > due) throw new Error(`Advance cannot be greater than the remaining order balance of ${money(due)}.`);
+      const cashbookEntry = await tx.cashbookEntry.create({ data: {
+        entryDate: paymentDate, type: 'IN', paymentMethod, amount,
+        description: `Customer order advance — ${order.orderNumber}`, reference: order.orderNumber,
+        customerId: order.customerId, customerOrderId: order.id, syncLedger: true,
+        notes: supplierText(req.body.notes) || null
+      } });
+      await tx.customerLedger.create({ data: {
+        customerId: order.customerId, type: 'PAYMENT_RECEIVED', amount: -amount,
+        paymentMethod, cashbookEntryId: cashbookEntry.id, reference: order.orderNumber,
+        note: `Advance received for customer order ${order.orderNumber}`
+      } });
+      const nextAdvance = roundedMoney(Number(order.customerAdvance) + amount);
+      await tx.customerOrder.update({ where: { id }, data: {
+        customerAdvance: nextAdvance,
+        advancePaymentMethod: Number(order.customerAdvance) <= 0 || order.advancePaymentMethod === paymentMethod
+          ? paymentMethod : 'MIXED'
+      } });
+      await syncCustomerOrderDueLedger(tx, { ...order, customerAdvance: nextAdvance });
+    });
+    redirectWith(res, '/customer-orders', 'message', 'Customer order advance recorded.');
+  } catch (error) { redirectWith(res, '/customer-orders', 'error', error.message || 'Could not record order advance.'); }
 });
 
 app.post('/customer-orders/:id/status', async (req, res) => {
@@ -3088,6 +3287,12 @@ app.post('/customer-orders/:id/cancel', async (req, res) => {
       const current = await tx.customerOrder.findUniqueOrThrow({ where: { id } });
       if (current.status === 'CANCELLED') throw new Error('This customer order is already cancelled.');
       const refundable = roundedMoney(Math.max(0, Number(current.customerAdvance) - Number(current.refundedAmount)));
+      // Remove the order's outstanding-balance entry and detach receipt ledger
+      // rows while retaining the original Cashbook audit trail. Cancellation
+      // must not leave a phantom customer credit behind.
+      const orderReceipts = await tx.cashbookEntry.findMany({ where: { customerOrderId: id }, select: { id: true } });
+      if (orderReceipts.length) await tx.customerLedger.deleteMany({ where: { cashbookEntryId: { in: orderReceipts.map((entry) => entry.id) } } });
+      await tx.customerLedger.deleteMany({ where: { customerId: current.customerId, type: 'ADJUSTMENT', reference: current.orderNumber } });
       if (refundable > 0) {
         const refundMethod = receiptPaymentMethod(req.body.refundPaymentMethod);
         await tx.cashbookEntry.create({ data: {
@@ -3146,7 +3351,12 @@ function looksLikeSupplierTypo(enteredName, savedName) {
 }
 
 async function similarSupplier(tx, name) {
-  const saved = await tx.supplier.findMany({ select: { id: true, name: true }, orderBy: { id: 'asc' } });
+  const normalized = supplierText(name);
+  const tokens = normalized.split(/\s+/).filter((token) => token.length >= 3);
+  const saved = await tx.supplier.findMany({
+    where: { OR: [{ name: { contains: normalized } }, ...tokens.slice(0, 3).map((token) => ({ name: { contains: token } }))] },
+    select: { id: true, name: true }, orderBy: { id: 'asc' }, take: 250
+  });
   return saved
     .filter((supplier) => looksLikeSupplierTypo(name, supplier.name))
     .sort((left, right) => supplierNameDistance(name, left.name) - supplierNameDistance(name, right.name))[0] || null;
@@ -3286,16 +3496,11 @@ app.get('/suppliers', async (req, res, next) => {
       { name: { contains: q } }, { phone: { contains: q } },
       { gstin: { contains: q } }, { panNumber: { contains: q } }
     ] } : {};
-    const [totalItems, allSupplierNames] = await Promise.all([
+    const [totalItems, duplicateRows] = await Promise.all([
       prisma.supplier.count({ where }),
-      prisma.supplier.findMany({ select: { name: true } })
+      prisma.$queryRaw`SELECT UPPER(TRIM(\`name\`)) AS supplierKey, COUNT(*) AS entries FROM \`Supplier\` GROUP BY UPPER(TRIM(\`name\`)) HAVING COUNT(*) > 1`
     ]);
-    const supplierNameCounts = new Map();
-    allSupplierNames.forEach((supplier) => {
-      const key = supplierNameKey(supplier.name);
-      supplierNameCounts.set(key, (supplierNameCounts.get(key) || 0) + 1);
-    });
-    const duplicateSupplierProfiles = [...supplierNameCounts.values()].reduce((count, entries) => count + Math.max(0, entries - 1), 0);
+    const duplicateSupplierProfiles = duplicateRows.reduce((count, row) => count + Math.max(0, Number(row.entries) - 1), 0);
     const pagination = paginationFor(req, totalItems, req.query.page, 100);
     const suppliers = await prisma.supplier.findMany({
       where,
@@ -3767,11 +3972,15 @@ app.post('/urd-purchases/:id/payments', async (req, res) => {
 
 app.get('/urd-purchases/:id/invoice.pdf', async (req, res, next) => {
   try {
-    const purchase = await prisma.urdPurchase.findUnique({
-      where: { id: Number(req.params.id), cancelledAt: null }, include: { customer: true, sale: true }
-    });
+    const [purchase, businessSettings] = await Promise.all([
+      prisma.urdPurchase.findUnique({
+        where: { id: Number(req.params.id), cancelledAt: null },
+        include: { customer: true, sale: true, cashbookEntries: { orderBy: { id: 'asc' }, take: 1 } }
+      }),
+      getBusinessSettings(prisma)
+    ]);
     if (!purchase) return res.status(404).render('not-found', { title: 'URD invoice not found' });
-    writeUrdPurchaseInvoice(res, purchase);
+    await writeUrdPurchaseInvoice(res, purchase, businessSettings);
   } catch (error) { next(error); }
 });
 
@@ -4005,7 +4214,12 @@ app.get('/reports/top-selling-items/export', async (req, res) => {
   try {
     const range = parseDateRange(req.query);
     const filters = normalizeTopSellingFilters(req.query);
-    const payload = await getExportPayload(prisma, 'top-selling-items', range, filters);
+    const businessSettings = await getBusinessSettings(prisma);
+    const payload = await getExportPayload(prisma, 'top-selling-items', range, {
+      ...filters,
+      shopName: businessSettings.shopName,
+      metadata: excelBusinessMetadata(businessSettings)
+    });
     const workbook = await buildExcelExport(payload);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${payload.filename}"`);
@@ -4157,7 +4371,12 @@ app.get('/schemes/plans/:id', async (req, res, next) => {
 app.get('/schemes/plans/:id/export', async (req, res) => {
   const planId = Number(req.params.id);
   try {
-    const payload = await getSchemePlanExportPayload(prisma, planId, { month: req.query.month });
+    const businessSettings = await getBusinessSettings(prisma);
+    const payload = await getSchemePlanExportPayload(prisma, planId, {
+      month: req.query.month,
+      shopName: businessSettings.shopName,
+      metadata: excelBusinessMetadata(businessSettings)
+    });
     const workbook = await buildExcelExport(payload);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${payload.filename}"`);
@@ -4358,6 +4577,50 @@ app.get('/schemes/enrollments/:id', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+app.get('/schemes/enrollments/:id/receipt.pdf', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(404).send('Enrollment not found.');
+    const enrollment = await prisma.schemeEnrollment.findUnique({
+      where: { id },
+      include: {
+        schemePlan: true,
+        customer: true,
+        installments: {
+          orderBy: { installmentNumber: 'asc' },
+          include: { payments: { orderBy: [{ paymentDate: 'asc' }, { id: 'asc' }] } }
+        }
+      }
+    });
+    if (!enrollment || enrollment.status === 'CANCELLED') return res.status(404).send('Enrollment not found.');
+    await writeSchemeConsolidatedReceipt(res, enrollment, await getBusinessSettings(prisma));
+  } catch (error) { next(error); }
+});
+
+app.get('/schemes/enrollments/:id/installments/:installmentId/receipt.pdf', async (req, res, next) => {
+  try {
+    const enrollmentId = Number(req.params.id);
+    const installmentId = Number(req.params.installmentId);
+    if (!Number.isInteger(enrollmentId) || !Number.isInteger(installmentId) || enrollmentId <= 0 || installmentId <= 0) {
+      return res.status(404).send('Installment not found.');
+    }
+    const installment = await prisma.schemeInstallment.findFirst({
+      where: {
+        id: installmentId,
+        enrollmentId,
+        status: 'PAID',
+        enrollment: { status: { not: 'CANCELLED' } }
+      },
+      include: {
+        payments: { orderBy: [{ paymentDate: 'asc' }, { id: 'asc' }] },
+        enrollment: { include: { schemePlan: true, customer: true } }
+      }
+    });
+    if (!installment || !paymentParts(installment).length) return res.status(404).send('Payment receipt not found.');
+    await writeSchemeInstallmentReceipt(res, installment.enrollment, installment, await getBusinessSettings(prisma));
+  } catch (error) { next(error); }
+});
+
 app.post('/schemes/enrollments/:id/pay', async (req, res, next) => {
   const enrollmentId = Number(req.params.id);
   try {
@@ -4365,6 +4628,7 @@ app.post('/schemes/enrollments/:id/pay', async (req, res, next) => {
     const payment = schemePaymentBreakdown(req.body);
     const amount = payment.paid;
     const paymentDate = dateInput(dateTimeFromInput(req.body.paymentDate || dateInput()));
+    const narration = optionalText(req.body.narration, 1000);
     if (amount <= 0) return redirectWith(res, `/schemes/enrollments/${enrollmentId}`, 'error', 'Enter a valid payment amount.');
 
     await prisma.$transaction(async (tx) => {
@@ -4399,7 +4663,7 @@ app.post('/schemes/enrollments/:id/pay', async (req, res, next) => {
             description: `Scheme payment — ${enrollment.enrollmentNumber} — Installment ${installment.installmentNumber}`,
             reference: generatedReference('SCH-PAY'),
             customerId: enrollment.customerId,
-            notes: `${enrollment.schemePlan.name} · Installment ${installment.installmentNumber} of ${enrollment.schemePlan.durationMonths}`
+            notes: [`${enrollment.schemePlan.name} · Installment ${installment.installmentNumber} of ${enrollment.schemePlan.durationMonths}`, narration].filter(Boolean).join(' · ')
           }
         });
         cashbookEntries.push({ ...component, id: cashbookEntry.id });
@@ -4423,6 +4687,7 @@ app.post('/schemes/enrollments/:id/pay', async (req, res, next) => {
           paymentDate,
           paymentMethod: payment.paymentMethod,
           cashbookEntryId: cashbookEntries.length === 1 ? cashbookEntries[0].id : null,
+          notes: narration,
           status: 'PAID'
         }
       });
@@ -4460,6 +4725,7 @@ app.post('/schemes/enrollments/:id/installments/:installmentId/edit-payment', as
     const payment = schemePaymentBreakdown(req.body);
     const amount = payment.paid;
     const paymentDate = dateInput(dateTimeFromInput(req.body.paymentDate || dateInput()));
+    const narration = optionalText(req.body.narration, 1000);
     if (amount <= 0) throw new Error('Enter a valid payment amount.');
 
     await prisma.$transaction(async (tx) => {
@@ -4504,7 +4770,7 @@ app.post('/schemes/enrollments/:id/installments/:installmentId/edit-payment', as
             description: `Scheme payment — ${enrollment.enrollmentNumber} — Installment ${installment.installmentNumber}`,
             reference: generatedReference('SCH-PAY'),
             customerId: enrollment.customerId,
-            notes: `${enrollment.schemePlan.name} · Installment ${installment.installmentNumber} of ${enrollment.schemePlan.durationMonths}`
+            notes: [`${enrollment.schemePlan.name} · Installment ${installment.installmentNumber} of ${enrollment.schemePlan.durationMonths}`, narration].filter(Boolean).join(' · ')
           }
         });
         cashbookEntries.push({ ...component, id: cashbookEntry.id });
@@ -4525,6 +4791,7 @@ app.post('/schemes/enrollments/:id/installments/:installmentId/edit-payment', as
           paymentDate,
           paymentMethod: payment.paymentMethod,
           cashbookEntryId: cashbookEntries.length === 1 ? cashbookEntries[0].id : null,
+          notes: narration,
           status: 'PAID'
         }
       });

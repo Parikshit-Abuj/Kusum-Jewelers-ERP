@@ -7,6 +7,8 @@ $ErrorActionPreference = 'Stop'
 $scriptDirectory = $PSScriptRoot
 if (-not $scriptDirectory) { $scriptDirectory = Split-Path $MyInvocation.MyCommand.Path -Parent }
 $projectRoot = Split-Path $scriptDirectory -Parent
+$iconPath = Join-Path $projectRoot 'public\kusum-app-icon.ico'
+if (-not (Test-Path -LiteralPath $iconPath)) { throw 'The Kusum Windows application icon is missing at public\kusum-app-icon.ico.' }
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $projectRoot 'output\kusum-erp-portable' }
 $outputPath = if ([System.IO.Path]::IsPathRooted($OutputDirectory)) {
   [System.IO.Path]::GetFullPath($OutputDirectory)
@@ -59,7 +61,7 @@ New-Item -ItemType Directory -Path $outputPath -Force | Out-Null
 # Use an allowlist-oriented set of filters. Only runtime application files and
 # production dependencies may enter the shop package; development/audit scripts
 # are deliberately unreachable from a client installation.
-& node $packager $projectRoot 'Kusum ERP' --platform=win32 --arch=x64 --out=$outputPath --overwrite --prune=true --asar=false --electron-zip-dir=$electronZipDirectory `
+& node $packager $projectRoot 'Kusum ERP' --platform=win32 --arch=x64 --icon=$iconPath --out=$outputPath --overwrite --prune=true --asar=false --electron-zip-dir=$electronZipDirectory `
   --ignore='^/(?!electron-main\.js$|package\.json$|public(?:/|$)|src(?:/|$)|prisma(?:/|$)|scripts(?:/|$)|node_modules(?:/|$)).*' `
   --ignore='^/scripts/(?!print-tspl\.ps1$|list-printers\.ps1$).*' `
   --ignore='^/prisma/(?!schema\.prisma$|migrations(?:/|$)).*' `

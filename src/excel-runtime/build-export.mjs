@@ -5,6 +5,11 @@ const [inputPath, outputPath] = process.argv.slice(2);
 if (!inputPath || !outputPath) throw new Error('Usage: build-export.mjs <input.json> <output.xlsx>');
 
 const payload = JSON.parse(await fs.readFile(inputPath, 'utf8'));
+const metadata = payload.metadata && typeof payload.metadata === 'object' ? payload.metadata : {};
+const reportShopName = String(metadata.shopName || payload.shopName || 'Jewellery ERP').replace(/\s+/g, ' ').trim() || 'Jewellery ERP';
+// Excel header/footer strings use ampersand as a formatting control character.
+// Escape it so a shop name containing '&' is displayed literally.
+const footerShopName = reportShopName.replaceAll('&', '&&');
 
 const thinGoldBorder = {
   top: { style: 'thin', color: { argb: 'FFD2B77F' } },
@@ -94,7 +99,11 @@ function rowHeightFor(row, columns) {
     const estimated = explicitLines.reduce((total, line) => total + Math.max(1, Math.ceil(line.length / Math.max(8, (column.width || 16) - 2))), 0);
     return Math.max(maximum, estimated);
   }, 1);
-  return Math.min(60, Math.max(20, lines * 16));
+  // Excel supports row heights up to roughly 409 points. Keep a generous
+  // practical ceiling so long notes and split-payment details remain fully
+  // readable without allowing one accidental multi-page note to dominate an
+  // entire worksheet.
+  return Math.min(390, Math.max(20, lines * 16));
 }
 
 function sheetName(name, index, names) {
@@ -133,7 +142,9 @@ function caRegisterRowHeight(row, columns) {
     );
     return Math.max(maximum, estimatedLines);
   }, 1);
-  return Math.min(54, Math.max(18, lines * 16));
+  // CA registers also contain wrapped payment/remark text. The previous
+  // 54-point cap clipped legitimate split-payment details in Excel.
+  return Math.min(390, Math.max(18, lines * 16));
 }
 
 function addCaRegisterWorksheet(workbook, spec, index, usedNames) {
@@ -152,7 +163,7 @@ function addCaRegisterWorksheet(workbook, spec, index, usedNames) {
 
   mergeAcross(sheet, 1, lastColumn);
   const shopCell = sheet.getCell(1, 1);
-  shopCell.value = spec.shopName || 'KUSUM JEWELLERS';
+  shopCell.value = String(spec.shopName || payload.shopName || 'KUSUM JEWELLERS').trim();
   shopCell.font = { name: 'Arial', bold: true, size: 16, color: { argb: 'FF000000' } };
   shopCell.alignment = { horizontal: 'center', vertical: 'middle' };
   sheet.getRow(1).height = 24;
@@ -261,7 +272,7 @@ function addWorksheet(workbook, spec, index, usedNames) {
 
   mergeAcross(sheet, 1, lastColumn);
   const titleCell = sheet.getCell(1, 1);
-  titleCell.value = spec.title || payload.title || 'Kusum ERP Data Export';
+  titleCell.value = spec.title || payload.title || `${reportShopName} Data Export`;
   titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF30251D' } };
   titleCell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 16 };
   titleCell.alignment = { horizontal: 'left', vertical: 'middle' };
@@ -269,7 +280,7 @@ function addWorksheet(workbook, spec, index, usedNames) {
 
   mergeAcross(sheet, 2, lastColumn);
   const subtitleCell = sheet.getCell(2, 1);
-  subtitleCell.value = spec.subtitle || payload.subtitle || 'Exported from Kusum ERP';
+  subtitleCell.value = spec.subtitle || payload.subtitle || `Exported from ${reportShopName}`;
   subtitleCell.font = { color: { argb: 'FF756F69' }, italic: true, size: 10 };
 
   infoRows.forEach((item, itemIndex) => {
@@ -340,7 +351,7 @@ function addWorksheet(workbook, spec, index, usedNames) {
     margins: { left: 0.25, right: 0.25, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 },
     printTitlesRow: `${headerRow}:${headerRow}`
   };
-  sheet.headerFooter.oddFooter = '&LKusum ERP&CConfidential business register&RPage &P of &N';
+  sheet.headerFooter.oddFooter = `&L${footerShopName}&CConfidential business register&RPage &P of &N`;
   sheet.headerFooter.evenFooter = sheet.headerFooter.oddFooter;
   sheet.printArea = `A1:${sheet.getColumn(lastColumn).letter}${Math.max(dataStart, headerRow + rows.length)}`;
 }
@@ -353,9 +364,19 @@ const sheets = Array.isArray(payload.sheets) && payload.sheets.length
 if (!sheets.length || !sheets[0].columns?.length) throw new Error('Excel export needs at least one column.');
 
 const workbook = new ExcelJS.Workbook();
-workbook.creator = 'Kusum ERP';
-workbook.lastModifiedBy = 'Kusum ERP';
-workbook.company = 'Kusum ERP';
+// The workbook properties identify the product, while visible worksheet
+// headings and footers identify the configured shop.
+workbook.creator = String(metadata.creator || reportShopName).trim() || reportShopName;
+workbook.lastModifiedBy = String(metadata.lastModifiedBy || reportShopName).trim() || reportShopName;
+workbook.company = reportShopName;
+workbook.subject = String(metadata.subject || payload.title || 'ERP register export').trim();
+workbook.keywords = [reportShopName, metadata.gstin, metadata.panNumber].filter(Boolean).join(', ');
+workbook.description = [
+  metadata.address,
+  metadata.gstin && `GSTIN: ${metadata.gstin}`,
+  metadata.panNumber && `PAN: ${metadata.panNumber}`,
+  [metadata.primaryPhone, metadata.secondaryPhone].filter(Boolean).join(' / ')
+].filter(Boolean).join(' | ');
 workbook.created = new Date();
 workbook.modified = new Date();
 // Excel will recalculate formulas if a user modifies a workbook, while the

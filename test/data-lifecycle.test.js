@@ -138,9 +138,10 @@ test('sales and URD CA registers keep URD settlement figures accurate', async ()
     urdPurchase: { findMany: async () => [purchase] }
   };
 
-  const sales = await getExportPayload(db, 'sales', { from: '2026-09-02', to: '2026-09-02' });
+  const sales = await getExportPayload(db, 'sales', { from: '2026-09-02', to: '2026-09-02' }, { shopName: 'Asha Jewellers' });
   const salesRegister = sales.sheets.find((sheet) => sheet.name === 'All');
   assert.deepEqual(sales.sheets.map((sheet) => sheet.name), ['All', 'Gold', 'Silver']);
+  assert.equal(sales.shopName, 'Asha Jewellers');
   assert.equal(salesRegister.layout, 'ca-register');
   assert.deepEqual(salesRegister.columns.map((column) => column.label), ['Date', 'Doc-no', 'Customer', 'Gr-wt', 'Net-wt', 'Taxable-amt', 'CGST', 'SGST', 'IGST', 'Total', 'URD', 'Discount', 'Net-amt']);
   assert.equal(salesRegister.rows[0].invoiceNumber, 'SB/26-27/00001');
