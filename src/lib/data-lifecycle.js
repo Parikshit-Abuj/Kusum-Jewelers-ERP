@@ -118,12 +118,22 @@ function schemeInstallmentPaymentSummary(installment = {}) {
       const bTime = new Date(b.paymentDate).getTime();
       return (Number.isFinite(aTime) ? aTime : 0) - (Number.isFinite(bTime) ? bTime : 0);
     });
-  if (!paid.length) return { paidDates: '', paymentType: '' };
+  if (!paid.length) return { paidDates: '', paymentType: '', paymentParts: [] };
 
   // An installment may be paid in parts on different dates. Keep every
   // payment date and component visible so its Amount total is never shown
   // beside only the latest receipt details.
   const dates = [...new Set(paid.map((payment) => exportDate(payment.paymentDate)))];
+  // Keep the individual payment components alongside the compact display
+  // strings.  The Excel renderer uses these typed values to write one row per
+  // split payment, so every paid date remains a real Excel date rather than a
+  // comma-separated text value.  Existing callers can continue using
+  // `paidDates` and `paymentType` for compact on-screen summaries.
+  const paymentParts = paid.map((payment) => ({
+    paymentDate: exportDate(payment.paymentDate),
+    paymentType: paymentLabel(payment.paymentMethod),
+    amount: roundCurrency(num(payment.amount))
+  }));
   return {
     // Dates have their own column in the scheme register. Keep this compact
     // so a normal payment remains one clean value such as "21-Aug-26".
@@ -132,7 +142,8 @@ function schemeInstallmentPaymentSummary(installment = {}) {
     // payment-method column difficult to read beside the Paid Date column.
     paymentType: paid
       .map((payment) => `${paymentLabel(payment.paymentMethod)} ₹${num(payment.amount).toFixed(2)}`)
-      .join(' + ')
+      .join(' + '),
+    paymentParts
   };
 }
 
@@ -140,9 +151,9 @@ function latestSchemePayment(installments = []) {
   const paid = installments
     .map((installment) => ({ installment, ...schemeInstallmentPaymentSummary(installment) }))
     .filter((item) => item.paidDates);
-  if (!paid.length) return { paidDates: '', paymentType: '' };
+  if (!paid.length) return { paidDates: '', paymentType: '', paymentParts: [] };
   const latest = [...paid].sort((a, b) => Number(a.installment.installmentNumber || 0) - Number(b.installment.installmentNumber || 0)).at(-1);
-  return { paidDates: latest.paidDates, paymentType: latest.paymentType };
+  return { paidDates: latest.paidDates, paymentType: latest.paymentType, paymentParts: latest.paymentParts || [] };
 }
 
 function makingLabel(value) {
@@ -201,7 +212,8 @@ function salesRegisterColumns() {
 }
 
 function roundCurrency(value) {
-  return Math.round(num(value) * 100) / 100;
+  const rounded = Number(num(value).toFixed(2));
+  return Object.is(rounded, -0) ? 0 : rounded;
 }
 
 function isGoldSilverOnlyMixedSale(sale) {
@@ -214,7 +226,7 @@ function isGoldSilverOnlyMixedSale(sale) {
 // lose one paisa.  Gold takes the normal rounded value and Silver receives
 // the exact remainder, so the two registers always reconcile to All sales.
 function mixedMetalAllocatedAmount(amount, selectedMetal, allItemBasis, goldItemBasis, selectedItemBasis, isMixedGoldSilverOnly) {
-  if (!selectedMetal || allItemBasis <= 0) return num(amount);
+  if (!selectedMetal || allItemBasis <= 0) return roundCurrency(amount);
   if (!isMixedGoldSilverOnly) return roundCurrency(num(amount) * (selectedItemBasis / allItemBasis));
   const goldAmount = roundCurrency(num(amount) * (goldItemBasis / allItemBasis));
   return selectedMetal === 'GOLD' ? goldAmount : roundCurrency(num(amount) - goldAmount);
@@ -248,34 +260,34 @@ function saleRegisterRows(sales, metal = null) {
         .reduce((sum, item) => sum + itemBasis(item), 0);
       const mixedGoldSilverOnly = isGoldSilverOnlyMixedSale(sale);
       const allocate = (amount) => mixedMetalAllocatedAmount(amount, selectedMetal, allItemBasis, goldItemBasis, selectedItemBasis, mixedGoldSilverOnly);
-      const discount = selectedMetal ? allocate(sale.discount) : num(sale.discount);
+      const discount = selectedMetal ? allocate(sale.discount) : roundCurrency(sale.discount);
       const taxableAmount = selectedMetal
         ? mixedGoldSilverOnly
           ? allocate(Math.max(0, num(sale.subtotal) - num(sale.discount)))
           : roundCurrency(Math.max(0, selectedItemTaxable - discount))
-        : Math.max(0, num(sale.subtotal) - num(sale.discount));
+        : roundCurrency(Math.max(0, num(sale.subtotal) - num(sale.discount)));
       const gstAmount = selectedMetal
         ? allocate(sale.gstAmount)
-        : num(sale.gstAmount);
-      const cgstAmount = Math.round((gstAmount / 2) * 100) / 100;
-      const total = selectedMetal ? allocate(sale.total) : num(sale.total);
-      const urdAdjustment = selectedMetal ? allocate(settlement.saleAdjustment) : settlement.saleAdjustment;
+        : roundCurrency(sale.gstAmount);
+      const cgstAmount = roundCurrency(gstAmount / 2);
+      const total = selectedMetal ? allocate(sale.total) : roundCurrency(sale.total);
+      const urdAdjustment = selectedMetal ? allocate(settlement.saleAdjustment) : roundCurrency(settlement.saleAdjustment);
       // Keep the CA register's original columns.  When the URD valuation is
       // greater than the invoice total, the existing Net-amt column carries
       // the negative excess (for example, 100 - 200 = -100) instead of
       // introducing a separate Refund column.  Use the full valuation for
       // this difference; saleAdjustment is intentionally capped at the bill
       // total for accounting settlement purposes.
-      const urdValuation = selectedMetal ? allocate(settlement.urdValue) : settlement.urdValue;
+      const urdValuation = selectedMetal ? allocate(settlement.urdValue) : roundCurrency(settlement.urdValue);
       return {
         saleDate: exportDate(sale.saleDate),
         invoiceNumber: sale.invoiceNumber,
         customerName: sale.customer?.name || 'Walk-in customer',
         grossWeight,
         netWeight,
-        taxableAmount,
+        taxableAmount: roundCurrency(taxableAmount),
         cgstAmount,
-        sgstAmount: gstAmount - cgstAmount,
+        sgstAmount: roundCurrency(gstAmount - cgstAmount),
         igstAmount: 0,
         total,
         urdAdjustment,
@@ -1149,28 +1161,27 @@ async function getSchemePlanExportPayload(db, schemePlanId, options = {}) {
     throw new Error(`Choose a scheme month from 1 to ${plan.durationMonths}.`);
   }
 
+  // Consolidated output uses only the enrollment's lifetime total.  Do not
+  // load every installment/payment in that mode; large plans can otherwise
+  // materialize a very large nested result for no benefit.  Month reports
+  // still load only the requested installment and its payment components.
+  const enrollmentInclude = { customer: true };
+  if (month !== null) {
+    enrollmentInclude.installments = {
+      where: { installmentNumber: month },
+      select: {
+        installmentNumber: true, paidAmount: true, paymentDate: true, paymentMethod: true,
+        payments: { select: { amount: true, paymentDate: true, paymentMethod: true } }
+      }
+    };
+  }
+
   const enrollments = await db.schemeEnrollment.findMany({
     // Plan exports are operational registers, so exclude cancelled customers
     // consistently from consolidated and per-month reports.
     where: { schemePlanId: planId, status: { not: 'CANCELLED' } },
     orderBy: [{ enrollmentNumber: 'asc' }, { id: 'asc' }],
-    include: {
-      customer: true,
-      installments: month === null
-        ? {
-            select: {
-              installmentNumber: true, paidAmount: true, paymentDate: true, paymentMethod: true,
-              payments: { select: { amount: true, paymentDate: true, paymentMethod: true } }
-            }
-          }
-        : {
-            where: { installmentNumber: month },
-            select: {
-              installmentNumber: true, paidAmount: true, paymentDate: true, paymentMethod: true,
-              payments: { select: { amount: true, paymentDate: true, paymentMethod: true } }
-            }
-          }
-    },
+    include: enrollmentInclude,
     take: MAX_SOURCE_ROWS + 1
   });
   assertExportRows(enrollments, 'Scheme report');

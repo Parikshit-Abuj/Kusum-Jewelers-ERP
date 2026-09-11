@@ -746,7 +746,7 @@ form[action="/network-setup"] input,
 }
 
 /* ── Cashbook ──────────────────────────────────────────────── */
-.cashbook-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 20px; }
+.cashbook-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 20px; }
 .cashbook-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; align-items: start; }
 .cashbook-form h2 { margin-bottom: 16px; }
 .cashbook-form label { margin-bottom: 13px; display: block; }

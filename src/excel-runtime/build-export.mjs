@@ -52,10 +52,26 @@ function dateListValue(value) {
   return date.getUTCDate() === Number(match[1]) ? date : null;
 }
 
+function exportNumberPrecision(type) {
+  if (type === 'currency' || type === 'number') return 2;
+  if (type === 'weight') return 3;
+  if (type === 'integer') return 0;
+  return null;
+}
+
+function roundedExportNumber(value, type) {
+  const numeric = Number(value);
+  const precision = exportNumberPrecision(type);
+  if (precision === null) return numeric;
+  const rounded = Number(numeric.toFixed(precision));
+  return Object.is(rounded, -0) ? 0 : rounded;
+}
+
 function cellValue(value, type) {
   if (value === null || value === undefined || (['text', 'identifier'].includes(type) && value === '')) return null;
   if (type === 'identifier') return { richText: [{ text: String(value) }] };
   if (type === 'date-list') {
+    if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
     const stableDate = dateListValue(value);
     return stableDate || String(value);
   }
@@ -70,7 +86,7 @@ function cellValue(value, type) {
     if (value === '' || value === null || value === undefined) return 0;
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) throw new Error(`Cannot export non-numeric value "${String(value)}" as ${type}.`);
-    return numeric;
+    return roundedExportNumber(numeric, type);
   }
   return String(value);
 }
@@ -103,7 +119,7 @@ function rowHeightFor(row, columns) {
   // practical ceiling so long notes and split-payment details remain fully
   // readable without allowing one accidental multi-page note to dominate an
   // entire worksheet.
-  return Math.min(390, Math.max(20, lines * 16));
+  return Math.min(409, Math.max(20, lines * 16));
 }
 
 function sheetName(name, index, names) {
@@ -144,12 +160,55 @@ function caRegisterRowHeight(row, columns) {
   }, 1);
   // CA registers also contain wrapped payment/remark text. The previous
   // 54-point cap clipped legitimate split-payment details in Excel.
-  return Math.min(390, Math.max(18, lines * 16));
+  return Math.min(409, Math.max(18, lines * 16));
+}
+
+// A scheme installment may contain several payment components.  Keep the
+// existing visible columns, but write each component on its own row so the
+// Paid Date cell can remain a typed Excel date and the Amount column sums the
+// actual parts rather than repeating the installment total.  The compact
+// `paidDates`/`paymentType` strings remain available to non-Excel consumers.
+function expandPaymentPartRows(rows, columns) {
+  const dateColumn = columns.find((column) => column.type === 'date-list');
+  if (!dateColumn) return rows;
+
+  return rows.flatMap((row) => {
+    const parts = Array.isArray(row.paymentParts)
+      ? row.paymentParts.filter((part) => part && part.paymentDate && Number.isFinite(Number(part.amount)) && Number(part.amount) > 0)
+      : [];
+    if (parts.length) {
+      return parts.map((part) => {
+        const expanded = { ...row, [dateColumn.key]: part.paymentDate };
+        if (Object.hasOwn(expanded, 'paymentType')) {
+          const label = String(part.paymentType || '').trim();
+          const amount = roundedExportNumber(part.amount, 'currency');
+          expanded.paymentType = label ? `${label} ₹${amount.toFixed(2)}` : `₹${amount.toFixed(2)}`;
+        }
+        if (Object.hasOwn(expanded, 'amount')) expanded.amount = roundedExportNumber(part.amount, 'currency');
+        return expanded;
+      });
+    }
+
+    // Backward-compatible fallback for payloads produced before paymentParts
+    // was added.  Preserve the total on the first row and make every parsed
+    // date independently sortable/filterable instead of leaving the whole
+    // comma-separated list as text.
+    const text = String(row[dateColumn.key] || '').trim();
+    const tokens = text ? text.split(/\s*,\s*/).filter(Boolean) : [];
+    const dates = tokens.map((token) => dateListValue(token));
+    if (dates.length <= 1 || dates.some((date) => !date)) return [row];
+    return dates.map((date, index) => {
+      const expanded = { ...row, [dateColumn.key]: date };
+      if (index > 0 && Object.hasOwn(expanded, 'amount')) expanded.amount = 0;
+      if (index > 0 && Object.hasOwn(expanded, 'paymentType')) expanded.paymentType = '';
+      return expanded;
+    });
+  });
 }
 
 function addCaRegisterWorksheet(workbook, spec, index, usedNames) {
   const columns = spec.columns || [];
-  const rows = spec.rows || [];
+  const rows = expandPaymentPartRows(spec.rows || [], columns);
   if (!columns.length) throw new Error(`Excel sheet "${spec.name || index + 1}" needs at least one column.`);
 
   const lastColumn = columns.length;
@@ -225,7 +284,7 @@ function addCaRegisterWorksheet(workbook, spec, index, usedNames) {
           }, 0);
           cell.value = {
             formula: `SUM(${letter}${dataStart}:${letter}${footerRow - 1})`,
-            result: calculatedTotal
+            result: roundedExportNumber(calculatedTotal, column.type)
           };
           applyCaRegisterCellFormat(cell, column.type, 'right');
           cell.font = { name: 'Arial', bold: true, color: { argb: 'FF000000' } };
@@ -248,7 +307,7 @@ function addCaRegisterWorksheet(workbook, spec, index, usedNames) {
     margins: { left: 0.25, right: 0.25, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 },
     printTitlesRow: `${headerRow}:${headerRow}`
   };
-  sheet.printArea = `A1:${sheet.getColumn(lastColumn).letter}${Math.max(dataStart, headerRow + rows.length + (rows.length && spec.totalKeys?.length ? 1 : 0))}`;
+  sheet.pageSetup.printArea = `A1:${sheet.getColumn(lastColumn).letter}${Math.max(dataStart, headerRow + rows.length + (rows.length && spec.totalKeys?.length ? 1 : 0))}`;
 }
 
 function addWorksheet(workbook, spec, index, usedNames) {
@@ -353,7 +412,7 @@ function addWorksheet(workbook, spec, index, usedNames) {
   };
   sheet.headerFooter.oddFooter = `&L${footerShopName}&CConfidential business register&RPage &P of &N`;
   sheet.headerFooter.evenFooter = sheet.headerFooter.oddFooter;
-  sheet.printArea = `A1:${sheet.getColumn(lastColumn).letter}${Math.max(dataStart, headerRow + rows.length)}`;
+  sheet.pageSetup.printArea = `A1:${sheet.getColumn(lastColumn).letter}${Math.max(dataStart, headerRow + rows.length)}`;
 }
 
 const defaultColumns = payload.columns || [];
@@ -369,6 +428,7 @@ const workbook = new ExcelJS.Workbook();
 workbook.creator = String(metadata.creator || reportShopName).trim() || reportShopName;
 workbook.lastModifiedBy = String(metadata.lastModifiedBy || reportShopName).trim() || reportShopName;
 workbook.company = reportShopName;
+workbook.title = String(metadata.title || payload.title || `${reportShopName} ERP export`).trim() || `${reportShopName} ERP export`;
 workbook.subject = String(metadata.subject || payload.title || 'ERP register export').trim();
 workbook.keywords = [reportShopName, metadata.gstin, metadata.panNumber].filter(Boolean).join(', ');
 workbook.description = [
