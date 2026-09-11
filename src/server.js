@@ -20,6 +20,7 @@ const { createPrisma } = require('./lib/prisma');
 const { writeUrdPurchaseInvoice } = require('./lib/urd-invoice-pdf');
 const { writePledgeLoanInvoice } = require('./lib/pledge-invoice-pdf');
 const { writeSaleInvoice } = require('./lib/sale-invoice-pdf');
+const { writeCustomerOrderInvoice } = require('./lib/customer-order-pdf');
 const { writeSchemeInstallmentReceipt, writeSchemeConsolidatedReceipt, paymentParts } = require('./lib/scheme-payment-pdf');
 const { buildTsplJob, checkTcpPrinter, sendTsplToPrinter } = require('./lib/tspl-labels');
 const { resolveTscPrinter, cachedTscPrinterStatus } = require('./lib/windows-printers');
@@ -319,6 +320,24 @@ function stockMovementSnapshot(product, type, quantity, note, overrides = {}) {
   };
 }
 
+// Keep movement snapshots in sync while an item is still present in
+// inventory. Once the Product row is removed, these saved fields are the
+// historical source used by the movement register and its exports.
+async function syncStockMovementSnapshot(tx, product) {
+  if (!product?.id) return;
+  await tx.stockMovement.updateMany({
+    where: { productId: product.id },
+    data: {
+      productBarcode: product.barcode || null,
+      productSku: product.sku || '',
+      productName: product.name || '',
+      productMetal: product.metal || null,
+      productPurity: product.purity || null,
+      netWeight: product.netWeight ?? 0
+    }
+  });
+}
+
 function expectsJson(req) {
   return req.path.startsWith('/api/')
     || Boolean(req.xhr)
@@ -339,7 +358,7 @@ async function lockCustomerForLedger(tx, customerId) {
   if (!rows.length) throw new Error('The selected customer no longer exists.');
 }
 
-async function allocateCustomerPayment(tx, { customerId, amount, paymentMethod, reference, note, cashbookEntryId = null }) {
+async function allocateCustomerPayment(tx, { customerId, amount, paymentMethod, reference, note, cashbookEntryId = null, entryDate = dateInput() }) {
   await lockCustomerForLedger(tx, customerId);
 
   const ledgerTotal = await tx.customerLedger.aggregate({
@@ -390,6 +409,7 @@ async function allocateCustomerPayment(tx, { customerId, amount, paymentMethod, 
           saleId: sale.id,
           type: 'PAYMENT_RECEIVED',
           amount: -allocation,
+          entryDate,
           paymentMethod,
           cashbookEntryId,
           reference,
@@ -410,6 +430,7 @@ async function allocateCustomerPayment(tx, { customerId, amount, paymentMethod, 
         customerId,
         type: 'PAYMENT_RECEIVED',
         amount: -remaining,
+        entryDate,
         paymentMethod,
         cashbookEntryId,
         reference,
@@ -767,52 +788,63 @@ app.post('/business-settings', requireLoopback, async (req, res) => {
     await prisma.businessSettings.upsert({
       where: { id: 1 },
       create: {
-        id: 1,
-        shopName,
-        shopAddress: optionalText(req.body.shopAddress, 5000),
-        gstin: optionalText(req.body.gstin, 20)?.toUpperCase() || null,
-        panNumber: optionalText(req.body.panNumber, 20)?.toUpperCase() || null,
-        primaryPhone: optionalText(req.body.primaryPhone, 30),
-        secondaryPhone: optionalText(req.body.secondaryPhone, 30),
-        facebookUrl: safeWebUrl(req.body.facebookUrl, 'Facebook link'),
-        instagramUrl: safeWebUrl(req.body.instagramUrl, 'Instagram link'),
-        invoicePrefix,
-        financialYearStartMonth: boundedSetting(req.body.financialYearStartMonth, 'Financial-year start month', 1, 12, true),
-        defaultGstRate: boundedSetting(req.body.defaultGstRate, 'Default GST rate', 0, 100),
-        defaultHsnCode: optionalText(req.body.defaultHsnCode, 50)?.toUpperCase() || null,
-        labelShopName: (optionalText(req.body.labelShopName, 80) || shopName).toUpperCase(),
-        labelWidthMm: boundedSetting(req.body.labelWidthMm, 'Label width', 20, 120),
-        labelHeightMm: boundedSetting(req.body.labelHeightMm, 'Label height', 8, 100),
-        labelGapMm: boundedSetting(req.body.labelGapMm, 'Label gap', 0, 20),
-        labelSpeed: boundedSetting(req.body.labelSpeed, 'Label speed', 1, 6, true),
-        labelDensity: boundedSetting(req.body.labelDensity, 'Label density', 0, 15, true),
-        ...(signature || {})
+          id: 1,
+          shopName,
+          shopAddress: optionalText(req.body.shopAddress, 5000),
+          gstin: optionalText(req.body.gstin, 20)?.toUpperCase() || null,
+          panNumber: optionalText(req.body.panNumber, 20)?.toUpperCase() || null,
+          primaryPhone: optionalText(req.body.primaryPhone, 30),
+          secondaryPhone: optionalText(req.body.secondaryPhone, 30),
+          facebookUrl: safeWebUrl(req.body.facebookUrl, 'Facebook link'),
+          instagramUrl: safeWebUrl(req.body.instagramUrl, 'Instagram link'),
+          invoicePrefix,
+          financialYearStartMonth: boundedSetting(req.body.financialYearStartMonth, 'Financial-year start month', 1, 12, true),
+          defaultGstRate: boundedSetting(req.body.defaultGstRate, 'Default GST rate', 0, 100),
+          defaultHsnCode: optionalText(req.body.defaultHsnCode, 50)?.toUpperCase() || null,
+          labelShopName: (optionalText(req.body.labelShopName, 80) || shopName).toUpperCase(),
+          labelWidthMm: boundedSetting(req.body.labelWidthMm, 'Label width', 20, 120),
+          labelHeightMm: boundedSetting(req.body.labelHeightMm, 'Label height', 8, 100),
+          labelGapMm: boundedSetting(req.body.labelGapMm, 'Label gap', 0, 20),
+          labelSpeed: boundedSetting(req.body.labelSpeed, 'Label speed', 1, 6, true),
+          labelDensity: boundedSetting(req.body.labelDensity, 'Label density', 0, 15, true),
+          ...(signature || {})
       },
       update: {
-        shopName,
-        shopAddress: optionalText(req.body.shopAddress, 5000),
-        gstin: optionalText(req.body.gstin, 20)?.toUpperCase() || null,
-        panNumber: optionalText(req.body.panNumber, 20)?.toUpperCase() || null,
-        primaryPhone: optionalText(req.body.primaryPhone, 30),
-        secondaryPhone: optionalText(req.body.secondaryPhone, 30),
-        facebookUrl: safeWebUrl(req.body.facebookUrl, 'Facebook link'),
-        instagramUrl: safeWebUrl(req.body.instagramUrl, 'Instagram link'),
-        invoicePrefix,
-        financialYearStartMonth: boundedSetting(req.body.financialYearStartMonth, 'Financial-year start month', 1, 12, true),
-        defaultGstRate: boundedSetting(req.body.defaultGstRate, 'Default GST rate', 0, 100),
-        defaultHsnCode: optionalText(req.body.defaultHsnCode, 50)?.toUpperCase() || null,
-        labelShopName: (optionalText(req.body.labelShopName, 80) || shopName).toUpperCase(),
-        labelWidthMm: boundedSetting(req.body.labelWidthMm, 'Label width', 20, 120),
-        labelHeightMm: boundedSetting(req.body.labelHeightMm, 'Label height', 8, 100),
-        labelGapMm: boundedSetting(req.body.labelGapMm, 'Label gap', 0, 20),
-        labelSpeed: boundedSetting(req.body.labelSpeed, 'Label speed', 1, 6, true),
-        labelDensity: boundedSetting(req.body.labelDensity, 'Label density', 0, 15, true),
-        ...(removeSignature ? { signatureImage: null, signatureMimeType: null } : (signature || {}))
+          shopName,
+          shopAddress: optionalText(req.body.shopAddress, 5000),
+          gstin: optionalText(req.body.gstin, 20)?.toUpperCase() || null,
+          panNumber: optionalText(req.body.panNumber, 20)?.toUpperCase() || null,
+          primaryPhone: optionalText(req.body.primaryPhone, 30),
+          secondaryPhone: optionalText(req.body.secondaryPhone, 30),
+          facebookUrl: safeWebUrl(req.body.facebookUrl, 'Facebook link'),
+          instagramUrl: safeWebUrl(req.body.instagramUrl, 'Instagram link'),
+          invoicePrefix,
+          financialYearStartMonth: boundedSetting(req.body.financialYearStartMonth, 'Financial-year start month', 1, 12, true),
+          defaultGstRate: boundedSetting(req.body.defaultGstRate, 'Default GST rate', 0, 100),
+          defaultHsnCode: optionalText(req.body.defaultHsnCode, 50)?.toUpperCase() || null,
+          labelShopName: (optionalText(req.body.labelShopName, 80) || shopName).toUpperCase(),
+          labelWidthMm: boundedSetting(req.body.labelWidthMm, 'Label width', 20, 120),
+          labelHeightMm: boundedSetting(req.body.labelHeightMm, 'Label height', 8, 100),
+          labelGapMm: boundedSetting(req.body.labelGapMm, 'Label gap', 0, 20),
+          labelSpeed: boundedSetting(req.body.labelSpeed, 'Label speed', 1, 6, true),
+          labelDensity: boundedSetting(req.body.labelDensity, 'Label density', 0, 15, true),
+          ...(removeSignature ? { signatureImage: null, signatureMimeType: null } : (signature || {}))
       }
     });
-    const printerValues = updatePrinterConfiguration({ configPath, currentEnv: process.env, form: req.body });
-    Object.assign(process.env, printerValues);
+    let printerError = null;
+    try {
+      const printerValues = updatePrinterConfiguration({ configPath, currentEnv: process.env, form: req.body });
+      Object.assign(process.env, printerValues);
+    } catch (error) {
+      // Business identity/invoice settings are independent of label-printer
+      // configuration. Keep the successful database update and report the
+      // printer failure so it can be corrected from Printer setup later.
+      printerError = error;
+    }
     clearBusinessSettingsCache();
+    if (printerError) {
+      return redirectWith(res, '/business-settings', 'error', `Business settings saved, but printer settings could not be saved: ${printerError.message || printerError}`);
+    }
     redirectWith(res, '/business-settings', 'message', 'Business, invoice and label settings saved.');
   } catch (error) {
     redirectWith(res, '/business-settings', 'error', error.message || 'Could not save business settings.');
@@ -1061,6 +1093,89 @@ app.get('/inventory', async (req, res, next) => {
     const printerTransport = configuredLabelPrinter();
     res.render('inventory/index', { title: 'Inventory', products, filters, pagination, printerName: printerStatus.name || printerTransport.name, printerStatus, printerTransport });
   } catch (error) { next(error); }
+});
+
+// Batch removal keeps the quick inventory-cleanup workflow separate from the
+// regular inventory table. Only unsold, single-piece records can be selected;
+// the barcode sequence is deliberately never decremented, so removed labels
+// can never be allocated again.
+app.get('/api/inventory/batch-remove', async (req, res, next) => {
+  try {
+    const filters = {
+      itemName: String(req.query.itemName || req.query.q || '').trim(),
+      weight: String(req.query.weight || '').trim(),
+      barcode: String(req.query.barcode || '').trim(),
+      batchDocNo: String(req.query.batchDocNo || '').trim()
+    };
+    const availablePiece = { status: 'AVAILABLE', quantity: 1 };
+    const searchClauses = productSearchClauses(filters);
+    if (filters.batchDocNo) searchClauses.push({ batchDocNo: { contains: filters.batchDocNo } });
+    const where = searchClauses.length ? { AND: [availablePiece, ...searchClauses] } : availablePiece;
+    const totalItems = await prisma.product.count({ where });
+    const pagination = paginationFor(req, totalItems, req.query.page, 30);
+    const products = await prisma.product.findMany({
+      where,
+      select: { id: true, barcode: true, name: true, category: true, metal: true, purity: true, netWeight: true, batchDocNo: true },
+      orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+      skip: (pagination.page - 1) * pagination.pageSize,
+      take: pagination.pageSize
+    });
+    res.json({
+      items: products.map((product) => ({
+        ...product,
+        netWeight: Number(product.netWeight || 0)
+      })),
+      page: pagination.page,
+      pageSize: pagination.pageSize,
+      totalItems: pagination.totalItems,
+      totalPages: pagination.totalPages,
+      hasNext: Boolean(pagination.nextUrl),
+      hasPrevious: Boolean(pagination.previousUrl),
+      filters
+    });
+  } catch (error) { next(error); }
+});
+
+app.post('/api/inventory/batch-remove', express.json(), async (req, res, next) => {
+  try {
+    const ids = [...new Set(asArray(req.body.productIds || req.body.productId)
+      .map((value) => Number(value))
+      .filter((value) => Number.isInteger(value) && value > 0))];
+    if (!ids.length) return res.status(400).json({ error: 'Select at least one inventory piece to remove.' });
+    if (ids.length > 500) return res.status(400).json({ error: 'Remove up to 500 pieces at a time.' });
+
+    const removed = await prisma.$transaction(async (tx) => {
+      const products = await tx.product.findMany({
+        where: { id: { in: ids }, status: 'AVAILABLE', quantity: 1 },
+        select: { id: true, barcode: true, sku: true, name: true, metal: true, purity: true, netWeight: true, quantity: true }
+      });
+      if (products.length !== ids.length) {
+        throw new Error('One or more selected pieces are no longer available. Refresh the list and try again.');
+      }
+      // Keep an auditable removal movement before deleting the live inventory
+      // rows. The product relation is set to null on delete, but the snapshot
+      // fields remain available in Stock Movement and its exports.
+      await tx.stockMovement.createMany({
+        data: products.map((product) => stockMovementSnapshot(
+          product,
+          'ADJUSTMENT_OUT',
+          -Math.max(1, Number(product.quantity || 1)),
+          `Removed from inventory · ${product.barcode || product.name}`
+        ))
+      });
+      await tx.product.deleteMany({ where: { id: { in: ids } } });
+      return products;
+    });
+
+    res.json({
+      success: true,
+      count: removed.length,
+      barcodes: removed.map((product) => product.barcode).filter(Boolean)
+    });
+  } catch (error) {
+    console.error('Batch inventory removal error:', error);
+    res.status(500).json({ error: error.message || 'Could not remove the selected pieces.' });
+  }
 });
 
 app.post('/labels/test-print', async (req, res) => {
@@ -1395,6 +1510,8 @@ app.put('/api/inventory/batch-piece/:id', express.json(), async (req, res, next)
         }
       });
 
+      await syncStockMovementSnapshot(tx, product);
+
       await upsertItemName(tx, name, category, { updateCategory: false });
 
       return {
@@ -1417,7 +1534,10 @@ app.delete('/api/inventory/batch-piece/:id', async (req, res, next) => {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid piece ID.' });
     await prisma.$transaction(async (tx) => {
-      await tx.stockMovement.deleteMany({ where: { productId: id } });
+      const product = await tx.product.findUniqueOrThrow({ where: { id } });
+      await tx.stockMovement.create({
+        data: stockMovementSnapshot(product, 'ADJUSTMENT_OUT', -Math.max(1, Number(product.quantity || 1)), `Removed from inventory · ${product.barcode || product.name}`)
+      });
       await tx.product.delete({ where: { id } });
     });
     res.json({ success: true, id });
@@ -1511,13 +1631,14 @@ app.post('/inventory/:id', async (req, res, next) => {
       const rateInfo = await getRateForDate(tx);
       const metalAmount = metalRateFromDailyRate({ metal, purity }, rateInfo.rate) * netWeight;
       const suggestedPrice = roundedMoney(metalAmount + makingAmount(makingChargeType, makingChargeValue, metalAmount, netWeight));
-      await tx.product.update({ where: { id }, data: {
+      const updatedProduct = await tx.product.update({ where: { id }, data: {
         sku: String(req.body.sku || existing.sku).trim().toUpperCase(), name: itemName, category, metal,
         purity, grossWeight: number(req.body.grossWeight), stoneWeight: number(req.body.stoneWeight), netWeight,
         reorderLevel, purchasePrice: number(req.body.purchasePrice), sellingPrice: suggestedPrice,
         makingChargePerGram: makingChargeType === 'PER_GRAM' ? makingChargeValue : 0,
         makingChargeType, makingChargeValue, location: req.body.location ? String(req.body.location).trim().toUpperCase() : null, notes: req.body.notes ? String(req.body.notes).trim().toUpperCase() : null, status: 'AVAILABLE'
       } });
+      await syncStockMovementSnapshot(tx, updatedProduct);
       await upsertItemName(tx, itemName, category, { updateCategory: false });
     });
     redirectWith(res, '/inventory', 'message', 'Item details updated.');
@@ -1531,7 +1652,9 @@ app.post('/inventory/:id/delete', async (req, res, next) => {
     const deleted = await prisma.$transaction(async (tx) => {
       const product = await tx.product.findUnique({ where: { id } });
       if (!product) return null;
-      await tx.stockMovement.deleteMany({ where: { productId: id } });
+      await tx.stockMovement.create({
+        data: stockMovementSnapshot(product, 'ADJUSTMENT_OUT', -Math.max(1, Number(product.quantity || 1)), `Removed from inventory · ${product.barcode || product.name}`)
+      });
       await tx.product.delete({ where: { id } });
       return product;
     });
@@ -1562,7 +1685,10 @@ app.get('/customers', async (req, res, next) => {
     const pagination = paginationFor(req, totalItems, req.query.page, 100);
     const customers = await prisma.customer.findMany({
       where,
-      include: { _count: { select: { sales: true } } },
+      // Cancelled invoices remain available in the cancelled register, but
+      // they are not active customer sales. Keep the directory count aligned
+      // with the Sales register and the customer's visible invoice list.
+      include: { _count: { select: { sales: { where: { cancelledAt: null } } } } },
       orderBy: [{ name: 'asc' }, { id: 'asc' }],
       skip: (pagination.page - 1) * pagination.pageSize,
       take: pagination.pageSize
@@ -1620,6 +1746,7 @@ app.get('/customers/:id', async (req, res, next) => {
         include: {
           sales: { where: { cancelledAt: null }, orderBy: { saleDate: 'desc' }, take: 10 },
           schemeEnrollments: {
+            where: { status: { not: 'CANCELLED' } },
             include: { schemePlan: true },
             orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
             take: 20
@@ -1639,7 +1766,7 @@ app.get('/customers/:id', async (req, res, next) => {
     const ledger = await prisma.customerLedger.findMany({
       where: { customerId },
       include: { sale: true },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      orderBy: [{ entryDate: 'desc' }, { id: 'desc' }],
       skip,
       take: pagination.pageSize
     });
@@ -1649,7 +1776,7 @@ app.get('/customers/:id', async (req, res, next) => {
       FROM (
         SELECT amount FROM CustomerLedger
         WHERE customerId = ${customerId}
-        ORDER BY createdAt DESC, id DESC
+        ORDER BY entryDate DESC, id DESC
         LIMIT ${skip}
       ) AS recent
     ` : [{ amount: 0 }];
@@ -1669,14 +1796,14 @@ app.get('/customers/:id/activity', async (req, res, next) => {
     const [customer, sales, payments, purchases, enrollments, pledgeLoans] = await Promise.all([
       prisma.customer.findUniqueOrThrow({ where: { id: customerId }, select: { id: true, name: true, phone: true } }),
       prisma.sale.findMany({ where: { customerId, cancelledAt: null }, select: { id: true, invoiceNumber: true, saleDate: true, total: true }, orderBy: { saleDate: 'desc' }, take: 30 }),
-      prisma.customerLedger.findMany({ where: { customerId, type: { not: 'SALE_CREDIT' } }, select: { createdAt: true, amount: true, paymentMethod: true }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 30 }),
+      prisma.customerLedger.findMany({ where: { customerId, type: { not: 'SALE_CREDIT' } }, select: { entryDate: true, amount: true, paymentMethod: true }, orderBy: [{ entryDate: 'desc' }, { id: 'desc' }], take: 30 }),
       prisma.urdPurchase.findMany({ where: { customerId, cancelledAt: null }, select: { purchaseNumber: true, purchaseDate: true, totalAmount: true, metal: true }, orderBy: { purchaseDate: 'desc' }, take: 30 }),
       prisma.schemeEnrollment.findMany({ where: { customerId, status: { not: 'CANCELLED' } }, include: { schemePlan: { select: { name: true } } }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 30 }),
       prisma.pledgeLoan.findMany({ where: { customerId }, select: { id: true, pledgeNumber: true, pledgeDate: true, itemDescription: true, metal: true, principalAmount: true, principalRepaid: true, status: true }, orderBy: [{ pledgeDate: 'desc' }, { id: 'desc' }], take: 30 })
     ]);
     const activity = [
       ...sales.map((sale) => ({ kind: 'SALE', occurredAt: sale.saleDate, title: sale.invoiceNumber, amount: Number(sale.total), detail: 'Bill generated', href: `/sales/${sale.id}` })),
-      ...payments.map((entry) => ({ kind: 'PAYMENT', occurredAt: entry.createdAt, title: 'Payment received', amount: Math.abs(Number(entry.amount)), detail: entry.paymentMethod?.replace('_', ' ') || 'Payment', href: null })),
+      ...payments.map((entry) => ({ kind: 'PAYMENT', occurredAt: entry.entryDate, title: 'Payment received', amount: Math.abs(Number(entry.amount)), detail: entry.paymentMethod?.replace('_', ' ') || 'Payment', href: null })),
       ...purchases.map((purchase) => ({ kind: 'URD', occurredAt: purchase.purchaseDate, title: purchase.purchaseNumber, amount: Number(purchase.totalAmount), detail: `${purchase.metal} purchase`, href: `/urd-purchases?q=${encodeURIComponent(purchase.purchaseNumber)}` })),
       ...enrollments.map((enrollment) => ({ kind: 'SCHEME', occurredAt: enrollment.createdAt, title: enrollment.schemePlan.name, detail: `Scheme joined · ${enrollment.enrollmentNumber}`, href: `/schemes/enrollments/${enrollment.id}` })),
       ...pledgeLoans.map((loan) => ({ kind: 'PLEDGE', occurredAt: loan.pledgeDate, title: loan.pledgeNumber, amount: Math.max(0, Number(loan.principalAmount) - Number(loan.principalRepaid)), detail: `${loan.metal} collateral · ${loan.itemDescription} · ${loan.status.toLowerCase()}`, href: `/pledges/${loan.id}` }))
@@ -1704,7 +1831,8 @@ app.post('/customers/:id/payments', async (req, res, next) => {
         paymentMethod,
         reference: receipt,
         note: req.body.note || null,
-        cashbookEntryId: cashbookEntry.id
+        cashbookEntryId: cashbookEntry.id,
+        entryDate: cashbookEntry.entryDate
       });
     });
     redirectWith(res, `/customers/${customerId}`, 'message', 'Payment received and customer credit updated.');
@@ -2053,7 +2181,7 @@ app.post('/sales', async (req, res, next) => {
         })) }
       } });
       if (balance > 0) await tx.customerLedger.create({
-        data: { customerId, saleId: sale.id, type: 'SALE_CREDIT', amount: balance, reference: sale.invoiceNumber, note: `Credit balance from ${sale.invoiceNumber}` }
+        data: { customerId, saleId: sale.id, type: 'SALE_CREDIT', amount: balance, entryDate: dateInput(saleDate), reference: sale.invoiceNumber, note: `Credit balance from ${sale.invoiceNumber}` }
       });
       if (includeUrdPurchase) {
         const urdPurchase = await tx.urdPurchase.create({ data: {
@@ -2513,14 +2641,19 @@ app.post('/sales/:id/edit', async (req, res, next) => {
         }
       });
 
-      const originalCredit = roundedMoney(Math.max(0, netPayable - payment.paid));
-      if (originalCredit > 0) {
+      // Rebuild the sale credit from every payment recorded against this sale.
+      // `payment.paid` is only the original invoice payment; later receipts
+      // have already been included in `totalPaid` above. Using the original
+      // payment alone would recreate an overstated customer balance after an
+      // edited invoice.
+      if (balance > 0) {
         await tx.customerLedger.create({
           data: {
             customerId: finalCustomerId,
             saleId: sale.id,
             type: 'SALE_CREDIT',
-            amount: originalCredit,
+            amount: balance,
+            entryDate: dateInput(saleDate),
             reference: sale.invoiceNumber,
             note: `Credit balance from ${sale.invoiceNumber}`
           }
@@ -2665,7 +2798,6 @@ app.get('/sales/:id/invoice.pdf', async (req, res, next) => {
 /* ── Cashbook ─────────────────────────────────────────────── */
 app.get('/cashbook', async (req, res, next) => {
   try {
-    const selectedDate = req.query.date || dateInput();
     const fromDate = req.query.from || `${dateInput().slice(0, 7)}-01`;
     const toDate = req.query.to || dateInput();
     const methodFilter = req.query.method || '';
@@ -2683,7 +2815,7 @@ app.get('/cashbook', async (req, res, next) => {
         _sum: { amount: true }
       })
     ]);
-    const summary = { totalIn: 0, totalOut: 0, cashIn: 0, cashOut: 0, upiIn: 0, upiOut: 0, bankIn: 0, bankOut: 0 };
+    const summary = { totalIn: 0, totalOut: 0, cashIn: 0, cashOut: 0, upiIn: 0, upiOut: 0, cardIn: 0, cardOut: 0, bankIn: 0, bankOut: 0 };
     totals.forEach((row) => {
       const amt = Number(row._sum.amount || 0);
       if (row.type === 'IN') summary.totalIn += amt; else summary.totalOut += amt;
@@ -2691,11 +2823,12 @@ app.get('/cashbook', async (req, res, next) => {
       if (row.type === 'IN') summary[key + 'In'] = (summary[key + 'In'] || 0) + amt;
       else summary[key + 'Out'] = (summary[key + 'Out'] || 0) + amt;
     });
-    summary.netBalance = summary.totalIn - summary.totalOut;
-    summary.cashNet = (summary.cashIn || 0) - (summary.cashOut || 0);
-    summary.upiNet = (summary.upiIn || 0) - (summary.upiOut || 0);
-    summary.bankNet = (summary.bankIn || 0) - (summary.bankOut || 0);
-    res.render('cashbook/index', { title: 'Cashbook', entries, summary, fromDate, toDate, selectedDate, methodFilter, customers: [], pagination });
+     summary.netBalance = summary.totalIn - summary.totalOut;
+     summary.cashNet = (summary.cashIn || 0) - (summary.cashOut || 0);
+     summary.upiNet = (summary.upiIn || 0) - (summary.upiOut || 0);
+     summary.cardNet = (summary.cardIn || 0) - (summary.cardOut || 0);
+     summary.bankNet = (summary.bankIn || 0) - (summary.bankOut || 0);
+    res.render('cashbook/index', { title: 'Cashbook', entries, summary, fromDate, toDate, methodFilter, customers: [], pagination });
   } catch (error) { next(error); }
 });
 
@@ -2706,7 +2839,7 @@ app.post('/cashbook', async (req, res, next) => {
     const requestedCustomerId = req.body.customerId ? Number(req.body.customerId) : null;
     const customerId = Number.isInteger(requestedCustomerId) && requestedCustomerId > 0 ? requestedCustomerId : null;
     const syncLedger = Boolean(customerId);
-    const entryDate = req.body.entryDate || dateInput();
+    const entryDate = dateInput(dateTimeFromInput(req.body.entryDate));
     const entryType = req.body.type === 'OUT' ? 'OUT' : 'IN';
     const paymentMethod = receiptPaymentMethod(req.body.paymentMethod);
     const description = String(req.body.description || '').trim().toUpperCase();
@@ -2728,7 +2861,8 @@ app.post('/cashbook', async (req, res, next) => {
           paymentMethod,
           reference: receipt,
           note: `Payment via cashbook · ${description}`,
-          cashbookEntryId: cashbookEntry.id
+          cashbookEntryId: cashbookEntry.id,
+          entryDate: cashbookEntry.entryDate
         });
       } else if (syncLedger) {
         await lockCustomerForLedger(tx, customerId);
@@ -2737,7 +2871,7 @@ app.post('/cashbook', async (req, res, next) => {
         // Money going out to a customer is money they owe back to the shop.
         await tx.customerLedger.create({
           data: {
-            customerId, type: 'ADJUSTMENT', amount, cashbookEntryId: cashbookEntry.id,
+            customerId, type: 'ADJUSTMENT', amount, entryDate: cashbookEntry.entryDate, cashbookEntryId: cashbookEntry.id,
             paymentMethod, reference: receipt, note: `Cashbook out · ${description}`
           }
         });
@@ -2789,12 +2923,12 @@ async function syncCustomerOrderDueLedger(tx, order) {
   if (due > 0) {
     if (existing.length) {
       await tx.customerLedger.update({ where: { id: existing[0].id }, data: {
-        amount: due, note: `Customer order balance — ${order.orderNumber}`
+        amount: due, entryDate: dateInput(order.orderDate), note: `Customer order balance — ${order.orderNumber}`
       } });
       if (existing.length > 1) await tx.customerLedger.deleteMany({ where: { id: { in: existing.slice(1).map((row) => row.id) } } });
     } else {
       await tx.customerLedger.create({ data: {
-        customerId: order.customerId, type: 'ADJUSTMENT', amount: due,
+        customerId: order.customerId, type: 'ADJUSTMENT', amount: due, entryDate: dateInput(order.orderDate),
         reference: order.orderNumber, note: `Customer order balance — ${order.orderNumber}`
       } });
     }
@@ -2991,7 +3125,7 @@ app.post('/pledges/:id/payments', async (req, res) => {
     const principalAmount = roundedMoney(Math.max(0, number(req.body.principalAmount)));
     const interestAmount = roundedMoney(Math.max(0, number(req.body.interestAmount)));
     const total = roundedMoney(principalAmount + interestAmount);
-    const paymentDate = String(req.body.paymentDate || dateInput());
+    const paymentDate = dateInput(dateTimeFromInput(req.body.paymentDate));
     const paymentMethod = receiptPaymentMethod(req.body.paymentMethod);
     if (!Number.isInteger(id) || id <= 0 || total <= 0) throw new Error('Enter principal, interest, or both for this repayment.');
     await prisma.$transaction(async (tx) => {
@@ -3028,7 +3162,7 @@ app.post('/pledges/:id/payments/:paymentId', async (req, res) => {
     const principalAmount = roundedMoney(Math.max(0, number(req.body.principalAmount)));
     const interestAmount = roundedMoney(Math.max(0, number(req.body.interestAmount)));
     const total = roundedMoney(principalAmount + interestAmount);
-    const paymentDate = String(req.body.paymentDate || dateInput());
+    const paymentDate = dateInput(dateTimeFromInput(req.body.paymentDate));
     const paymentMethod = receiptPaymentMethod(req.body.paymentMethod);
     if (!Number.isInteger(id) || !Number.isInteger(paymentId) || id <= 0 || paymentId <= 0 || total <= 0) throw new Error('Enter a valid corrected repayment.');
     await prisma.$transaction(async (tx) => {
@@ -3113,6 +3247,26 @@ app.get('/customer-orders/new', (req, res) => {
   res.render('customer-orders/form', { title: 'New customer order' });
 });
 
+app.get('/customer-orders/:id/invoice.pdf', async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(404).render('not-found', { title: 'Customer order not found' });
+    const [order, businessSettings] = await Promise.all([
+      prisma.customerOrder.findUnique({
+        where: { id },
+        include: {
+          customer: true,
+          supplier: true,
+          cashbookEntries: { orderBy: [{ entryDate: 'asc' }, { id: 'asc' }] }
+        }
+      }),
+      getBusinessSettings(prisma)
+    ]);
+    if (!order) return res.status(404).render('not-found', { title: 'Customer order not found' });
+    await writeCustomerOrderInvoice(res, order, businessSettings);
+  } catch (error) { next(error); }
+});
+
 app.post('/customer-orders', async (req, res) => {
   try {
     const metal = ['GOLD', 'SILVER'].includes(String(req.body.metal || '').toUpperCase()) ? String(req.body.metal).toUpperCase() : null;
@@ -3150,7 +3304,7 @@ app.post('/customer-orders', async (req, res) => {
           customerId: customer.id, customerOrderId: record.id, syncLedger: true, notes: record.notes
         } });
         await tx.customerLedger.create({ data: {
-          customerId: customer.id, type: 'PAYMENT_RECEIVED', amount: -advance,
+          customerId: customer.id, type: 'PAYMENT_RECEIVED', amount: -advance, entryDate: cashbookEntry.entryDate,
           paymentMethod: method, cashbookEntryId: cashbookEntry.id,
           reference: record.orderNumber, note: `Advance received for customer order ${record.orderNumber}`
         } });
@@ -3224,7 +3378,7 @@ app.post('/customer-orders/:id/edit', async (req, res) => {
       if (current.customerId !== customer.id) {
         await tx.customerLedger.deleteMany({ where: { customerId: current.customerId, type: 'ADJUSTMENT', reference: current.orderNumber } });
       }
-      await syncCustomerOrderDueLedger(tx, { ...current, customerId: customer.id, quotedAmount });
+      await syncCustomerOrderDueLedger(tx, { ...current, customerId: customer.id, quotedAmount, orderDate });
     });
     redirectWith(res, '/customer-orders', 'message', 'Customer order updated.');
   } catch (error) { redirectWith(res, `/customer-orders/${id}/edit`, 'error', error.message || 'Could not update customer order.'); }
@@ -3252,7 +3406,7 @@ app.post('/customer-orders/:id/payments', async (req, res) => {
         notes: supplierText(req.body.notes) || null
       } });
       await tx.customerLedger.create({ data: {
-        customerId: order.customerId, type: 'PAYMENT_RECEIVED', amount: -amount,
+        customerId: order.customerId, type: 'PAYMENT_RECEIVED', amount: -amount, entryDate: cashbookEntry.entryDate,
         paymentMethod, cashbookEntryId: cashbookEntry.id, reference: order.orderNumber,
         note: `Advance received for customer order ${order.orderNumber}`
       } });
@@ -3288,10 +3442,16 @@ app.post('/customer-orders/:id/cancel', async (req, res) => {
       if (current.status === 'CANCELLED') throw new Error('This customer order is already cancelled.');
       const refundable = roundedMoney(Math.max(0, Number(current.customerAdvance) - Number(current.refundedAmount)));
       // Remove the order's outstanding-balance entry and detach receipt ledger
-      // rows while retaining the original Cashbook audit trail. Cancellation
-      // must not leave a phantom customer credit behind.
+      // rows while retaining the original Cashbook audit trail. These receipt
+      // rows are now historical, independent Cashbook entries; marking them
+      // unsynchronised prevents Cashbook from claiming a ledger allocation
+      // that cancellation intentionally removed.
       const orderReceipts = await tx.cashbookEntry.findMany({ where: { customerOrderId: id }, select: { id: true } });
-      if (orderReceipts.length) await tx.customerLedger.deleteMany({ where: { cashbookEntryId: { in: orderReceipts.map((entry) => entry.id) } } });
+      if (orderReceipts.length) {
+        const receiptIds = orderReceipts.map((entry) => entry.id);
+        await tx.customerLedger.deleteMany({ where: { cashbookEntryId: { in: receiptIds } } });
+        await tx.cashbookEntry.updateMany({ where: { id: { in: receiptIds } }, data: { syncLedger: false } });
+      }
       await tx.customerLedger.deleteMany({ where: { customerId: current.customerId, type: 'ADJUSTMENT', reference: current.orderNumber } });
       if (refundable > 0) {
         const refundMethod = receiptPaymentMethod(req.body.refundPaymentMethod);
@@ -3486,6 +3646,23 @@ app.get('/api/suppliers/search', async (req, res) => {
   } catch (error) { res.status(500).json({ error: 'Could not search suppliers.' }); }
 });
 
+// Exact mobile lookup used by purchase and customer-order forms.  Keep this
+// separate from the fuzzy name search so a complete mobile number can select
+// one canonical supplier profile without loading the whole directory.
+app.get('/api/suppliers/phone/:phone', async (req, res, next) => {
+  try {
+    const phone = String(decodeURIComponent(req.params.phone || '')).replace(/\D/g, '').slice(0, 15);
+    if (phone.length < 10 || phone.length > 15) return res.json({ found: false, phone });
+    const supplier = await prisma.supplier.findUnique({ where: { phone } });
+    if (!supplier) return res.json({ found: false, phone });
+    res.json({ found: true, supplier: {
+      id: supplier.id, name: supplier.name, phone: supplier.phone,
+      email: supplier.email, address: supplier.address,
+      gstin: supplier.gstin, panNumber: supplier.panNumber
+    } });
+  } catch (error) { next(error); }
+});
+
 // Suppliers are first-class business contacts.  Purchase records retain the
 // original supplier link, while this directory gives the counter a clean
 // place to see outstanding purchase dues and correct contact details.
@@ -3528,21 +3705,31 @@ app.get('/suppliers/:id', async (req, res, next) => {
   try {
     const supplierId = Number(req.params.id);
     if (!Number.isInteger(supplierId) || supplierId <= 0) throw new Error('Supplier not found.');
-    const supplier = await prisma.supplier.findUniqueOrThrow({
-      where: { id: supplierId },
-      include: {
-        purchases: {
-          where: { cancelledAt: null }, orderBy: [{ purchaseDate: 'desc' }, { id: 'desc' }], take: 200,
-          include: { product: true, cashbookEntries: { orderBy: [{ entryDate: 'desc' }, { id: 'desc' }] } }
+    const [supplier, purchaseTotals] = await Promise.all([
+      prisma.supplier.findUniqueOrThrow({
+        where: { id: supplierId },
+        include: {
+          // Keep the detail view responsive. The summary below is calculated
+          // independently across every active purchase, not this preview.
+          purchases: {
+            where: { cancelledAt: null }, orderBy: [{ purchaseDate: 'desc' }, { id: 'desc' }], take: 200,
+            include: { product: true, cashbookEntries: { orderBy: [{ entryDate: 'desc' }, { id: 'desc' }] } }
+          }
         }
-      }
-    });
-    const summary = supplier.purchases.reduce((totals, purchase) => {
-      totals.purchased += Number(purchase.totalAmount || 0);
-      totals.paid += Number(purchase.paid || 0);
-      totals.weight += Number(purchase.netWeight || 0);
-      return totals;
-    }, { purchased: 0, paid: 0, weight: 0 });
+      }),
+      prisma.supplierPurchase.aggregate({
+        where: { supplierId, cancelledAt: null },
+        _count: { _all: true },
+        _sum: { quantity: true, netWeight: true, totalAmount: true, paid: true }
+      })
+    ]);
+    const summary = {
+      purchaseCount: Number(purchaseTotals._count._all || 0),
+      pieces: Number(purchaseTotals._sum.quantity || 0),
+      purchased: Number(purchaseTotals._sum.totalAmount || 0),
+      paid: Number(purchaseTotals._sum.paid || 0),
+      weight: Number(purchaseTotals._sum.netWeight || 0)
+    };
     summary.due = roundedMoney(Math.max(0, summary.purchased - summary.paid));
     res.render('contacts/supplier-detail', { title: supplier.name, supplier, summary });
   } catch (error) { next(error); }
@@ -3676,7 +3863,7 @@ app.post('/purchases', async (req, res, next) => {
       await upsertItemName(tx, itemName, category, { updateCategory: false });
       if (paid > 0) await tx.cashbookEntry.create({ data: {
         entryDate: dateInput(record.purchaseDate), type: 'OUT', paymentMethod, amount: paid,
-        description: `Supplier purchase — ${record.purchaseNumber}`, reference: record.purchaseNumber,
+        description: `Supplier purchase — ${record.purchaseNumber}`, reference: record.reference || record.purchaseNumber,
         supplierPurchaseId: record.id, syncLedger: false, notes: record.notes
       } });
       return record;
@@ -3721,7 +3908,10 @@ app.post('/purchases/:id/edit', async (req, res) => {
       const locked = await tx.$queryRaw`SELECT id FROM \`SupplierPurchase\` WHERE id = ${id} FOR UPDATE`;
       if (!locked.length) throw new Error('Purchase not found.');
       const current = await tx.supplierPurchase.findFirstOrThrow({
-        where: { id, cancelledAt: null }, include: { product: true, cashbookEntries: { select: { amount: true } } }
+        where: { id, cancelledAt: null }, include: {
+          product: true,
+          cashbookEntries: { select: { id: true, amount: true, description: true } }
+        }
       });
       const paidFromCashbook = roundedMoney(current.cashbookEntries.reduce((sum, entry) => sum + Number(entry.amount || 0), 0));
       const recordedPaid = roundedMoney(Math.max(Number(current.paid || 0), paidFromCashbook));
@@ -3745,6 +3935,26 @@ app.post('/purchases/:id/edit', async (req, res) => {
         reference: supplierText(req.body.reference).toUpperCase() || null,
         notes: supplierText(req.body.notes).toUpperCase() || null
       } });
+      // The initial payment created with the purchase represents the purchase
+      // itself. Keep its date, reference and note aligned when the purchase is
+      // edited, but leave later supplier-payment entries untouched because
+      // those have their own payment dates and references.
+      const purchaseEntry = current.cashbookEntries.find((entry) => {
+        const description = String(entry.description || '');
+        return description === `Supplier purchase — ${current.purchaseNumber}`
+          || /^Supplier purchase\s*[—-]/i.test(description);
+      });
+      if (purchaseEntry) {
+        await tx.cashbookEntry.update({
+          where: { id: purchaseEntry.id },
+          data: {
+            entryDate: dateInput(record.purchaseDate),
+            description: `Supplier purchase — ${record.purchaseNumber}`,
+            reference: record.reference || record.purchaseNumber,
+            notes: record.notes
+          }
+        });
+      }
       await upsertItemName(tx, itemName, category, { updateCategory: false });
       return record;
     });
@@ -3763,7 +3973,7 @@ app.post('/purchases/:id/payments', async (req, res) => {
       const due = roundedMoney(Number(purchase.totalAmount) - Number(purchase.paid));
       if (amount > due) throw new Error(`Payment is greater than the outstanding amount of ${money(due)}.`);
       const updated = await tx.supplierPurchase.update({ where: { id }, data: { paid: { increment: amount }, paymentMethod: Number(purchase.paid) <= 0 || purchase.paymentMethod === paymentMethod ? paymentMethod : 'MIXED' } });
-      await tx.cashbookEntry.create({ data: { entryDate: req.body.entryDate || dateInput(), type: 'OUT', paymentMethod, amount, description: `Supplier payment — ${purchase.purchaseNumber}`, reference: supplierText(req.body.reference) || purchase.purchaseNumber, supplierPurchaseId: purchase.id, syncLedger: false, notes: supplierText(req.body.notes) || null } });
+      await tx.cashbookEntry.create({ data: { entryDate: dateInput(dateTimeFromInput(req.body.entryDate)), type: 'OUT', paymentMethod, amount, description: `Supplier payment — ${purchase.purchaseNumber}`, reference: supplierText(req.body.reference) || purchase.purchaseNumber, supplierPurchaseId: purchase.id, syncLedger: false, notes: supplierText(req.body.notes) || null } });
       return updated;
     });
     redirectWith(res, '/purchases', 'message', `Supplier payment of ${money(amount)} recorded.`);
@@ -3787,8 +3997,9 @@ app.post('/purchases/:id/payments/:entryId', async (req, res) => {
       const entry = await tx.cashbookEntry.findFirstOrThrow({ where: { id: entryId, supplierPurchaseId: purchaseId } });
       const nextPaid = roundedMoney(Number(purchase.paid) - Number(entry.amount) + amount);
       if (nextPaid < 0 || nextPaid > Number(purchase.totalAmount)) throw new Error(`Payment total must stay between ₹0.00 and ${money(purchase.totalAmount)}.`);
+      const submittedEntryDate = String(req.body.entryDate ?? '').trim();
       await tx.cashbookEntry.update({ where: { id: entry.id }, data: {
-        entryDate: req.body.entryDate || entry.entryDate, amount, paymentMethod,
+        entryDate: submittedEntryDate ? dateInput(dateTimeFromInput(submittedEntryDate)) : entry.entryDate, amount, paymentMethod,
         reference: supplierText(req.body.reference) || purchase.purchaseNumber,
         notes: supplierText(req.body.notes) || null
       } });
@@ -3827,11 +4038,14 @@ app.post('/purchases/:id/delete', async (req, res) => {
       // Purchases entered before lot receiving created one linked inventory item.
       // Preserve that legacy safety rule. New lot purchases deliberately have no
       // product link: their separately barcode-labelled items remain independent.
-      if (purchase.product && (purchase.product.status !== 'AVAILABLE' || purchase.product.quantity <= 0)) throw new Error('The linked legacy inventory item has already been sold or removed. This purchase cannot be cancelled safely.');
+       if (purchase.product && Number(purchase.product.quantity || 0) <= 0) throw new Error('The linked legacy inventory item has already been sold or removed. This purchase cannot be cancelled safely.');
       await tx.cashbookEntry.deleteMany({ where: { supplierPurchaseId: purchase.id } });
       if (purchase.product) {
         await tx.stockMovement.create({ data: stockMovementSnapshot(purchase.product, 'ADJUSTMENT_OUT', -purchase.product.quantity, `Supplier purchase cancelled · ${purchase.purchaseNumber}`) });
-        await tx.product.update({ where: { id: purchase.product.id }, data: { quantity: 0, status: 'INACTIVE' } });
+        // Inventory is represented by positive quantity. Keep the legacy
+        // product row for audit relations, but make it unavailable without a
+        // second status value that the ERP no longer uses.
+        await tx.product.update({ where: { id: purchase.product.id }, data: { quantity: 0, status: 'AVAILABLE' } });
       }
       return tx.supplierPurchase.update({ where: { id }, data: {
         cancelledAt: new Date(),
@@ -3885,11 +4099,14 @@ app.post('/urd-purchases', async (req, res, next) => {
   try {
     let customerId = Number(req.body.customerId);
     if (!Number.isInteger(customerId) || customerId <= 0) {
-      if (req.body.customerPhone) {
+      // A URD purchase can create a customer in the same way as billing.  A
+      // mobile number is optional; when supplied it is used for an exact
+      // lookup first, otherwise the entered name creates a new profile.
+      if (req.body.customerPhone || req.body.customerName) {
         const cust = await resolveBillingCustomer(prisma, req.body);
         customerId = cust.id;
       } else {
-        return redirectWith(res, '/urd-purchases/new', 'error', 'Select a customer for this URD purchase.');
+        return redirectWith(res, '/urd-purchases/new', 'error', 'Enter the customer name, or select an existing customer.');
       }
     }
     const netWeight = number(req.body.netWeight);
@@ -3950,7 +4167,7 @@ app.post('/urd-purchases/:id/payments', async (req, res) => {
       });
       await tx.cashbookEntry.create({
         data: {
-          entryDate: req.body.entryDate || dateInput(),
+          entryDate: dateInput(dateTimeFromInput(req.body.entryDate)),
           type: 'OUT',
           paymentMethod,
           amount,
@@ -4064,16 +4281,33 @@ app.get('/reports/stock-movements', async (req, res, next) => {
       ...(type ? { type } : {}),
       ...(q ? { OR: [
         { productBarcode: { contains: q } }, { productName: { contains: q } },
-        { productPurity: { contains: q } }, { note: { contains: q } }
+        { productPurity: { contains: q } }, { note: { contains: q } },
+        { product: { barcode: { contains: q } } }, { product: { sku: { contains: q } } },
+        { product: { name: { contains: q } } }, { product: { purity: { contains: q } } }
       ] } : {})
     };
     const totalItems = await prisma.stockMovement.count({ where: movementWhere });
     const pagination = paginationFor(req, totalItems, req.query.page, 200);
-    const movements = await prisma.stockMovement.findMany({
+    const movementRows = await prisma.stockMovement.findMany({
       where: movementWhere,
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       skip: (pagination.page - 1) * pagination.pageSize,
-      take: pagination.pageSize
+      take: pagination.pageSize,
+      include: { product: true }
+    });
+    const movements = movementRows.map((movement) => {
+      const currentProduct = Number(movement.product?.quantity || 0) > 0
+        ? movement.product
+        : null;
+      return {
+        ...movement,
+        productBarcode: currentProduct?.barcode || movement.productBarcode,
+        productSku: currentProduct?.sku || movement.productSku,
+        productName: currentProduct?.name || movement.productName,
+        productMetal: currentProduct?.metal || movement.productMetal,
+        productPurity: currentProduct?.purity || movement.productPurity,
+        netWeight: currentProduct?.netWeight ?? movement.netWeight
+      };
     });
     res.render('reports/stock-movements', {
       title: 'Stock movement report', movements, pagination,
@@ -4095,8 +4329,8 @@ app.get('/reports/balance-register', async (req, res, next) => {
     if (fromKey || toKey) {
       const f = fromKey || '2000-01-01';
       const t = toKey || dateInput();
-      const range = localDateTimeRange(f, t);
-      dateJoinClause = Prisma.sql`AND l.createdAt >= ${range.gte} AND l.createdAt <= ${range.lte}`;
+      localDateTimeRange(f, t); // validate the user-entered range; ledger dates are stored as YYYY-MM-DD strings
+      dateJoinClause = Prisma.sql`AND l.entryDate >= ${f} AND l.entryDate <= ${t}`;
     }
 
     const like = `%${q}%`;
@@ -4126,7 +4360,7 @@ app.get('/reports/balance-register', async (req, res, next) => {
         c.name,
         c.phone,
         COALESCE(SUM(l.amount), 0) AS balance,
-        MAX(l.createdAt) AS lastActivity
+        MAX(l.entryDate) AS lastActivity
       FROM \`Customer\` c
       LEFT JOIN \`CustomerLedger\` l ON l.customerId = c.id ${dateJoinClause}
       ${searchClause}
@@ -4425,7 +4659,13 @@ app.post('/schemes/plans/:id/edit', async (req, res, next) => {
     if (!Number.isInteger(durationMonths) || durationMonths < 1 || durationMonths > 60) return redirectWith(res, '/schemes', 'error', 'Duration must be between 1 and 60 months.');
     if (monthlyAmount <= 0) return redirectWith(res, '/schemes', 'error', 'Enter a valid monthly installment amount.');
     if (maturityAmount <= 0) return redirectWith(res, '/schemes', 'error', 'Enter a valid maturity amount.');
-    const plan = await prisma.schemePlan.findUnique({ where: { id }, include: { _count: { select: { enrollments: true } } } });
+    // Cancelled enrollments remain historical records, but they should not
+    // keep a plan's financial terms locked after cancellation. Match the
+    // plan page and edit modal, which count only non-cancelled enrollments.
+    const plan = await prisma.schemePlan.findUnique({
+      where: { id },
+      include: { _count: { select: { enrollments: { where: { status: { not: 'CANCELLED' } } } } } }
+    });
     if (!plan) return redirectWith(res, '/schemes', 'error', 'Scheme plan not found.');
     const hasEnrollments = plan._count.enrollments > 0;
     const financialTermsChanged = plan.durationMonths !== durationMonths

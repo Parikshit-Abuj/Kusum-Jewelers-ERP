@@ -4,10 +4,36 @@ const net = require('net');
 const { spawn } = require('child_process');
 
 const templateDir = path.join(__dirname, '..', 'tspl-templates');
-const templates = {
-  GOLD: fs.readFileSync(path.join(templateDir, 'GOLD.PRN'), 'utf8'),
-  SILVER: fs.readFileSync(path.join(templateDir, 'SILVER.PRN'), 'utf8')
+const templateFiles = {
+  GOLD: path.join(templateDir, 'GOLD.PRN'),
+  SILVER: path.join(templateDir, 'SILVER.PRN')
 };
+// Keep printer templates out of module initialisation. A missing optional
+// label asset must not prevent the ERP server, login, or non-printer workflows
+// from starting. Templates are loaded only when a label job is requested and
+// cached for the lifetime of the process.
+const templateCache = new Map();
+
+function loadTemplate(kind) {
+  if (templateCache.has(kind)) return templateCache.get(kind);
+  const templatePath = templateFiles[kind];
+  if (!templatePath) throw new Error(`No TSPL template is configured for ${kind || 'this metal'}.`);
+  try {
+    const template = fs.readFileSync(templatePath, 'utf8');
+    if (!template.trim()) {
+      throw Object.assign(new Error('Template file is empty.'), { code: 'EMPTY_TEMPLATE' });
+    }
+    templateCache.set(kind, template);
+    return template;
+  } catch (error) {
+    const reason = error.code === 'ENOENT'
+      ? 'the file is missing'
+      : error.code === 'EMPTY_TEMPLATE'
+        ? 'the file is empty'
+        : `the file could not be read (${error.message || error.code || 'unknown error'})`;
+    throw new Error(`Cannot print ${String(kind).toLowerCase()} labels because the TSPL template ${reason}. Restore ${path.basename(templatePath)} in the ERP release, then try again.`);
+  }
+}
 
 function cleanTsplValue(value, fieldName = 'label text', maximumLength = null) {
   const source = String(value ?? '');
@@ -84,7 +110,7 @@ function buildTsplLabel(product, settings = {}) {
         '<stn_wt3>': weight(product.stoneWeight),
         '<net_wt>': weight(product.netWeight)
       };
-  return replaceAll(applyLabelSettings(templates[kind], settings), replacements).replace(/\r?\n/g, '\r\n').trimEnd() + '\r\n';
+  return replaceAll(applyLabelSettings(loadTemplate(kind), settings), replacements).replace(/\r?\n/g, '\r\n').trimEnd() + '\r\n';
 }
 
 function buildTsplJob(labels, settings = {}) {

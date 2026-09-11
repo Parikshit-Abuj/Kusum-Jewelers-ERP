@@ -1,3 +1,5 @@
+const { dateInput } = require('./helpers');
+
 function roundedMoney(value) {
   return Math.round((Number(value) || 0) * 100) / 100;
 }
@@ -17,7 +19,7 @@ function paymentMethodFromComponents(components, paid) {
   return 'MIXED';
 }
 
-async function reverseSalePayment(tx, { saleId, amount, paymentMethod, createCreditEntry, note }) {
+async function reverseSalePayment(tx, { saleId, amount, paymentMethod, createCreditEntry, note, entryDate }) {
   const locked = await tx.$queryRaw`SELECT id FROM \`Sale\` WHERE id = ${saleId} FOR UPDATE`;
   if (!locked.length) return 0;
 
@@ -62,6 +64,7 @@ async function reverseSalePayment(tx, { saleId, amount, paymentMethod, createCre
         saleId: sale.id,
         type: 'SALE_CREDIT',
         amount: reversed,
+        entryDate: entryDate || dateInput(sale.saleDate),
         reference: sale.invoiceNumber,
         note: note || `Payment reversed from ${sale.invoiceNumber}`
       }
@@ -123,11 +126,11 @@ async function reverseCustomerOrderAdvance(tx, entry) {
     });
     if (due > 0) {
       if (adjustments.length) {
-        await tx.customerLedger.update({ where: { id: adjustments[0].id }, data: { amount: due } });
+        await tx.customerLedger.update({ where: { id: adjustments[0].id }, data: { amount: due, entryDate: dateInput(order.orderDate) } });
         if (adjustments.length > 1) await tx.customerLedger.deleteMany({ where: { id: { in: adjustments.slice(1).map((row) => row.id) } } });
       } else {
         await tx.customerLedger.create({ data: {
-          customerId: order.customerId, type: 'ADJUSTMENT', amount: due,
+          customerId: order.customerId, type: 'ADJUSTMENT', amount: due, entryDate: dateInput(order.orderDate),
           reference: order.orderNumber, note: `Customer order balance — ${order.orderNumber}`
         } });
       }
@@ -294,6 +297,7 @@ async function reverseAndDeleteCashbookEntry(tx, entryId) {
       amount: entry.amount,
       paymentMethod: entry.paymentMethod,
       createCreditEntry: true,
+      entryDate: entry.entryDate,
       note: `Cashbook payment deleted · ${entry.description}`
     });
     if (reversed > 0) affectedSales.add(entry.saleId);
@@ -308,7 +312,7 @@ async function reverseAndDeleteCashbookEntry(tx, entryId) {
     saleAllocations.set(key, current);
   }
   for (const allocation of saleAllocations.values()) {
-    const reversed = await reverseSalePayment(tx, { ...allocation, createCreditEntry: false });
+    const reversed = await reverseSalePayment(tx, { ...allocation, createCreditEntry: false, entryDate: entry.entryDate });
     if (reversed > 0) affectedSales.add(allocation.saleId);
   }
 

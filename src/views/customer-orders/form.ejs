@@ -35,4 +35,110 @@
   <% } %></section>
   <footer class="form-footer"><a class="button ghost" href="/customer-orders">Cancel</a><button class="button" type="submit"><%= isEditing ? 'Save changes' : 'Save customer order' %></button></footer>
 </form>
-<script>(()=>{const f=document.querySelector('[data-order-form]');if(!f)return;function bind(input,box,url,fill,onTyping){let timer,controller;input.addEventListener('input',()=>{onTyping?.();clearTimeout(timer);const q=input.value.trim();if(q.length<2){box.hidden=true;return}timer=setTimeout(async()=>{controller?.abort();controller=new AbortController();try{const r=await fetch(url+encodeURIComponent(q),{signal:controller.signal});const data=await r.json();const list=data.customers||data.suppliers||[];box.replaceChildren(...list.map(row=>{const b=document.createElement('button');b.type='button';b.textContent=`${row.name}${row.phone?' · '+row.phone:''}`;b.onclick=()=>{fill(row);box.hidden=true};return b}));box.hidden=!list.length}catch(e){if(e.name!=='AbortError')box.hidden=true}},220)})};const customer=f.querySelector('[data-order-customer]'),customerBox=f.querySelector('[data-order-customer-suggestions]'),customerId=f.querySelector('[data-order-customer-id]');bind(customer,customerBox,'/api/customers/search?q=',row=>{customerId.value=row.id;customer.value=row.name;f.querySelector('[name=customerPhone]').value=row.phone||'';f.querySelector('[name=customerAddress]').value=row.address||'';f.querySelector('[name=customerPan]').value=row.panNumber||''},()=>{customerId.value=''});const seller=f.querySelector('[data-order-seller]'),sellerBox=f.querySelector('[data-order-seller-suggestions]'),sellerId=f.querySelector('[data-order-seller-id]');bind(seller,sellerBox,'/api/suppliers/search?q=',row=>{sellerId.value=row.id;seller.value=row.name;f.querySelector('[name=sellerPhone]').value=row.phone||''},()=>{sellerId.value=''})})();</script>
+<script>
+(() => {
+  const form = document.querySelector('[data-order-form]');
+  if (!form) return;
+  const field = (selector) => form.querySelector(selector);
+
+  function bindSearch(input, box, url, fill, onTyping) {
+    if (!input || !box) return;
+    let timer;
+    let controller;
+    input.addEventListener('input', () => {
+      onTyping?.();
+      clearTimeout(timer);
+      const term = input.value.trim();
+      if (term.length < 2) { box.hidden = true; return; }
+      timer = setTimeout(async () => {
+        controller?.abort(); controller = new AbortController();
+        try {
+          const response = await fetch(url + encodeURIComponent(term), { signal: controller.signal });
+          const data = await response.json();
+          const rows = data.customers || data.suppliers || [];
+          box.replaceChildren(...rows.map((row) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = `${row.name}${row.phone ? ' · ' + row.phone : ''}`;
+            button.addEventListener('click', () => { fill(row); box.hidden = true; });
+            return button;
+          }));
+          box.hidden = !rows.length;
+        } catch (error) { if (error.name !== 'AbortError') box.hidden = true; }
+      }, 220);
+    });
+  }
+
+  const customer = field('[data-order-customer]');
+  const customerPhone = field('[name=customerPhone]');
+  const customerBox = field('[data-order-customer-suggestions]');
+  const customerId = field('[data-order-customer-id]');
+  const fillCustomer = (row) => {
+    customerId.value = row.id || '';
+    customer.value = row.name || '';
+    customerPhone.value = row.phone || '';
+    field('[name=customerAddress]').value = row.address || '';
+    field('[name=customerPan]').value = row.panNumber || '';
+  };
+  bindSearch(customer, customerBox, '/api/customers/search?q=', fillCustomer, () => { customerId.value = ''; });
+
+  async function lookupCustomerByPhone() {
+    const phone = String(customerPhone?.value || '').replace(/\D/g, '').slice(0, 15);
+    if (customerPhone) customerPhone.value = phone;
+    if (!phone || phone.length < 10) { if (customerId) customerId.value = ''; return; }
+    try {
+      const response = await fetch('/api/customers/phone/' + encodeURIComponent(phone));
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not look up this customer.');
+      if (data.found) fillCustomer(data.customer); else customerId.value = '';
+    } catch (_) { customerId.value = ''; }
+  }
+  let customerPhoneTimer;
+  customerPhone?.addEventListener('input', () => {
+    customerId.value = '';
+    clearTimeout(customerPhoneTimer);
+    const digits = String(customerPhone.value || '').replace(/\D/g, '');
+    if (digits.length >= 10) customerPhoneTimer = setTimeout(lookupCustomerByPhone, 300);
+  });
+  customerPhone?.addEventListener('blur', lookupCustomerByPhone);
+  customerPhone?.addEventListener('keydown', async (event) => {
+    if (event.key !== 'Enter' || event.isComposing) return;
+    event.preventDefault(); clearTimeout(customerPhoneTimer); await lookupCustomerByPhone(); customer?.focus();
+  });
+
+  const seller = field('[data-order-seller]');
+  const sellerPhone = field('[name=sellerPhone]');
+  const sellerBox = field('[data-order-seller-suggestions]');
+  const sellerId = field('[data-order-seller-id]');
+  const fillSeller = (row) => {
+    sellerId.value = row.id || '';
+    seller.value = row.name || '';
+    sellerPhone.value = row.phone || '';
+  };
+  bindSearch(seller, sellerBox, '/api/suppliers/search?q=', fillSeller, () => { sellerId.value = ''; });
+
+  async function lookupSellerByPhone() {
+    const phone = String(sellerPhone?.value || '').replace(/\D/g, '').slice(0, 15);
+    if (sellerPhone) sellerPhone.value = phone;
+    if (!phone || phone.length < 10) { if (sellerId) sellerId.value = ''; return; }
+    try {
+      const response = await fetch('/api/suppliers/phone/' + encodeURIComponent(phone));
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not look up this supplier.');
+      if (data.found) fillSeller(data.supplier); else sellerId.value = '';
+    } catch (_) { sellerId.value = ''; }
+  }
+  let sellerPhoneTimer;
+  sellerPhone?.addEventListener('input', () => {
+    sellerId.value = '';
+    clearTimeout(sellerPhoneTimer);
+    const digits = String(sellerPhone.value || '').replace(/\D/g, '');
+    if (digits.length >= 10) sellerPhoneTimer = setTimeout(lookupSellerByPhone, 300);
+  });
+  sellerPhone?.addEventListener('blur', lookupSellerByPhone);
+  sellerPhone?.addEventListener('keydown', async (event) => {
+    if (event.key !== 'Enter' || event.isComposing) return;
+    event.preventDefault(); clearTimeout(sellerPhoneTimer); await lookupSellerByPhone(); seller?.focus();
+  });
+})();
+</script>

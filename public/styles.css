@@ -72,8 +72,9 @@ strong { font-weight: 700; }
 }
 .brand-mark-image {
   overflow: hidden;
-  background: #ffffff;
-  padding: 2px;
+  background: #101114;
+  border-radius: 50%;
+  padding: 0;
 }
 .brand-mark-image .app-logo-image {
   display: block;
@@ -745,7 +746,7 @@ form[action="/network-setup"] input,
 }
 
 /* ── Cashbook ──────────────────────────────────────────────── */
-.cashbook-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 20px; }
+.cashbook-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 20px; }
 .cashbook-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; align-items: start; }
 .cashbook-form h2 { margin-bottom: 16px; }
 .cashbook-form label { margin-bottom: 13px; display: block; }
@@ -759,6 +760,7 @@ form[action="/network-setup"] input,
 .cashbook-filter { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; padding: 0 0 16px; border-bottom: 1px solid var(--line); margin-bottom: 0; }
 .cashbook-filter label { font-size: 11px; font-weight: 700; color: #554e47; flex: 1; min-width: 130px; }
 .cashbook-filter input, .cashbook-filter select { margin-top: 4px; padding: 7px 8px; font-size: 12px; }
+@media (max-width: 1100px) { .cashbook-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 900px) { .cashbook-layout { grid-template-columns: 1fr; } .cashbook-summary { grid-template-columns: 1fr; } }
 
 /* ── Authentication + cash sync + URD settlement ─────────── */
@@ -1309,6 +1311,78 @@ form[action="/network-setup"] input,
   .batch-doc-filter-form label:first-child { grid-column: 1 / -1; }
 }
 
+/* ── Fast Batch Inventory Piece Remover ─────────────────────── */
+.modal-card.batch-remove-modal-card {
+  max-width: 980px;
+  max-height: min(850px, 92vh);
+}
+.batch-remove-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow: hidden;
+}
+.batch-remove-filter-form {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(130px, 1fr) minmax(150px, 1fr) 125px auto auto;
+  align-items: end;
+  gap: 10px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid #eee8df;
+  border-radius: 8px;
+  background: #fffdf9;
+}
+.batch-remove-filter-form label {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.batch-remove-filter-form input { min-width: 0; }
+.batch-remove-selection-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.batch-remove-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+}
+.batch-remove-selection-bar strong { color: var(--ink); }
+.batch-remove-table-wrap {
+  min-height: 150px;
+  max-height: 48vh;
+  overflow: auto;
+}
+.batch-remove-table-wrap table { min-width: 680px; }
+.batch-remove-table-wrap td small,
+.batch-remove-table-wrap td strong { display: block; }
+.batch-remove-table-wrap td small { margin-top: 3px; color: var(--muted); font-size: 11px; }
+.batch-remove-pagination { display: flex; align-items: center; justify-content: center; gap: 12px; }
+.batch-remove-footer { align-items: center; }
+.batch-remove-footer > div { display: flex; gap: 8px; }
+.batch-remove-feedback { flex: 1; min-height: 18px; color: #2e7d32; font-size: 12px; font-weight: 700; }
+.batch-remove-feedback.is-error { color: #b53d36; }
+@media (max-width: 850px) {
+  .batch-remove-filter-form { grid-template-columns: 1fr 1fr; }
+  .batch-remove-filter-form button { width: 100%; }
+}
+@media (max-width: 560px) {
+  .batch-remove-filter-form { grid-template-columns: 1fr; }
+  .batch-remove-filter-form button { width: auto; }
+  .batch-remove-footer { align-items: stretch; flex-direction: column; }
+  .batch-remove-footer > div { justify-content: flex-end; }
+}
+
 .batch-split-body {
   display: flex !important;
   flex-direction: row !important;
@@ -1517,8 +1591,9 @@ form[action="/network-setup"] input,
 }
 .brand-mark-sm.brand-mark-image {
   overflow: hidden;
-  background: #ffffff;
-  padding: 1px;
+  background: #101114;
+  border-radius: 50%;
+  padding: 0;
 }
 
 .mobile-live-indicator {

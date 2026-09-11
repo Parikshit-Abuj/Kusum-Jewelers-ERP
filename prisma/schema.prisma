@@ -17,8 +17,6 @@ enum MetalType {
 
 enum ProductStatus {
   AVAILABLE
-  SOLD_OUT
-  INACTIVE
 }
 
 enum MovementType {
@@ -248,12 +246,14 @@ model CustomerLedger {
   paymentMethod   PaymentMethod?
   reference       String?
   note            String?         @db.Text
+  entryDate       String          @db.VarChar(10)
   createdAt       DateTime        @default(now())
   customer        Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
   sale            Sale?           @relation(fields: [saleId], references: [id], onDelete: SetNull)
   cashbookEntry   CashbookEntry?  @relation(fields: [cashbookEntryId], references: [id], onDelete: Cascade)
 
   @@index([customerId, createdAt])
+  @@index([customerId, entryDate])
   @@index([saleId])
   @@index([cashbookEntryId])
 }

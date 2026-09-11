@@ -1,6 +1,7 @@
 const PDFDocument = require('pdfkit');
 const fs = require('fs');
 const path = require('path');
+const { createQrImage } = require('./qr-code');
 
 const bundledSignaturePath = path.join(__dirname, '..', 'assets', 'kusum-authorised-signature.jpg');
 // Match the sales invoice's A4 printable area without changing the sales PDF:
@@ -8,9 +9,12 @@ const bundledSignaturePath = path.join(__dirname, '..', 'assets', 'kusum-authori
 const page = { left: 19, right: 572, width: 553, footerY: 652 };
 
 function money(value) {
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency', currency: 'INR', maximumFractionDigits: 2, minimumFractionDigits: 2
-  }).format(Number(value || 0));
+  // Use an ASCII currency prefix instead of the Unicode rupee glyph. The
+  // built-in PDF fonts do not contain that glyph reliably, which can make it
+  // appear as a stray superscript/"1" before the amount in some viewers.
+  return `Rs. ${new Intl.NumberFormat('en-IN', {
+    maximumFractionDigits: 2, minimumFractionDigits: 2
+  }).format(Number(value || 0))}`;
 }
 
 function text(value, fallback = '—') {
@@ -58,78 +62,165 @@ function paymentSummary(parts) {
   return parts.map((part) => `${methodLabel(part.paymentMethod)} ${money(part.amount)}`).join(' + ');
 }
 
+function schemeQrPayload(enrollment, installment, parts, settings = {}) {
+  const paymentDate = parts.map((part) => part.paymentDate).filter(Boolean).sort().at(-1) || installment?.paymentDate;
+  return [
+    `${text(settings.shopName, 'Kusum Jewellers')} - SCHEME PAYMENT`,
+    `Customer: ${text(enrollment.customer?.name, 'Customer')}`,
+    `Scheme: ${text(enrollment.schemePlan?.name, 'Savings scheme')}`,
+    `Enrollment: ${text(enrollment.enrollmentNumber)}`,
+    `Installment: ${installment.installmentNumber} of ${enrollment.schemePlan?.durationMonths || '—'}`,
+    `Due date: ${dateOnly(installment.dueDate)}`,
+    `Paid date: ${dateOnly(paymentDate)}`,
+    `Payment: ${parts.map((part) => `${dateOnly(part.paymentDate)} ${methodLabel(part.paymentMethod)} ${money(part.amount)}`).join(' + ') || 'No payment recorded'}`,
+    `Total received: ${money(totalParts(parts))}`,
+    ...(installment.notes ? [`Narration: ${text(installment.notes)}`] : [])
+  ].join('\n');
+}
+
+function consolidatedSchemeQrPayload(enrollment, paidRows, settings = {}) {
+  const rows = paidRows.map(({ installment, parts }) =>
+    `Month ${installment.installmentNumber}: ${parts.map((part) => `${dateOnly(part.paymentDate)} ${methodLabel(part.paymentMethod)} ${money(part.amount)}`).join(' + ')} = ${money(totalParts(parts))}`
+  );
+  const totalPaid = paidRows.reduce((sum, row) => sum + totalParts(row.parts), 0);
+  return [
+    `${text(settings.shopName, 'Kusum Jewellers')} - CONSOLIDATED SCHEME`,
+    `Customer: ${text(enrollment.customer?.name, 'Customer')}`,
+    `Scheme: ${text(enrollment.schemePlan?.name, 'Savings scheme')}`,
+    `Enrollment: ${text(enrollment.enrollmentNumber)}`,
+    ...rows,
+    `Total received: ${money(totalPaid)}`
+  ].join('\n');
+}
+
+function compactSchemeInstallmentQrPayload(enrollment, installment, parts, settings = {}) {
+  return [
+    `SCHEME:${text(enrollment.schemePlan?.name, 'Savings scheme')}`,
+    `C:${text(enrollment.customer?.name, 'Customer')}`,
+    `E:${text(enrollment.enrollmentNumber)}`,
+    `M${installment.installmentNumber}/${enrollment.schemePlan?.durationMonths || '—'}:${parts.map((part) => `${dateOnly(part.paymentDate)},${methodLabel(part.paymentMethod)},${money(part.amount)}`).join(';') || 'NONE'}`,
+    `TOTAL:${money(totalParts(parts))}`,
+    ...(installment.notes ? [`N:${text(installment.notes)}`] : [])
+  ].join('|');
+}
+
+function compactConsolidatedSchemeQrPayload(enrollment, paidRows, settings = {}) {
+  const rows = paidRows.map(({ installment, parts }) =>
+    `M${installment.installmentNumber}:${parts.map((part) => `${dateOnly(part.paymentDate)},${methodLabel(part.paymentMethod)},${money(part.amount)}`).join(';')}`
+  );
+  const totalPaid = paidRows.reduce((sum, row) => sum + totalParts(row.parts), 0);
+  return [
+    `SCHEME:${text(enrollment.schemePlan?.name, 'Savings scheme')}`,
+    `C:${text(enrollment.customer?.name, 'Customer')}`,
+    `E:${text(enrollment.enrollmentNumber)}`,
+    ...rows,
+    `TOTAL:${money(totalPaid)}`
+  ].join('|');
+}
+
+async function qrImage(payload, compactPayload, label) {
+  return createQrImage({ payload, compactPayload, label });
+}
+
 function drawLine(doc, y, color = '#d6d0c9', width = 0.6) {
   doc.save().moveTo(page.left, y).lineTo(page.right, y).lineWidth(width).strokeColor(color).stroke().restore();
 }
 
+function box(doc, x, y, width, height, lineWidth = 0.65) {
+  doc.save().rect(x, y, width, height).lineWidth(lineWidth).strokeColor('#111').stroke().restore();
+}
+
+function vertical(doc, x, y, height, color = '#111', width = 0.45) {
+  doc.save().moveTo(x, y).lineTo(x, y + height).lineWidth(width).strokeColor(color).stroke().restore();
+}
+
 function drawHeader(doc, settings, title, documentNo, date) {
   const shopName = text(settings.shopName, 'Kusum Jewellers');
-  doc.fillColor('#1d1916').font('Helvetica-Bold').fontSize(19).text(shopName, page.left, 42, { width: 330 });
-  doc.fillColor('#6d655e').font('Helvetica').fontSize(8.5);
-  const contact = [settings.shopAddress, settings.primaryPhone, settings.secondaryPhone].filter(Boolean).join('  ·  ');
-  if (contact) doc.text(contact, page.left, 66, { width: 350, ellipsis: true });
-  if (settings.gstin) doc.text(`GSTIN: ${settings.gstin}${settings.panNumber ? `  ·  PAN: ${settings.panNumber}` : ''}`, page.left, 79, { width: 350, ellipsis: true });
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(19).text(shopName, page.left, 42, { width: 330 });
+  doc.fillColor('#111').font('Helvetica').fontSize(8.5);
+  const address = String(settings.shopAddress || '').trim();
+  const phones = [settings.primaryPhone, settings.secondaryPhone].filter(Boolean).join('  ·  ');
+  let contactY = 66;
+  if (address) { doc.text(address, page.left, contactY, { width: 350 }); contactY += 12; }
+  if (phones) { doc.text(phones, page.left, contactY, { width: 350, ellipsis: true }); contactY += 12; }
+  if (settings.gstin) doc.text(`GSTIN: ${settings.gstin}${settings.panNumber ? `  ·  PAN: ${settings.panNumber}` : ''}`, page.left, contactY, { width: 350, ellipsis: true });
   // The consolidated title is longer than the monthly title. Reduce only its
   // header size so it stays on one line and never collides with the receipt
   // number/date lines below it.
   const titleSize = title.length > 22 ? 10.5 : 13;
-  doc.fillColor('#8b5e16').font('Helvetica-Bold').fontSize(titleSize).text(title, 369, 44, { width: 203, align: 'right', ellipsis: true });
-  doc.fillColor('#6d655e').font('Helvetica').fontSize(8.5).text(`Receipt ${text(documentNo)}`, 369, 66, { width: 203, align: 'right' });
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(titleSize).text(title, 369, 44, { width: 203, align: 'right', ellipsis: true });
+  doc.fillColor('#111').font('Helvetica').fontSize(8.5).text(`Receipt ${text(documentNo)}`, 369, 66, { width: 203, align: 'right' });
   doc.text(`Payment date ${dateOnly(date)}`, 369, 79, { width: 203, align: 'right' });
   drawLine(doc, 101, '#b88732', 1.1);
 }
 
 function drawCustomerAndPlan(doc, enrollment, y) {
-  doc.fillColor('#8b5e16').font('Helvetica-Bold').fontSize(8).text('CUSTOMER AND SCHEME', page.left, y);
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(8).text('CUSTOMER AND SCHEME', page.left, y);
   drawLine(doc, y + 14, '#e5ddd1', 0.7);
   const top = y + 25;
   const half = page.width / 2;
-  doc.roundedRect(page.left, top, page.width, 66, 8).fill('#f6f1e8');
-  doc.fillColor('#756b61').font('Helvetica-Bold').fontSize(7).text('CUSTOMER', page.left + 12, top + 11);
-  doc.fillColor('#1d1916').font('Helvetica-Bold').fontSize(11).text(text(enrollment.customer?.name, 'Customer'), page.left + 12, top + 26, { width: half - 28, ellipsis: true });
-  doc.fillColor('#5e554d').font('Helvetica').fontSize(8.5).text(enrollment.customer?.phone || 'No mobile saved', page.left + 12, top + 43, { width: half - 28, ellipsis: true });
-  doc.fillColor('#756b61').font('Helvetica-Bold').fontSize(7).text('SCHEME', page.left + half + 12, top + 11);
-  doc.fillColor('#1d1916').font('Helvetica-Bold').fontSize(10).text(text(enrollment.schemePlan?.name, 'Savings scheme'), page.left + half + 12, top + 26, { width: half - 28, ellipsis: true });
-  doc.fillColor('#5e554d').font('Helvetica').fontSize(8.5).text(`${text(enrollment.enrollmentNumber)} · ${enrollment.schemePlan?.durationMonths || 0} months`, page.left + half + 12, top + 43, { width: half - 28, ellipsis: true });
+  const height = 66;
+  doc.rect(page.left, top, page.width, height).fill('#f6f1e8');
+  box(doc, page.left, top, page.width, height);
+  vertical(doc, page.left + half, top, height);
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(7).text('CUSTOMER', page.left + 12, top + 11);
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(11).text(text(enrollment.customer?.name, 'Customer'), page.left + 12, top + 26, { width: half - 28, ellipsis: true });
+  doc.fillColor('#111').font('Helvetica').fontSize(8.5).text(enrollment.customer?.phone || 'No mobile saved', page.left + 12, top + 43, { width: half - 28, ellipsis: true });
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(7).text('SCHEME', page.left + half + 12, top + 11);
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(10).text(text(enrollment.schemePlan?.name, 'Savings scheme'), page.left + half + 12, top + 26, { width: half - 28, ellipsis: true });
+  doc.fillColor('#111').font('Helvetica').fontSize(8.5).text(`${text(enrollment.enrollmentNumber)} · ${enrollment.schemePlan?.durationMonths || 0} months`, page.left + half + 12, top + 43, { width: half - 28, ellipsis: true });
   return top + 88;
 }
 
 function drawSectionHeading(doc, label, y) {
-  doc.fillColor('#8b5e16').font('Helvetica-Bold').fontSize(8).text(label.toUpperCase(), page.left, y);
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(8).text(label.toUpperCase(), page.left, y);
   drawLine(doc, y + 14, '#e5ddd1', 0.7);
   return y + 25;
 }
 
-function drawSignatureFooter(doc, settings, note) {
+function drawSignatureFooter(doc, settings, note, qr = null) {
   const y = page.footerY;
-  drawLine(doc, y, '#b88732', 0.8);
-  const signatureX = 389;
-  doc.fillColor('#6d655e').font('Helvetica').fontSize(8).text(`For ${text(settings.shopName, 'Kusum Jewellers')}`, signatureX, y + 10, { width: 183, align: 'center' });
+  const height = 82;
+  const split = page.left + 108;
+  box(doc, page.left, y, page.width, height);
+  vertical(doc, split, y, height);
+  if (qr) {
+    doc.image(qr, page.left + 25, y + 5, { fit: [58, 58] });
+    doc.fillColor('#111').font('Helvetica-Bold').fontSize(6.6).text('SCAN SCHEME DETAILS', page.left + 4, y + 67, { width: split - page.left - 8, align: 'center' });
+  }
+  const signatureX = split;
+  const signatureWidth = page.right - split;
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(9.2).text(`For ${text(settings.shopName, 'Kusum Jewellers')}`, signatureX + 10, y + 6, { width: signatureWidth - 20, align: 'center' });
   const signature = settings.signatureImage ? Buffer.from(settings.signatureImage) : (fs.existsSync(bundledSignaturePath) ? bundledSignaturePath : null);
   if (signature) doc.image(signature, signatureX + 22, y + 22, { fit: [140, 42], align: 'center', valign: 'center' });
-  doc.save().moveTo(signatureX + 20, y + 66).lineTo(page.right - 10, y + 66).lineWidth(0.6).strokeColor('#bcb4ab').stroke().restore();
-  doc.fillColor('#6d655e').font('Helvetica-Bold').fontSize(8).text('Authorised Signatory', signatureX, y + 72, { width: 183, align: 'center' });
-  doc.font('Helvetica').fontSize(7.5).text(note, page.left, y + 92, { width: 285, align: 'left', height: 24, ellipsis: true });
+  doc.save().moveTo(signatureX + 20, y + 66).lineTo(page.right - 10, y + 66).lineWidth(0.6).strokeColor('#111').stroke().restore();
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(8).text('Authorised Signatory', signatureX, y + 70, { width: signatureWidth, align: 'center' });
+  doc.fillColor('#111').font('Helvetica').fontSize(7.5).text(note, page.left + 122, y + 24, { width: 260, align: 'left', height: 42, ellipsis: true });
 }
 
 function drawPaymentParts(doc, parts, y) {
   y = drawSectionHeading(doc, 'Payment received', y);
   const top = y;
   const rowHeight = 24;
-  doc.rect(page.left, top, page.width, 24).fill('#f6f1e8');
-  doc.fillColor('#756b61').font('Helvetica-Bold').fontSize(7).text('PAYMENT DATE', page.left + 10, top + 8);
-  doc.text('PAYMENT METHOD', page.left + 150, top + 8);
+  const headerHeight = 24;
+  const totalHeight = headerHeight + parts.length * rowHeight + 28;
+  const xPositions = [page.left, page.left + 140, page.left + 464, page.right];
+  doc.rect(page.left, top, page.width, headerHeight).fill('#f2eee8');
+  box(doc, page.left, top, page.width, totalHeight);
+  xPositions.slice(1, -1).forEach((x) => vertical(doc, x, top, totalHeight));
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(7).text('PAYMENT DATE', page.left + 10, top + 8, { width: 120 });
+  doc.text('PAYMENT METHOD', page.left + 150, top + 8, { width: 300 });
   doc.text('AMOUNT', 474, top + 8, { width: 90, align: 'right' });
   let rowY = top + 24;
   parts.forEach((part, index) => {
     if (index % 2 === 0) doc.rect(page.left, rowY, page.width, rowHeight).fill('#fcfaf6');
-    doc.fillColor('#1d1916').font('Helvetica').fontSize(8.5).text(dateOnly(part.paymentDate), page.left + 10, rowY + 8, { width: 120, ellipsis: true });
+    doc.fillColor('#111').font('Helvetica').fontSize(8.5).text(dateOnly(part.paymentDate), page.left + 10, rowY + 8, { width: 120, ellipsis: true });
     doc.text(methodLabel(part.paymentMethod), page.left + 150, rowY + 8, { width: 270, ellipsis: true });
     doc.font('Helvetica-Bold').text(money(part.amount), 474, rowY + 8, { width: 90, align: 'right' });
+    drawLine(doc, rowY + rowHeight, '#111', 0.4);
     rowY += rowHeight;
   });
-  drawLine(doc, rowY, '#ded5c8', 0.45);
-  doc.fillColor('#1d1916').font('Helvetica-Bold').fontSize(10).text('Total received', page.left + 10, rowY + 12);
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(10).text('Total received', page.left + 10, rowY + 10);
   doc.text(money(totalParts(parts)), 454, rowY + 12, { width: 110, align: 'right' });
   return rowY + 42;
 }
@@ -145,43 +236,59 @@ async function writeSchemeInstallmentReceipt(res, enrollment, installment, setti
   const paymentDate = parts.map((part) => part.paymentDate).filter(Boolean).sort().at(-1) || installment.paymentDate;
   const filename = `${String(enrollment.enrollmentNumber || 'scheme')}-month-${installment.installmentNumber}-receipt.pdf`.replace(/[^A-Za-z0-9._-]/g, '_');
   const doc = new PDFDocument({ size: 'A4', margin: 0, info: { Title: `Scheme Payment Receipt ${enrollment.enrollmentNumber} Month ${installment.installmentNumber}`, Author: text(settings.shopName, 'Kusum Jewellers') } });
+  const qr = await qrImage(
+    schemeQrPayload(enrollment, installment, parts, settings),
+    compactSchemeInstallmentQrPayload(enrollment, installment, parts, settings),
+    `Scheme receipt ${text(enrollment.enrollmentNumber)} month ${installment.installmentNumber}`
+  );
   writeResponse(res, doc, filename);
   drawHeader(doc, settings, 'SCHEME PAYMENT RECEIPT', enrollment.enrollmentNumber, paymentDate);
   let y = drawCustomerAndPlan(doc, enrollment, 123);
   y = drawSectionHeading(doc, `Installment ${installment.installmentNumber} of ${enrollment.schemePlan?.durationMonths || '—'}`, y);
-  doc.roundedRect(page.left, y, page.width, 62, 8).fill('#f6f1e8');
-  doc.fillColor('#756b61').font('Helvetica-Bold').fontSize(7).text('DUE DATE', page.left + 12, y + 11);
-  doc.fillColor('#1d1916').font('Helvetica-Bold').fontSize(11).text(dateOnly(installment.dueDate), page.left + 12, y + 27);
-  doc.fillColor('#756b61').font('Helvetica-Bold').fontSize(7).text('PAID ON', page.left + 180, y + 11);
-  doc.fillColor('#1d1916').font('Helvetica-Bold').fontSize(11).text(dateOnly(paymentDate), page.left + 180, y + 27);
-  const amountX = page.right - 164;
-  doc.fillColor('#756b61').font('Helvetica-Bold').fontSize(7).text('AMOUNT RECEIVED', amountX, y + 11);
-  doc.fillColor('#8b5e16').font('Helvetica-Bold').fontSize(13).text(money(totalParts(parts)), amountX, y + 26, { width: 144, align: 'right' });
+  const detailHeight = 62;
+  const detailSplit1 = page.left + 168;
+  const detailSplit2 = page.left + 337;
+  doc.rect(page.left, y, page.width, detailHeight).fill('#f6f1e8');
+  box(doc, page.left, y, page.width, detailHeight);
+  vertical(doc, detailSplit1, y, detailHeight);
+  vertical(doc, detailSplit2, y, detailHeight);
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(7).text('DUE DATE', page.left + 12, y + 11);
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(11).text(dateOnly(installment.dueDate), page.left + 12, y + 27);
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(7).text('PAID ON', detailSplit1 + 12, y + 11);
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(11).text(dateOnly(paymentDate), detailSplit1 + 12, y + 27);
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(7).text('AMOUNT RECEIVED', detailSplit2 + 12, y + 11);
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(13).text(money(totalParts(parts)), detailSplit2 + 12, y + 26, { width: page.right - detailSplit2 - 24, align: 'right' });
   y += 86;
   y = drawPaymentParts(doc, parts, y);
   if (installment.notes || enrollment.notes) {
     const narration = installment.notes || enrollment.notes;
-    doc.fillColor('#5e554d').font('Helvetica-Bold').fontSize(8.5).text('Narration:', page.left, y);
+    doc.fillColor('#111').font('Helvetica-Bold').fontSize(8.5).text('Narration:', page.left, y);
     doc.font('Helvetica').text(text(narration), page.left + 52, y, { width: 459, height: 30, ellipsis: true });
   }
-  drawSignatureFooter(doc, settings, 'Thank you. Please retain this receipt with your scheme passbook.');
+  drawSignatureFooter(doc, settings, 'Thank you. Please retain this receipt with your scheme passbook.', qr);
   doc.end();
 }
 
 function drawTableHeader(doc, y) {
-  doc.rect(page.left, y, page.width, 24).fill('#f6f1e8');
-  doc.fillColor('#756b61').font('Helvetica-Bold').fontSize(7);
+  const height = 24;
+  const xPositions = [page.left, page.left + 60, page.left + 141, page.left + 226, page.left + 455, page.right];
+  doc.rect(page.left, y, page.width, height).fill('#f2eee8');
+  box(doc, page.left, y, page.width, height);
+  xPositions.slice(1, -1).forEach((x) => vertical(doc, x, y, height));
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(7);
   doc.text('MONTH', page.left + 9, y + 8);
-  doc.text('DUE DATE', page.left + 69, y + 8);
-  doc.text('PAID ON', page.left + 150, y + 8);
-  doc.text('PAYMENT METHOD', page.left + 235, y + 8);
+  doc.text('DUE DATE', page.left + 69, y + 8, { width: 72 });
+  doc.text('PAID ON', page.left + 150, y + 8, { width: 72 });
+  doc.text('PAYMENT METHOD', page.left + 235, y + 8, { width: 205 });
   doc.text('AMOUNT', 474, y + 8, { width: 90, align: 'right' });
   return y + 24;
 }
 
-function drawContinuationHeader(doc, enrollment) {
-  doc.fillColor('#1d1916').font('Helvetica-Bold').fontSize(12).text(text(enrollment.schemePlan?.name, 'Savings scheme'), page.left, 40, { width: 330, ellipsis: true });
-  doc.fillColor('#6d655e').font('Helvetica').fontSize(8.5).text(`Consolidated payment receipt · ${text(enrollment.enrollmentNumber)}`, page.left, 58, { width: 400, ellipsis: true });
+function drawContinuationHeader(doc, enrollment, settings = {}) {
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(12).text(text(settings.shopName, 'Kusum Jewellers'), page.left, 34, { width: 330, ellipsis: true });
+  const address = String(settings.shopAddress || '').trim();
+  if (address) doc.fillColor('#111').font('Helvetica').fontSize(8.5).text(address, page.left, 50, { width: 330, ellipsis: true });
+  doc.fillColor('#111').font('Helvetica').fontSize(8.5).text(`Consolidated payment receipt · ${text(enrollment.enrollmentNumber)}`, page.left, 64, { width: 400, ellipsis: true });
   drawLine(doc, 76, '#b88732', 0.8);
 }
 
@@ -191,17 +298,28 @@ async function writeSchemeConsolidatedReceipt(res, enrollment, settings = {}) {
   const lastPaymentDate = paidRows.flatMap((row) => row.parts.map((part) => part.paymentDate)).filter(Boolean).sort().at(-1) || enrollment.startDate;
   const filename = `${String(enrollment.enrollmentNumber || 'scheme')}-consolidated-receipt.pdf`.replace(/[^A-Za-z0-9._-]/g, '_');
   const doc = new PDFDocument({ size: 'A4', margin: 0, info: { Title: `Consolidated Scheme Payment Receipt ${enrollment.enrollmentNumber}`, Author: text(settings.shopName, 'Kusum Jewellers') } });
+  const qr = await qrImage(
+    consolidatedSchemeQrPayload(enrollment, paidRows, settings),
+    compactConsolidatedSchemeQrPayload(enrollment, paidRows, settings),
+    `Consolidated scheme receipt ${text(enrollment.enrollmentNumber)}`
+  );
   writeResponse(res, doc, filename);
   drawHeader(doc, settings, 'CONSOLIDATED SCHEME RECEIPT', enrollment.enrollmentNumber, lastPaymentDate);
   let y = drawCustomerAndPlan(doc, enrollment, 123);
   y = drawSectionHeading(doc, 'Payment summary', y);
-  doc.roundedRect(page.left, y, page.width, 58, 8).fill('#f6f1e8');
-  doc.fillColor('#756b61').font('Helvetica-Bold').fontSize(7).text('TOTAL RECEIVED', page.left + 12, y + 11);
-  doc.fillColor('#8b5e16').font('Helvetica-Bold').fontSize(14).text(money(totalPaid), page.left + 12, y + 27);
-  doc.fillColor('#756b61').font('Helvetica-Bold').fontSize(7).text('INSTALLMENTS PAID', page.left + 205, y + 11);
-  doc.fillColor('#1d1916').font('Helvetica-Bold').fontSize(13).text(`${paidRows.length} / ${enrollment.schemePlan?.durationMonths || 0}`, page.left + 205, y + 27);
-  doc.fillColor('#756b61').font('Helvetica-Bold').fontSize(7).text('BALANCE INSTALLMENTS', page.left + 370, y + 11);
-  doc.fillColor('#1d1916').font('Helvetica-Bold').fontSize(13).text(String(Math.max(0, Number(enrollment.schemePlan?.durationMonths || 0) - paidRows.length)), page.left + 370, y + 27);
+  const summaryHeight = 58;
+  const summarySplit1 = page.left + 184;
+  const summarySplit2 = page.left + 353;
+  doc.rect(page.left, y, page.width, summaryHeight).fill('#f6f1e8');
+  box(doc, page.left, y, page.width, summaryHeight);
+  vertical(doc, summarySplit1, y, summaryHeight);
+  vertical(doc, summarySplit2, y, summaryHeight);
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(7).text('TOTAL RECEIVED', page.left + 12, y + 11);
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(14).text(money(totalPaid), page.left + 12, y + 27, { width: summarySplit1 - page.left - 24 });
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(7).text('INSTALLMENTS PAID', summarySplit1 + 12, y + 11);
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(13).text(`${paidRows.length} / ${enrollment.schemePlan?.durationMonths || 0}`, summarySplit1 + 12, y + 27, { width: summarySplit2 - summarySplit1 - 24 });
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(7).text('BALANCE INSTALLMENTS', summarySplit2 + 12, y + 11);
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(13).text(String(Math.max(0, Number(enrollment.schemePlan?.durationMonths || 0) - paidRows.length)), summarySplit2 + 12, y + 27, { width: page.right - summarySplit2 - 24 });
   y += 82;
   y = drawSectionHeading(doc, 'Installment payment history', y);
   y = drawTableHeader(doc, y);
@@ -212,12 +330,15 @@ async function writeSchemeConsolidatedReceipt(res, enrollment, settings = {}) {
     if (y + rowHeight > contentBottom) {
       drawSignatureFooter(doc, settings, 'Continued on the next page.');
       doc.addPage();
-      drawContinuationHeader(doc, enrollment);
+      drawContinuationHeader(doc, enrollment, settings);
       y = drawTableHeader(doc, 92);
     }
     if (index % 2 === 0) doc.rect(page.left, y, page.width, rowHeight).fill('#fcfaf6');
+    const rowColumns = [page.left, page.left + 60, page.left + 141, page.left + 226, page.left + 455, page.right];
+    box(doc, page.left, y, page.width, rowHeight, 0.45);
+    rowColumns.slice(1, -1).forEach((x) => vertical(doc, x, y, rowHeight, '#111', 0.4));
     const paymentDate = parts.map((part) => part.paymentDate).filter(Boolean).sort().at(-1) || installment.paymentDate;
-    doc.fillColor('#1d1916').font('Helvetica').fontSize(8.5).text(`Month ${installment.installmentNumber}`, page.left + 9, y + 9, { width: 55, ellipsis: true });
+    doc.fillColor('#111').font('Helvetica').fontSize(8.5).text(`Month ${installment.installmentNumber}`, page.left + 9, y + 9, { width: 55, ellipsis: true });
     doc.text(dateOnly(installment.dueDate), page.left + 69, y + 9, { width: 72, ellipsis: true });
     doc.text(dateOnly(paymentDate), page.left + 150, y + 9, { width: 72, ellipsis: true });
     doc.text(paymentSummary(parts), page.left + 235, y + 9, { width: 205, ellipsis: true });
@@ -232,11 +353,11 @@ async function writeSchemeConsolidatedReceipt(res, enrollment, settings = {}) {
   if (summaryY + (narratedRows.length ? 100 : 44) > contentBottom) {
     drawSignatureFooter(doc, settings, 'Continued on the next page.');
     doc.addPage();
-    drawContinuationHeader(doc, enrollment);
+    drawContinuationHeader(doc, enrollment, settings);
     summaryY = 92;
   }
   drawLine(doc, summaryY, '#ded5c8', 0.45);
-  doc.fillColor('#5e554d').font('Helvetica').fontSize(8).text(
+  doc.fillColor('#111').font('Helvetica').fontSize(8).text(
     paidRows.length ? 'This receipt consolidates the scheme payments recorded in the ERP for this customer.' : 'No installment payments have been recorded for this scheme yet.',
     page.left, summaryY + 14, { width: 330, height: 28, ellipsis: true }
   );
@@ -245,21 +366,21 @@ async function writeSchemeConsolidatedReceipt(res, enrollment, settings = {}) {
       if (continuation) {
         drawSignatureFooter(doc, settings, 'Continued on the next page.');
         doc.addPage();
-        drawContinuationHeader(doc, enrollment);
+        drawContinuationHeader(doc, enrollment, settings);
       }
       const headingY = continuation ? 92 : summaryY + 49;
-      doc.fillColor('#8b5e16').font('Helvetica-Bold').fontSize(8).text('NARRATION', page.left, headingY);
+      doc.fillColor('#111').font('Helvetica-Bold').fontSize(8).text('NARRATION', page.left, headingY);
       return headingY + 16;
     };
     let narrationY = startNarrationPage();
     narratedRows.forEach(({ installment }) => {
       if (narrationY + 28 > contentBottom) narrationY = startNarrationPage(true);
       const line = `Month ${installment.installmentNumber}: ${text(installment.notes)}`;
-      doc.fillColor('#5e554d').font('Helvetica').fontSize(8.5).text(line, page.left, narrationY, { width: page.width, height: 28, ellipsis: true });
+      doc.fillColor('#111').font('Helvetica').fontSize(8.5).text(line, page.left, narrationY, { width: page.width, height: 28, ellipsis: true });
       narrationY += 28;
     });
   }
-  drawSignatureFooter(doc, settings, 'Please retain this consolidated receipt with the customer scheme records.');
+  drawSignatureFooter(doc, settings, 'Please retain this consolidated receipt with the customer scheme records.', qr);
   doc.end();
 }
 

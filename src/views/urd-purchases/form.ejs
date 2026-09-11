@@ -9,8 +9,10 @@
   <section class="form-section"><h2>Purchase details</h2><div class="form-grid four">
     <label>URD No.<input name="purchaseNumber" readonly value="<%= typeof purchaseNumber !== 'undefined' ? purchaseNumber : '' %>" placeholder="Assigned when saved"></label>
     <label>Date *<input name="purchaseDate" type="date" required value="<%= dateInput() %>"></label>
-    <label>Customer search *<input id="urdCustomerSearch" type="search" autocomplete="off" placeholder="Search name or mobile number…"></label>
-    <label>Customer *<select name="customerId" id="urdCustomer" required><option value="">Search and select customer</option><% customers.forEach(c => { %><option value="<%= c.id %>"><%= c.name %><%= c.phone ? ` · ${c.phone}` : '' %></option><% }); %></select></label>
+    <label>Customer name *<input name="customerName" id="urdCustomerName" data-urd-customer-name autocomplete="off" required placeholder="Search or enter customer"></label>
+    <label>Mobile number<input name="customerPhone" id="urdCustomerPhone" inputmode="numeric" maxlength="15" placeholder="Optional"></label>
+    <label>Find existing customer<input id="urdCustomerSearch" type="search" autocomplete="off" placeholder="Search by name or mobile…"></label>
+    <label>Existing customer<select name="customerId" id="urdCustomer"><option value="">New customer / choose from search</option><% customers.forEach(c => { %><option value="<%= c.id %>" data-customer-name="<%= c.name %>" data-customer-phone="<%= c.phone || '' %>" data-customer-address="<%= c.address || '' %>" data-customer-pan="<%= c.panNumber || '' %>"><%= c.name %><%= c.phone ? ` · ${c.phone}` : '' %></option><% }); %></select></label>
     <label>Metal *<select name="metal" data-urd-metal><option value="GOLD" selected>Gold</option><option value="SILVER">Silver</option><option value="PLATINUM">Platinum</option><option value="OTHER">Other</option></select></label>
   </div></section>
   <section class="form-section"><h2>Weight &amp; rate</h2><div class="form-grid four">
@@ -46,11 +48,57 @@
   }
   grossInput.addEventListener('input', () => { netInput.value = grossInput.value; recalc(); }); netInput.addEventListener('input', recalc); rateInput.addEventListener('input', recalc); paidInput.addEventListener('input', () => { payoutEdited = true; }); purityInput?.addEventListener('input', updateRate); metalSel.addEventListener('change', updateRate); updateRate();
 
+  const customerName = document.getElementById('urdCustomerName');
+  const customerPhone = document.getElementById('urdCustomerPhone');
   const customerSearch = document.getElementById('urdCustomerSearch');
   const customerSelect = document.getElementById('urdCustomer');
-  let customerTimer, customerController;
+  let customerTimer, customerController, phoneTimer, phoneController;
+  function applyCustomer(customer) {
+    if (!customer) return;
+    customerName.value = customer.name || '';
+    customerPhone.value = customer.phone || '';
+    customerSelect.value = String(customer.id || '');
+    if (customerSelect.value !== String(customer.id || '')) {
+      const option = document.createElement('option');
+      option.value = String(customer.id); option.textContent = `${customer.name}${customer.phone ? ` · ${customer.phone}` : ''}`;
+      customerSelect.appendChild(option); customerSelect.value = option.value;
+    }
+  }
+  async function lookupCustomerByPhone() {
+    const phone = String(customerPhone?.value || '').replace(/\D/g, '').slice(0, 15);
+    if (customerPhone) customerPhone.value = phone;
+    if (!phone || phone.length < 10) { if (customerSelect) customerSelect.value = ''; return; }
+    phoneController?.abort(); phoneController = new AbortController();
+    try {
+      const response = await fetch('/api/customers/phone/' + encodeURIComponent(phone), { signal: phoneController.signal });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not look up this customer.');
+      if (data.found) applyCustomer(data.customer); else if (customerSelect) customerSelect.value = '';
+    } catch (error) { if (error.name !== 'AbortError' && customerSelect) customerSelect.value = ''; }
+  }
+  customerPhone?.addEventListener('input', () => {
+    if (customerSelect) customerSelect.value = '';
+    clearTimeout(phoneTimer);
+    const digits = String(customerPhone.value || '').replace(/\D/g, '');
+    if (digits.length >= 10) phoneTimer = setTimeout(lookupCustomerByPhone, 300);
+  });
+  customerPhone?.addEventListener('blur', lookupCustomerByPhone);
+  customerPhone?.addEventListener('keydown', async (event) => {
+    if (event.key !== 'Enter' || event.isComposing) return;
+    event.preventDefault(); clearTimeout(phoneTimer); await lookupCustomerByPhone(); customerName?.focus();
+  });
+  customerName?.addEventListener('input', () => { if (customerSelect) customerSelect.value = ''; });
+  customerSelect?.addEventListener('change', () => {
+    const option = customerSelect.selectedOptions[0];
+    if (!option) return;
+    if (option.dataset.customer) {
+      try { applyCustomer(JSON.parse(option.dataset.customer)); } catch (_) { /* the selected id is still submitted */ }
+    } else if (option.dataset.customerName) {
+      applyCustomer({ id: option.value, name: option.dataset.customerName, phone: option.dataset.customerPhone, address: option.dataset.customerAddress, panNumber: option.dataset.customerPan });
+    }
+  });
   if (customerSearch && customerSelect) {
-    const blankOption = () => { const option = document.createElement('option'); option.value = ''; option.textContent = 'Search and select customer'; return option; };
+    const blankOption = () => { const option = document.createElement('option'); option.value = ''; option.textContent = 'New customer / choose from search'; return option; };
     customerSearch.addEventListener('input', () => {
       clearTimeout(customerTimer);
       const query = customerSearch.value.trim();
@@ -61,9 +109,9 @@
           const response = await fetch(`/api/customers/search?q=${encodeURIComponent(query)}`, { signal: customerController.signal });
           const data = await response.json();
           if (!response.ok) throw new Error(data.error || 'Could not search customers.');
-          const options = (data.customers || []).map((customer) => { const option = document.createElement('option'); option.value = String(customer.id); option.textContent = `${customer.name}${customer.phone ? ` · ${customer.phone}` : ''}`; return option; });
+          const options = (data.customers || []).map((customer) => { const option = document.createElement('option'); option.value = String(customer.id); option.textContent = `${customer.name}${customer.phone ? ` · ${customer.phone}` : ''}`; option.dataset.customer = JSON.stringify(customer); return option; });
           customerSelect.replaceChildren(blankOption(), ...options);
-          if (options.length === 1) customerSelect.value = options[0].value;
+          if (options.length === 1) { customerSelect.value = options[0].value; applyCustomer(JSON.parse(options[0].dataset.customer)); }
         } catch (error) { if (error.name !== 'AbortError') customerSelect.replaceChildren(blankOption()); }
       }, 180);
     });

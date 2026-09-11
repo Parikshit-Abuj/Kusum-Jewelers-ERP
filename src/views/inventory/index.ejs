@@ -11,6 +11,7 @@
     </details>
     <a class="button secondary" href="/inventory/new">+ Add single item</a>
     <button type="button" class="button" data-open-batch-modal>+ Batch Add Pieces</button>
+    <button type="button" class="button danger" data-open-batch-remove>− Batch Remove Pieces</button>
   </div>
 </header>
 <form id="label-test-form" method="post" action="/labels/test-print"></form>
@@ -54,6 +55,7 @@
 </section>
 
 <%- include('_batch_modal') %>
+<%- include('_batch_remove_modal') %>
 
 <div class="modal-overlay printer-setup-modal" id="printerSetupModal" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="printerSetupModalTitle" aria-hidden="true">
   <section class="modal-card" role="document">

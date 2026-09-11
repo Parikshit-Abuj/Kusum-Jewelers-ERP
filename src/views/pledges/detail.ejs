@@ -1,7 +1,7 @@
-<% const payoutMethod = loan.cashbookEntries?.[0]?.paymentMethod || 'CASH'; %>
+<% const payoutMethod = loan.cashbookEntries?.[0]?.paymentMethod || 'CASH'; const pledgePhoneDigits = String(loan.customer?.phone || '').replace(/\D/g, ''); const pledgeWaText = encodeURIComponent(`Namaste ${loan.customer?.name || 'Customer'},\n\nYour pledge loan ${loan.pledgeNumber} has been recorded. Please contact us for any repayment or release questions.`); %>
 <header class="page-header">
   <div><p class="eyebrow">Customer collateral</p><h1><%= loan.pledgeNumber %></h1><p class="muted"><a href="/customers/<%= loan.customer.id %>"><%= loan.customer.name %></a> · pledged <%= formatDateDisplay(loan.pledgeDate) %></p></div>
-  <div class="header-actions"><a class="button ghost" href="/pledges">All pledge loans</a><a class="button ghost" href="/pledges/<%= loan.id %>/invoice.pdf" target="_blank" rel="noopener">PDF receipt</a><% if (loan.status === 'ACTIVE') { %><button class="button ghost" type="button" data-pledge-edit-open>Edit details</button><button class="button" type="button" data-pledge-payment-open>+ Record repayment</button><% } %></div>
+  <div class="header-actions"><a class="button ghost" href="/pledges">All pledge loans</a><a class="button ghost" href="/pledges/<%= loan.id %>/invoice.pdf" target="_blank" rel="noopener">PDF receipt</a><% if (pledgePhoneDigits.length >= 10) { %><a class="button whatsapp-btn" href="whatsapp://send?phone=91<%= pledgePhoneDigits.slice(-10) %>&text=<%= pledgeWaText %>" title="Open WhatsApp Desktop chat">WhatsApp</a><% } %><% if (loan.status === 'ACTIVE') { %><button class="button ghost" type="button" data-pledge-edit-open>Edit details</button><button class="button" type="button" data-pledge-payment-open>+ Record repayment</button><% } %></div>
 </header>
 
 <section class="cashbook-summary" aria-label="Pledge balance">

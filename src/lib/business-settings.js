@@ -1,7 +1,7 @@
 const DEFAULT_BUSINESS_SETTINGS = Object.freeze({
   id: 1,
   shopName: 'Kusum Jewellers',
-  shopAddress: '',
+  shopAddress: 'Vithal Bhagwan Complex, Beed Road, Majalgaon, Maharashtra, 431131',
   gstin: '27ABDFK0780F1ZG',
   panNumber: '',
   primaryPhone: '9970737444',

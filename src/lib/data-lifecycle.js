@@ -730,8 +730,8 @@ async function getExportPayload(db, key, range, options = {}) {
     // ────────────────────────────────────────────────────────────
     case 'inventory': {
       // An Inventory export is a live stock register, never a historical
-      // movement report. Sold barcode rows are deleted on billing, and a
-      // manually zeroed item is marked SOLD_OUT; neither may reappear here.
+      // movement report. Sold barcode rows are deleted on billing, and zero-
+      // quantity or otherwise unavailable legacy rows must never reappear here.
       // Historical sold details remain available through Sales and Stock
       // movements exports instead.
       const products = await db.product.findMany({
@@ -853,18 +853,24 @@ async function getExportPayload(db, key, range, options = {}) {
         take: MAX_SOURCE_ROWS + 1
       });
       assertExportRows(movements, 'Stock movement register');
-      const rows = movements.map((m) => ({
-        createdAt: exportDate(m.createdAt),
-        type: enumLabel(m.type),
-        barcode: m.product?.barcode || m.productBarcode || '',
-        sku: m.product?.sku || m.productSku || '',
-        itemName: m.product?.name || m.productName || 'Deleted inventory item',
-        metal: enumLabel(m.product?.metal || m.productMetal),
-        purity: m.product?.purity || m.productPurity || '',
-        quantity: m.quantity,
-        netWeight: num(m.product?.netWeight ?? m.netWeight),
-        note: str(m.note)
-      }));
+      const rows = movements.map((m) => {
+        // An available product is the current inventory record, so reflect
+        // edits such as Ring -> Chain. Once it is sold/deleted, Product is no
+        // longer available and the movement snapshot is the source of truth.
+        const currentProduct = Number(m.product?.quantity || 0) > 0 ? m.product : null;
+        return {
+          createdAt: exportDate(m.createdAt),
+          type: enumLabel(m.type),
+          barcode: currentProduct?.barcode || m.productBarcode || '',
+          sku: currentProduct?.sku || m.productSku || '',
+          itemName: currentProduct?.name || m.productName || 'Deleted inventory item',
+          metal: enumLabel(currentProduct?.metal || m.productMetal),
+          purity: currentProduct?.purity || m.productPurity || '',
+          quantity: m.quantity,
+          netWeight: num(currentProduct?.netWeight ?? m.netWeight),
+          note: str(m.note)
+        };
+      });
 
       const allColumns = [
         col.date('createdAt', 'Movement date'),
@@ -919,9 +925,10 @@ async function getExportPayload(db, key, range, options = {}) {
       assertExportRows(customers, 'Customer directory');
       const customerBalances = customers.length ? await db.customerLedger.groupBy({
         by: ['customerId'],
-        // Directory balances must be reproducible for the selected period;
-        // do not include ledger entries created after the export's end date.
-        where: { customerId: { in: customers.map((customer) => customer.id) }, createdAt: { lte: dateTimeRange(range).lte } },
+        // Directory balances must follow the accounting date entered for each
+        // bill/receipt.  Using createdAt would hide a backdated transaction
+        // until the save timestamp entered the selected reporting period.
+        where: { customerId: { in: customers.map((customer) => customer.id) }, entryDate: { lte: range.to } },
         _sum: { amount: true }
       }) : [];
       const balanceByCustomer = new Map(customerBalances.map((entry) => [entry.customerId, num(entry._sum.amount)]));
@@ -1041,10 +1048,9 @@ async function getExportPayload(db, key, range, options = {}) {
     //  CUSTOMER LEDGER
     // ────────────────────────────────────────────────────────────
     case 'customer-ledger': {
-      const period = dateTimeRange(range);
       const entries = await db.customerLedger.findMany({
-        where: { createdAt: period },
-        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        where: { entryDate: { gte: range.from, lte: range.to } },
+        orderBy: [{ entryDate: 'asc' }, { id: 'asc' }],
         include: { customer: true, sale: true },
         take: MAX_SOURCE_ROWS + 1
       });
@@ -1052,7 +1058,7 @@ async function getExportPayload(db, key, range, options = {}) {
       const customerIds = [...new Set(entries.map((entry) => entry.customerId))];
       const openingRows = customerIds.length ? await db.customerLedger.groupBy({
         by: ['customerId'],
-        where: { customerId: { in: customerIds }, createdAt: { lt: period.gte } },
+        where: { customerId: { in: customerIds }, entryDate: { lt: range.from } },
         _sum: { amount: true }
       }) : [];
       const openingBalances = new Map(openingRows.map((row) => [row.customerId, num(row._sum.amount)]));
@@ -1064,7 +1070,7 @@ async function getExportPayload(db, key, range, options = {}) {
         customerBalances.set(e.customerId, runningBalance);
         return {
           srNo: index + 1,
-          date: exportDate(e.createdAt),
+          date: e.entryDate,
           customerName: e.customer?.name || 'Unknown customer',
           customerPhone: e.customer?.phone || '',
           due: runningBalance

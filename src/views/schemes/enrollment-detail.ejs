@@ -1,6 +1,8 @@
 <%
   const plan = enrollment.schemePlan;
   const cust = enrollment.customer;
+  const schemePhoneDigits = String(cust?.phone || '').replace(/\D/g, '');
+  const schemeWaText = encodeURIComponent(`Namaste ${cust?.name || 'Customer'},\n\nThis is regarding your ${plan.name} savings scheme.`);
   const installments = enrollment.installments || [];
   const payableInstallments = installments.filter((installment) => installment.status === 'PENDING');
   const paidCount = installments.filter(i => i.status === 'PAID').length;
@@ -26,6 +28,7 @@
     <a class="button ghost" href="<%= backTo %>">← Back to <%= plan.name %></a>
     <a class="button ghost" href="/schemes">All Schemes</a>
     <a class="button ghost" href="/schemes/enrollments/<%= enrollment.id %>/receipt.pdf" target="_blank" rel="noopener">Consolidated receipt</a>
+    <% if (schemePhoneDigits.length >= 10) { %><a class="button whatsapp-btn" href="whatsapp://send?phone=91<%= schemePhoneDigits.slice(-10) %>&text=<%= schemeWaText %>" title="Open WhatsApp Desktop chat">WhatsApp</a><% } %>
   </div>
 </header>
 

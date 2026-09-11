@@ -79,10 +79,13 @@ function startOfToday() {
 }
 
 function dateTimeFromInput(value) {
-  const input = String(value || '').trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(input)) return new Date(value || Date.now());
+  const input = String(value ?? '').trim();
+  // All ERP forms submit a date-only value. Do not let JavaScript's permissive
+  // Date parser accept ambiguous strings (or impossible dates) into financial
+  // records; invalid input must be rejected before a write is attempted.
+  if (input && !/^\d{4}-\d{2}-\d{2}$/.test(input)) throw new Error('Choose a valid date.');
   const now = new Date();
-  const date = localDateBoundary(input);
+  const date = input ? localDateBoundary(input) : new Date(now.getFullYear(), now.getMonth(), now.getDate());
   date.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
   return date;
 }
@@ -244,4 +247,3 @@ module.exports = {
   money, grams, formatDateDisplay, nextDocumentNumber, nextBatchDocumentNumber, barcodePrefix,
   metalRateFromDailyRate, makingAmount
 };
-

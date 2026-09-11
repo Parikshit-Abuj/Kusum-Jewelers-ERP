@@ -23,6 +23,25 @@ if (Test-Path -LiteralPath $outputPath) {
 $packager = Join-Path $projectRoot 'node_modules\@electron\packager\bin\electron-packager.mjs'
 if (-not (Test-Path -LiteralPath $packager)) { throw 'Electron Packager is missing. Run npm install first.' }
 
+# Every migration directory is part of the production schema. Fail before
+# packaging if one is incomplete so the migration runner cannot silently skip
+# a required table on the shop PC.
+$sourceMigrationsPath = Join-Path $projectRoot 'prisma\migrations'
+if (-not (Test-Path -LiteralPath $sourceMigrationsPath -PathType Container)) {
+  throw 'Unsafe build: the source prisma\migrations directory is missing.'
+}
+$sourceMigrationDirectories = @(Get-ChildItem -LiteralPath $sourceMigrationsPath -Directory -Force | Sort-Object Name)
+if ($sourceMigrationDirectories.Count -eq 0) { throw 'Unsafe build: no database migrations are present.' }
+foreach ($migrationDirectory in $sourceMigrationDirectories) {
+  $migrationSqlPath = Join-Path $migrationDirectory.FullName 'migration.sql'
+  if (-not (Test-Path -LiteralPath $migrationSqlPath -PathType Leaf)) {
+    throw "Unsafe build: migration $($migrationDirectory.Name) is missing migration.sql."
+  }
+  if ((Get-Item -LiteralPath $migrationSqlPath).Length -eq 0) {
+    throw "Unsafe build: migration $($migrationDirectory.Name) has an empty migration.sql."
+  }
+}
+
 # electron-packager normally downloads Electron again. Create its expected ZIP
 # from the already installed runtime so an offline release build remains possible.
 $electronDist = Join-Path $projectRoot 'node_modules\electron\dist'
@@ -71,6 +90,21 @@ if ($LASTEXITCODE -ne 0) { throw 'Could not package the Electron desktop ERP.' }
 $applicationDirectory = Join-Path $outputPath 'Kusum ERP-win32-x64'
 $desktopExe = Join-Path $applicationDirectory 'Kusum ERP.exe'
 if (-not (Test-Path -LiteralPath $desktopExe)) { throw 'The portable ERP executable was not created.' }
+
+$packagedMigrationsPath = Join-Path $applicationDirectory 'resources\app\prisma\migrations'
+if (-not (Test-Path -LiteralPath $packagedMigrationsPath -PathType Container)) {
+  throw 'Unsafe build: the packaged prisma\migrations directory is missing.'
+}
+foreach ($migrationDirectory in $sourceMigrationDirectories) {
+  $packagedMigrationDirectory = Join-Path $packagedMigrationsPath $migrationDirectory.Name
+  $packagedMigrationSqlPath = Join-Path $packagedMigrationDirectory 'migration.sql'
+  if (-not (Test-Path -LiteralPath $packagedMigrationSqlPath -PathType Leaf)) {
+    throw "Unsafe build: packaged migration $($migrationDirectory.Name) is missing migration.sql."
+  }
+  if ((Get-Item -LiteralPath $packagedMigrationSqlPath).Length -eq 0) {
+    throw "Unsafe build: packaged migration $($migrationDirectory.Name) has an empty migration.sql."
+  }
+}
 
 $packagedScripts = Join-Path $applicationDirectory 'resources\app\scripts'
 if (-not (Test-Path -LiteralPath $packagedScripts)) { throw 'Unsafe build: the required runtime scripts directory is missing.' }

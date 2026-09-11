@@ -45,9 +45,37 @@
 (() => {
   const form = document.querySelector('[data-pledge-form]'); if (!form) return;
   const input = form.querySelector('[data-pledge-customer]');
+  const phoneInput = form.querySelector('[name=customerPhone]');
+  const addressInput = form.querySelector('[name=customerAddress]');
+  const panInput = form.querySelector('[name=customerPan]');
   const box = form.querySelector('[data-pledge-customer-suggestions]');
   const id = form.querySelector('[data-pledge-customer-id]');
-  let timer, controller;
+  let timer, controller, phoneTimer, phoneController;
+  function setCustomer(row) {
+    if (!row) return;
+    id.value = row.id || '';
+    input.value = row.name || '';
+    if (phoneInput) phoneInput.value = row.phone || '';
+    if (addressInput) addressInput.value = row.address || '';
+    if (panInput) panInput.value = row.panNumber || '';
+    box.hidden = true;
+  }
+
+  async function lookupByPhone() {
+    if (!phoneInput) return;
+    const phone = String(phoneInput.value || '').replace(/\D/g, '').slice(0, 15);
+    phoneInput.value = phone;
+    if (!phone || phone.length < 10) { id.value = ''; return; }
+    phoneController?.abort(); phoneController = new AbortController();
+    try {
+      const response = await fetch('/api/customers/phone/' + encodeURIComponent(phone), { signal: phoneController.signal });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not look up this customer.');
+      if (data.found) setCustomer(data.customer);
+      else id.value = '';
+    } catch (error) { if (error.name !== 'AbortError') id.value = ''; }
+  }
+
   input.addEventListener('input', () => {
     id.value = ''; clearTimeout(timer); const q = input.value.trim();
     if (q.length < 2) { box.hidden = true; return; }
@@ -59,12 +87,24 @@
         box.replaceChildren(...rows.map((row) => {
           const button = document.createElement('button'); button.type = 'button';
           button.textContent = `${row.name}${row.phone ? ' · ' + row.phone : ''}`;
-          button.addEventListener('click', () => { id.value = row.id; input.value = row.name; form.querySelector('[name=customerPhone]').value = row.phone || ''; box.hidden = true; });
+          button.addEventListener('click', () => setCustomer(row));
           return button;
         }));
         box.hidden = !rows.length;
       } catch (error) { if (error.name !== 'AbortError') box.hidden = true; }
     }, 220);
+  });
+
+  phoneInput?.addEventListener('input', () => {
+    id.value = '';
+    clearTimeout(phoneTimer);
+    const digits = String(phoneInput.value || '').replace(/\D/g, '');
+    if (digits.length >= 10) phoneTimer = setTimeout(lookupByPhone, 300);
+  });
+  phoneInput?.addEventListener('blur', lookupByPhone);
+  phoneInput?.addEventListener('keydown', async (event) => {
+    if (event.key !== 'Enter' || event.isComposing) return;
+    event.preventDefault(); clearTimeout(phoneTimer); await lookupByPhone(); input.focus();
   });
 })();
 </script>

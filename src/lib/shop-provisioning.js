@@ -23,6 +23,35 @@ function migrationChecksumMatches(migrationName, installedChecksum, bundledCheck
   return installed === bundled || LEGACY_MIGRATION_CHECKSUMS[migrationName]?.has(installed) === true;
 }
 
+function readBundledMigrations(appRoot) {
+  const migrationsPath = path.join(appRoot, 'prisma', 'migrations');
+  if (!fs.existsSync(migrationsPath) || !fs.statSync(migrationsPath).isDirectory()) {
+    throw new Error('ERP installation files are incomplete. The prisma/migrations directory is missing. Re-run the installer.');
+  }
+
+  const folders = fs.readdirSync(migrationsPath, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  if (!folders.length) throw new Error('ERP installation files are incomplete. No database migrations were bundled. Re-run the installer.');
+
+  return folders.map((migrationName) => {
+    const sqlPath = path.join(migrationsPath, migrationName, 'migration.sql');
+    if (!fs.existsSync(sqlPath) || !fs.statSync(sqlPath).isFile()) {
+      throw new Error(`ERP installation files are incomplete: migration ${migrationName} is missing migration.sql. Use an intact ERP release before opening the database.`);
+    }
+    const sql = fs.readFileSync(sqlPath, 'utf8');
+    if (!sql.trim()) {
+      throw new Error(`ERP installation files are incomplete: migration ${migrationName} has an empty migration.sql. Use an intact ERP release before opening the database.`);
+    }
+    return {
+      migrationName,
+      sql,
+      checksum: crypto.createHash('sha256').update(sql).digest('hex')
+    };
+  });
+}
+
 function input(value) {
   return String(value || '').trim();
 }
@@ -206,7 +235,7 @@ function printerFormValues(form) {
 
 const REQUIRED_RUNTIME_SCHEMA = {
   AppSession: ['id', 'data', 'expiresAt'],
-  BusinessSettings: ['id', 'shopName', 'invoicePrefix', 'financialYearStartMonth', 'defaultGstRate', 'defaultHsnCode', 'signatureImage', 'labelWidthMm', 'labelHeightMm'],
+  BusinessSettings: ['id', 'shopName', 'shopAddress', 'invoicePrefix', 'financialYearStartMonth', 'defaultGstRate', 'defaultHsnCode', 'signatureImage', 'labelWidthMm', 'labelHeightMm'],
   BarcodeSequence: ['prefix', 'lastNumber', 'updatedAt'],
   Customer: ['id', 'name', 'phone', 'panNumber', 'createdAt', 'updatedAt'],
   DailyRate: ['id', 'rateDate', 'gold22k', 'gold24k', 'silver'],
@@ -221,7 +250,7 @@ const REQUIRED_RUNTIME_SCHEMA = {
   SchemeInstallmentPayment: ['id', 'installmentId', 'cashbookEntryId', 'amount', 'paymentDate', 'paymentMethod'],
   StockMovement: ['id', 'productId', 'productBarcode', 'type', 'quantity', 'createdAt'],
   CashbookEntry: ['id', 'entryDate', 'paymentMethod', 'customerId', 'saleId', 'urdPurchaseId', 'syncLedger'],
-  CustomerLedger: ['id', 'customerId', 'saleId', 'cashbookEntryId', 'amount'],
+  CustomerLedger: ['id', 'customerId', 'saleId', 'cashbookEntryId', 'amount', 'entryDate'],
   UrdPurchase: ['id', 'purchaseNumber', 'customerId', 'saleId', 'saleOffset', 'paid', 'cancelledAt'],
   SyncRevision: ['id', 'revision']
 };
@@ -288,8 +317,7 @@ function connectionValues({ host, mysqlPort, database, username, password, appUs
 }
 
 async function runBundledMigrations(appRoot, databaseUrl) {
-  const migrationsPath = path.join(appRoot, 'prisma', 'migrations');
-  if (!fs.existsSync(migrationsPath)) throw new Error('ERP installation files are incomplete. Re-run the installer.');
+  const migrations = readBundledMigrations(appRoot);
 
   const connection = await mysql.createConnection({ uri: databaseUrl, multipleStatements: true, connectTimeout: 12000 });
   let migrationLockHeld = false;
@@ -316,15 +344,7 @@ async function runBundledMigrations(appRoot, databaseUrl) {
       PRIMARY KEY (\`id\`)
     ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
 
-    const folders = fs.readdirSync(migrationsPath, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .sort();
-    for (const migrationName of folders) {
-      const sqlPath = path.join(migrationsPath, migrationName, 'migration.sql');
-      if (!fs.existsSync(sqlPath)) continue;
-      const sql = fs.readFileSync(sqlPath, 'utf8');
-      const checksum = crypto.createHash('sha256').update(sql).digest('hex');
+    for (const { migrationName, sql, checksum } of migrations) {
       const [applied] = await connection.query(
         'SELECT `id`, `checksum`, `finished_at`, `rolled_back_at` FROM `_prisma_migrations` WHERE `migration_name` = ? ORDER BY `started_at` DESC',
         [migrationName]
@@ -418,6 +438,9 @@ async function grantDatabaseAccess(connection, { database, username, password, i
 async function verifyClientConnection(databaseUrl, appRoot) {
   let connection;
   try {
+    const bundled = appRoot
+      ? readBundledMigrations(appRoot).map(({ migrationName, checksum }) => ({ name: migrationName, checksum }))
+      : null;
     connection = await mysql.createConnection({ uri: databaseUrl, connectTimeout: 12000 });
     const requiredTables = ['_prisma_migrations', ...Object.keys(REQUIRED_RUNTIME_SCHEMA)];
     const [tables] = await connection.query(
@@ -428,20 +451,7 @@ async function verifyClientConnection(databaseUrl, appRoot) {
     const missing = requiredTables.filter((table) => !found.has(table.toLowerCase()));
     if (missing.length) throw new Error(`The selected database is not fully initialized (${missing.join(', ')} missing). Complete or update Main database PC setup first.`);
     await verifyRuntimeSchema(connection);
-    if (appRoot) {
-      const migrationsPath = path.join(appRoot, 'prisma', 'migrations');
-      const bundled = fs.readdirSync(migrationsPath, { withFileTypes: true })
-        .filter((entry) => entry.isDirectory())
-        // A Prisma migration is its migration.sql file. Ignore an empty
-        // directory left behind by an abandoned local experiment; the main
-        // migration runner uses the same definition so server and client
-        // validation cannot disagree.
-        .filter((entry) => fs.existsSync(path.join(migrationsPath, entry.name, 'migration.sql')))
-        .map((entry) => {
-          const sql = fs.readFileSync(path.join(migrationsPath, entry.name, 'migration.sql'), 'utf8');
-          return { name: entry.name, checksum: crypto.createHash('sha256').update(sql).digest('hex') };
-        })
-        .sort((left, right) => left.name.localeCompare(right.name));
+    if (bundled) {
       const [installed] = await connection.query(
         'SELECT `migration_name`, `checksum` FROM `_prisma_migrations` WHERE `finished_at` IS NOT NULL AND `rolled_back_at` IS NULL'
       );

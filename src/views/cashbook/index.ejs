@@ -13,7 +13,7 @@
   const fDate = typeof fromDate !== 'undefined' ? fromDate : dateInput();
   const tDate = typeof toDate !== 'undefined' ? toDate : dateInput();
   const mFilter = typeof methodFilter !== 'undefined' ? methodFilter : '';
-  const s = typeof summary !== 'undefined' && summary ? summary : { totalIn: 0, cashIn: 0, upiIn: 0, bankIn: 0, totalOut: 0, cashOut: 0, upiOut: 0, bankOut: 0, netBalance: 0 };
+  const s = typeof summary !== 'undefined' && summary ? summary : { totalIn: 0, cashIn: 0, upiIn: 0, cardIn: 0, bankIn: 0, totalOut: 0, cashOut: 0, upiOut: 0, cardOut: 0, bankOut: 0, netBalance: 0 };
 %>
 
 <!-- Summary cards -->
@@ -21,17 +21,22 @@
   <article class="stat-card accent-gold">
     <span class="stat-label">Total in</span>
     <strong class="stat-positive"><%- money(s.totalIn) %></strong>
-    <p>Cash <%- money(s.cashIn) %> &nbsp;·&nbsp; UPI <%- money(s.upiIn) %> &nbsp;·&nbsp; Bank <%- money(s.bankIn) %></p>
+    <p>Cash <%- money(s.cashIn) %> &nbsp;·&nbsp; UPI <%- money(s.upiIn) %> &nbsp;·&nbsp; Card <%- money(s.cardIn) %> &nbsp;·&nbsp; Bank <%- money(s.bankIn) %></p>
   </article>
   <article class="stat-card">
     <span class="stat-label">Total out</span>
     <strong class="stat-negative"><%- money(s.totalOut) %></strong>
-    <p>Cash <%- money(s.cashOut) %> &nbsp;·&nbsp; UPI <%- money(s.upiOut) %> &nbsp;·&nbsp; Bank <%- money(s.bankOut) %></p>
+    <p>Cash <%- money(s.cashOut) %> &nbsp;·&nbsp; UPI <%- money(s.upiOut) %> &nbsp;·&nbsp; Card <%- money(s.cardOut) %> &nbsp;·&nbsp; Bank <%- money(s.bankOut) %></p>
   </article>
   <article class="stat-card <%= s.netBalance >= 0 ? 'accent-gold' : '' %>">
     <span class="stat-label">Net balance</span>
     <strong class="<%= s.netBalance >= 0 ? 'stat-positive' : 'stat-negative' %>"><%- money(s.netBalance) %></strong>
-    <p>Cash <%- money(s.cashNet !== undefined ? s.cashNet : (s.cashIn - s.cashOut)) %> &nbsp;·&nbsp; UPI <%- money(s.upiNet !== undefined ? s.upiNet : (s.upiIn - s.upiOut)) %> &nbsp;·&nbsp; Bank <%- money(s.bankNet !== undefined ? s.bankNet : (s.bankIn - s.bankOut)) %></p>
+    <p>Cash <%- money(s.cashNet !== undefined ? s.cashNet : (s.cashIn - s.cashOut)) %> &nbsp;·&nbsp; UPI <%- money(s.upiNet !== undefined ? s.upiNet : (s.upiIn - s.upiOut)) %> &nbsp;·&nbsp; Card <%- money(s.cardNet !== undefined ? s.cardNet : (s.cardIn - s.cardOut)) %> &nbsp;·&nbsp; Bank <%- money(s.bankNet !== undefined ? s.bankNet : (s.bankIn - s.bankOut)) %></p>
+  </article>
+  <article class="stat-card cashbook-card-summary">
+    <span class="stat-label">Card</span>
+    <strong class="<%= (s.cardNet !== undefined ? s.cardNet : (s.cardIn - s.cardOut)) >= 0 ? 'stat-positive' : 'stat-negative' %>"><%- money(s.cardNet !== undefined ? s.cardNet : (s.cardIn - s.cardOut)) %></strong>
+    <p>In <%- money(s.cardIn) %> &nbsp;·&nbsp; Out <%- money(s.cardOut) %></p>
   </article>
 </div>
 

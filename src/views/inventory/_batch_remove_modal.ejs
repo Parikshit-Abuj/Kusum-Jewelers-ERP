@@ -1,0 +1,68 @@
+<!-- Fast batch inventory piece removal modal -->
+<div class="modal-overlay" id="batchRemoveModal" style="display:none;" aria-hidden="true">
+  <section class="modal-card batch-remove-modal-card" role="dialog" aria-modal="true" aria-labelledby="batchRemoveTitle">
+    <header class="modal-header">
+      <div>
+        <p class="eyebrow">Inventory cleanup</p>
+        <h2 id="batchRemoveTitle">Batch Remove Pieces</h2>
+        <p>Choose unsold pieces to remove from inventory. Barcodes are never reused.</p>
+      </div>
+      <button type="button" class="modal-close-btn" data-batch-remove-close aria-label="Close batch remove">✕</button>
+    </header>
+
+    <div class="modal-body batch-remove-body">
+      <form id="batchRemoveFilterForm" class="batch-remove-filter-form" role="search">
+        <label>Item name
+          <input id="batchRemoveItemName" type="search" autocomplete="off" placeholder="Ring, chain, payal…">
+        </label>
+        <label>Barcode
+          <input id="batchRemoveBarcode" type="search" autocomplete="off" placeholder="G 1 or S A">
+        </label>
+        <label>Batch document
+          <input id="batchRemoveBatchDoc" type="search" autocomplete="off" placeholder="BATCH-…">
+        </label>
+        <label>Weight (g)
+          <input id="batchRemoveWeight" type="number" min="0" step="0.001" placeholder="18.250">
+        </label>
+        <button class="button secondary small" type="submit">Search</button>
+        <button class="button ghost small" type="button" id="batchRemoveClearFilters">Clear</button>
+      </form>
+
+      <div class="batch-remove-selection-bar">
+        <label class="batch-remove-select-all"><input type="checkbox" id="batchRemoveSelectAll"> Select all on this page</label>
+        <strong id="batchRemoveSelectedCount">0 selected</strong>
+      </div>
+
+      <div class="table-wrap batch-remove-table-wrap">
+        <table class="inventory-table">
+          <thead>
+            <tr>
+              <th class="label-select"><span class="sr-only">Select</span></th>
+              <th>Barcode / item</th>
+              <th>Metal / purity</th>
+              <th class="right">Net wt.</th>
+              <th>Batch document</th>
+            </tr>
+          </thead>
+          <tbody id="batchRemoveItemsTbody">
+            <tr><td colspan="5" class="center muted" style="padding:28px;">Open the remover to load available pieces.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="batch-remove-pagination" id="batchRemovePagination" hidden>
+        <button type="button" class="button ghost small" id="batchRemovePrevBtn" disabled>← Previous</button>
+        <span id="batchRemovePageLabel" class="muted" aria-live="polite">Page 1</span>
+        <button type="button" class="button ghost small" id="batchRemoveNextBtn" disabled>Next →</button>
+      </div>
+    </div>
+
+    <footer class="modal-footer batch-remove-footer">
+      <span id="batchRemoveFeedback" class="batch-remove-feedback" role="status" aria-live="polite"></span>
+      <div>
+        <button type="button" class="button ghost" data-batch-remove-close>Cancel</button>
+        <button type="button" class="button danger" id="batchRemoveConfirmBtn" disabled>Remove selected</button>
+      </div>
+    </footer>
+  </section>
+</div>

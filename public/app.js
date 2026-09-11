@@ -2854,6 +2854,202 @@ function updateInventoryLabelBatchState() {
   });
 })();
 
+/* ═══════════════════════════════════════════════════════════════
+   9. FAST BATCH INVENTORY PIECE REMOVER
+   ═══════════════════════════════════════════════════════════════ */
+(function initBatchRemoveInventoryModal() {
+  const modal = document.getElementById('batchRemoveModal');
+  if (!modal) return;
+
+  const itemNameInput = document.getElementById('batchRemoveItemName');
+  const barcodeInput = document.getElementById('batchRemoveBarcode');
+  const batchDocInput = document.getElementById('batchRemoveBatchDoc');
+  const weightInput = document.getElementById('batchRemoveWeight');
+  const filterForm = document.getElementById('batchRemoveFilterForm');
+  const clearFiltersBtn = document.getElementById('batchRemoveClearFilters');
+  const tbody = document.getElementById('batchRemoveItemsTbody');
+  const selectAll = document.getElementById('batchRemoveSelectAll');
+  const selectedCountEl = document.getElementById('batchRemoveSelectedCount');
+  const confirmBtn = document.getElementById('batchRemoveConfirmBtn');
+  const feedbackEl = document.getElementById('batchRemoveFeedback');
+  const pagination = document.getElementById('batchRemovePagination');
+  const prevBtn = document.getElementById('batchRemovePrevBtn');
+  const nextBtn = document.getElementById('batchRemoveNextBtn');
+  const pageLabel = document.getElementById('batchRemovePageLabel');
+  const selectedIds = new Set();
+  let currentItems = [];
+  let page = 1;
+  let loading = false;
+  let removedAny = false;
+
+  function setFeedback(message, isError = false) {
+    if (!feedbackEl) return;
+    feedbackEl.textContent = message || '';
+    feedbackEl.classList.toggle('is-error', isError);
+  }
+
+  function formatWeight(value) {
+    return `${Number(value || 0).toLocaleString('en-IN', { minimumFractionDigits: 3, maximumFractionDigits: 3 })} g`;
+  }
+
+  function updateSelectionUi() {
+    const selectedOnPage = currentItems.filter((item) => selectedIds.has(item.id)).length;
+    const selectedTotal = selectedIds.size;
+    if (selectedCountEl) selectedCountEl.textContent = `${selectedTotal} selected`;
+    if (confirmBtn) confirmBtn.disabled = selectedTotal === 0 || loading;
+    if (selectAll) {
+      selectAll.checked = currentItems.length > 0 && selectedOnPage === currentItems.length;
+      selectAll.indeterminate = selectedOnPage > 0 && selectedOnPage < currentItems.length;
+    }
+  }
+
+  function renderItems() {
+    if (!tbody) return;
+    if (!currentItems.length) {
+      tbody.innerHTML = '<tr><td colspan="5" class="center muted" style="padding:28px;">No available pieces match these filters.</td></tr>';
+      updateSelectionUi();
+      return;
+    }
+    tbody.innerHTML = currentItems.map((item) => `
+      <tr>
+        <td class="label-select"><input type="checkbox" data-batch-remove-item value="${item.id}" ${selectedIds.has(item.id) ? 'checked' : ''} aria-label="Select ${escapeHtml(item.barcode || item.name)}"></td>
+        <td><strong class="barcode-label">${escapeHtml(item.barcode || 'No barcode')}</strong><small>${escapeHtml(item.name || 'Jewellery item')}${item.category ? ` · ${escapeHtml(item.category)}` : ''}</small></td>
+        <td><span class="metal-dot ${escapeHtml(String(item.metal || '').toLowerCase())}"></span>${escapeHtml(item.metal || '—')}<small>${escapeHtml(item.purity || '—')}</small></td>
+        <td class="right"><strong>${formatWeight(item.netWeight)}</strong></td>
+        <td>${escapeHtml(item.batchDocNo || '—')}</td>
+      </tr>
+    `).join('');
+    tbody.querySelectorAll('[data-batch-remove-item]').forEach((checkbox) => {
+      checkbox.addEventListener('change', () => {
+        const id = Number(checkbox.value);
+        if (checkbox.checked) selectedIds.add(id);
+        else selectedIds.delete(id);
+        updateSelectionUi();
+      });
+    });
+    updateSelectionUi();
+  }
+
+  async function fetchItems({ clearSelection = false } = {}) {
+    if (loading || !tbody) return;
+    loading = true;
+    if (clearSelection) selectedIds.clear();
+    updateSelectionUi();
+    tbody.innerHTML = '<tr><td colspan="5" class="center muted" style="padding:28px;">Loading available pieces…</td></tr>';
+    try {
+      const params = new URLSearchParams({ page: String(page) });
+      if (itemNameInput?.value.trim()) params.set('itemName', itemNameInput.value.trim());
+      if (barcodeInput?.value.trim()) params.set('barcode', barcodeInput.value.trim());
+      if (batchDocInput?.value.trim()) params.set('batchDocNo', batchDocInput.value.trim());
+      if (weightInput?.value) params.set('weight', weightInput.value);
+      const response = await fetch(`/api/inventory/batch-remove?${params.toString()}`);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Could not load inventory pieces.');
+      page = Number(data.page) || page;
+      currentItems = Array.isArray(data.items) ? data.items : [];
+      if (pagination) pagination.hidden = false;
+      if (pageLabel) pageLabel.textContent = `Page ${page}`;
+      if (prevBtn) prevBtn.disabled = !data.hasPrevious;
+      if (nextBtn) nextBtn.disabled = !data.hasNext;
+      renderItems();
+      setFeedback('');
+    } catch (error) {
+      currentItems = [];
+      if (pagination) pagination.hidden = true;
+      tbody.innerHTML = `<tr><td colspan="5" class="center text-danger" style="padding:20px;">${escapeHtml(error.message || 'Could not load inventory pieces.')}</td></tr>`;
+      setFeedback(error.message || 'Could not load inventory pieces.', true);
+    } finally {
+      loading = false;
+      updateSelectionUi();
+    }
+  }
+
+  function openModal() {
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    page = 1;
+    currentItems = [];
+    selectedIds.clear();
+    removedAny = false;
+    setFeedback('');
+    fetchItems({ clearSelection: true });
+    setTimeout(() => itemNameInput?.focus(), 50);
+  }
+
+  function closeModal() {
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+    if (removedAny) window.location.href = '/inventory';
+  }
+
+  document.addEventListener('click', (event) => {
+    if (event.target.closest('[data-open-batch-remove]')) openModal();
+    if (event.target.closest('[data-batch-remove-close]')) closeModal();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && modal.style.display === 'flex') closeModal();
+  });
+
+  filterForm?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    page = 1;
+    fetchItems({ clearSelection: true });
+  });
+  clearFiltersBtn?.addEventListener('click', () => {
+    [itemNameInput, barcodeInput, batchDocInput, weightInput].forEach((input) => { if (input) input.value = ''; });
+    page = 1;
+    fetchItems({ clearSelection: true });
+  });
+  prevBtn?.addEventListener('click', () => {
+    if (loading || page <= 1) return;
+    page -= 1;
+    fetchItems();
+  });
+  nextBtn?.addEventListener('click', () => {
+    if (loading || nextBtn.disabled) return;
+    page += 1;
+    fetchItems();
+  });
+  selectAll?.addEventListener('change', () => {
+    currentItems.forEach((item) => {
+      if (selectAll.checked) selectedIds.add(item.id);
+      else selectedIds.delete(item.id);
+    });
+    renderItems();
+  });
+
+  confirmBtn?.addEventListener('click', async () => {
+    const ids = Array.from(selectedIds);
+    if (!ids.length || loading) return;
+    if (!confirm(`Remove ${ids.length} selected piece${ids.length === 1 ? '' : 's'} from inventory? This cannot be undone, and their barcodes will never be reused.`)) return;
+    loading = true;
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Removing…';
+    try {
+      const response = await fetch('/api/inventory/batch-remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productIds: ids })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) throw new Error(data.error || 'Could not remove the selected pieces.');
+      selectedIds.clear();
+      removedAny = true;
+      // Allow the refresh request to run after the removal request has
+      // finished; fetchItems intentionally ignores overlapping loads.
+      loading = false;
+      await fetchItems({ clearSelection: true });
+      setFeedback(`${data.count} piece${data.count === 1 ? '' : 's'} removed. Barcode sequence was preserved.`);
+    } catch (error) {
+      setFeedback(error.message || 'Could not remove the selected pieces.', true);
+    } finally {
+      loading = false;
+      confirmBtn.textContent = 'Remove selected';
+      updateSelectionUi();
+    }
+  });
+})();
+
 // ── Mobile Responsive Navigation Toggle ───────────────────────
 (function initMobileNavigation() {
   const toggleBtn = document.getElementById('mobileMenuToggle');
