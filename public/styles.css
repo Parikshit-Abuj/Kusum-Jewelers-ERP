@@ -2406,6 +2406,64 @@ body.billing-focus-mode .transaction-summary { position: sticky; top: 92px; max-
 .scheme-pay-form input[name='amount'] { width: 86px; }
 .scheme-pay-form .button { min-height: 31px; }
 
+/* Fast scheme maintenance dialogs.  The grid stays compact on desktop and
+   remains independently scrollable so the page behind it never jumps. */
+.scheme-bulk-modal .scheme-bulk-modal-card { max-width: 1120px; max-height: 92vh; }
+.scheme-bulk-modal-card > form { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; }
+.scheme-bulk-modal-body { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow: auto; }
+.scheme-bulk-modal .modal-footer { display: flex; flex-shrink: 0; align-items: center; justify-content: flex-end; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--line); background: #faf8f5; }
+.scheme-bulk-toolbar,
+.scheme-bulk-selection-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.scheme-bulk-toolbar > span { display: grid; gap: 3px; }
+.scheme-bulk-toolbar small { color: var(--muted); font-size: 11px; font-weight: 500; }
+.scheme-bulk-date-control { display: grid; gap: 4px; color: var(--muted); font-size: 10px; font-weight: 750; }
+.scheme-bulk-date-control input { min-height: 34px; padding: 6px 9px; }
+.scheme-bulk-table-wrap { min-height: 160px; max-height: 55vh; overflow: auto; }
+.scheme-bulk-table-wrap table { min-width: 860px; }
+.scheme-bulk-table th { white-space: nowrap; }
+.scheme-bulk-table td { padding: 8px 10px; vertical-align: middle; }
+.scheme-bulk-table td input { width: 100%; min-width: 0; min-height: 34px; padding: 7px 9px; }
+.scheme-bulk-row-number { color: var(--muted); text-align: center; font-weight: 800; }
+.scheme-bulk-remove { width: 28px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: 7px; background: #fff; color: var(--muted); font-size: 18px; line-height: 1; cursor: pointer; }
+.scheme-bulk-remove:hover { border-color: #d6a138; color: #9c6811; background: #fffaf0; }
+.scheme-bulk-feedback { min-height: 18px; margin: 0; color: #2e7d32; font-size: 12px; font-weight: 700; }
+.scheme-bulk-feedback.is-error { color: #b53d36; }
+.scheme-bulk-selection-bar { color: var(--muted); font-size: 12px; }
+.scheme-bulk-selection-bar label { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; }
+.scheme-bulk-selection-bar strong { color: var(--ink); }
+.scheme-bulk-cancel-filter { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; margin: 0; padding: 12px; border: 1px solid #eee8df; border-radius: 8px; background: #fffdf9; }
+.scheme-bulk-cancel-filter label { display: grid; gap: 5px; margin: 0; color: var(--muted); font-size: 11px; font-weight: 700; }
+.scheme-bulk-cancel-filter input { min-width: 0; }
+.scheme-bulk-payment-filter { display: grid; grid-template-columns: minmax(180px, 1fr) 180px auto; align-items: end; gap: 10px; margin: 0; padding: 12px; border: 1px solid #eee8df; border-radius: 8px; background: #fffdf9; }
+.scheme-bulk-payment-filter label { display: grid; gap: 5px; margin: 0; color: var(--muted); font-size: 11px; font-weight: 700; }
+.scheme-bulk-payment-filter input,
+.scheme-bulk-payment-filter select { min-width: 0; }
+.scheme-bulk-payment-card { width: min(1320px, 96vw); }
+.scheme-bulk-payment-table-wrap { max-height: 55vh; }
+.scheme-bulk-payment-table-wrap table { min-width: 1280px; }
+.scheme-bulk-payment-table-wrap td input,
+.scheme-bulk-payment-table-wrap td select { min-width: 0; min-height: 36px; padding: 7px 8px; font-size: 12px; }
+.scheme-bulk-payment-table-wrap td input { min-height: 36px; }
+.scheme-bulk-payment-table-wrap td small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
+.scheme-bulk-payment-total { display: block; color: var(--muted); font-size: 11px; font-weight: 750; white-space: nowrap; }
+.scheme-bulk-payment-total.is-valid { color: #2e7d32; }
+.scheme-bulk-payment-total.is-invalid { color: #b53d36; }
+.scheme-bulk-fill-cash { margin-top: 4px; padding: 2px 5px; border: 0; border-radius: 4px; background: #fff4d9; color: var(--gold-dark); font-size: 10px; font-weight: 750; cursor: pointer; white-space: nowrap; }
+.scheme-bulk-fill-cash:hover { background: #fbe7b5; }
+.scheme-bulk-cancel-table-wrap td strong,
+.scheme-bulk-cancel-table-wrap td small { display: block; }
+.scheme-bulk-cancel-table-wrap td small { margin-top: 3px; color: var(--muted); font-size: 11px; }
+.scheme-bulk-pagination { display: flex; align-items: center; justify-content: center; gap: 12px; }
+
+@media (max-width: 760px) {
+  .scheme-bulk-modal .scheme-bulk-modal-card { max-width: 96vw; }
+  .scheme-bulk-cancel-filter { grid-template-columns: 1fr; }
+  .scheme-bulk-cancel-filter button { width: auto; justify-self: start; }
+  .scheme-bulk-payment-filter { grid-template-columns: 1fr; }
+  .scheme-bulk-payment-filter button { width: auto; justify-self: start; }
+  .scheme-bulk-modal .modal-footer { align-items: stretch; }
+}
+
 @media (max-width: 1050px) {
   .scheme-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

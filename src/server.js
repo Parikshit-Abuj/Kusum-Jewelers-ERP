@@ -4792,6 +4792,310 @@ app.post('/schemes/:planId/enroll', async (req, res, next) => {
   }
 });
 
+// Fast scheme enrollment for the counter: one request can create several
+// customers and their installment schedules while keeping the same plan lock
+// and customer de-duplication rules as the single-customer workflow.
+app.post('/api/schemes/:planId/enroll-batch', express.json(), async (req, res) => {
+  try {
+    const planId = Number(req.params.planId);
+    if (!Number.isInteger(planId) || planId < 1) return res.status(400).json({ error: 'Choose a valid scheme plan.' });
+    const inputRows = Array.isArray(req.body?.customers) ? req.body.customers : [];
+    if (!inputRows.length) return res.status(400).json({ error: 'Add at least one customer to enroll.' });
+    if (inputRows.length > 100) return res.status(400).json({ error: 'Enroll up to 100 customers at a time.' });
+    const sharedStartDateInput = String(req.body?.startDate || '').trim();
+    const sharedStartDate = dateTimeFromInput(sharedStartDateInput || dateInput());
+
+    const rows = inputRows.map((row, index) => {
+      const source = row && typeof row === 'object' ? row : {};
+      const phone = normalizePhone(source.customerPhone ?? source.phone);
+      const name = titleCase(source.customerName ?? source.name);
+      if (phone && !validCustomerPhone(phone)) throw new Error(`Row ${index + 1}: enter a valid customer mobile number, or leave it blank.`);
+      return {
+        rowNumber: index + 1,
+        phone,
+        name,
+        startDate: sharedStartDate,
+        notes: source.notes ? titleCase(source.notes) : null
+      };
+    }).filter((row) => row.name || row.phone);
+    if (!rows.length) return res.status(400).json({ error: 'Add a customer name or mobile number before enrolling.' });
+
+    const result = await prisma.$transaction(async (tx) => {
+      const lockedPlans = await tx.$queryRaw`SELECT id FROM \`SchemePlan\` WHERE id = ${planId} FOR UPDATE`;
+      if (!lockedPlans.length) throw new Error('Scheme plan not found.');
+      const plan = await tx.schemePlan.findUniqueOrThrow({ where: { id: planId } });
+      if (!plan.isActive) throw new Error('This scheme plan is not available for enrollment.');
+
+      const created = [];
+      const installmentRows = [];
+      for (const row of rows) {
+        let customer = row.phone ? await tx.customer.findUnique({ where: { phone: row.phone } }) : null;
+        if (!customer) {
+          if (!row.name) throw new Error(`Row ${row.rowNumber}: enter a customer name when no saved mobile profile is found.`);
+          customer = await tx.customer.create({ data: { name: row.name, phone: row.phone || null } });
+        }
+        const enrollmentNumber = await nextDocumentNumber(tx, 'SCH', row.startDate);
+        const schedule = createInstallmentSchedule(row.startDate, plan.durationMonths);
+        const enrollment = await tx.schemeEnrollment.create({
+          data: {
+            enrollmentNumber,
+            schemePlanId: planId,
+            customerId: customer.id,
+            startDate: row.startDate,
+            endDate: schemeEndDate(row.startDate, plan.durationMonths),
+            status: 'ACTIVE',
+            totalPaid: 0,
+            installmentsPaid: 0,
+            notes: row.notes
+          }
+        });
+        installmentRows.push(...schedule.map(({ installmentNumber, dueDate }) => ({
+          enrollmentId: enrollment.id,
+          installmentNumber,
+          dueDate,
+          paidAmount: 0,
+          status: 'PENDING'
+        })));
+        created.push({ enrollmentNumber, customerName: customer.name });
+      }
+      if (installmentRows.length) await tx.schemeInstallment.createMany({ data: installmentRows });
+      return { planName: plan.name, created };
+    }, { maxWait: 10000, timeout: 30000 });
+
+    res.json({ success: true, count: result.created.length, planName: result.planName, enrollments: result.created });
+  } catch (error) {
+    console.error('Batch scheme enrollment error:', error);
+    res.status(500).json({ error: error.message || 'Could not enroll the selected customers.' });
+  }
+});
+
+// Batch maintenance uses a lightweight, paginated list. The default response
+// omits installments/payment history; payment mode opts into pending installment
+// IDs only. Cancellation changes status and leaves existing receipts in the
+// financial audit trail.
+app.get('/api/schemes/:planId/enrollments', async (req, res) => {
+  try {
+    const planId = Number(req.params.planId);
+    if (!Number.isInteger(planId) || planId < 1) return res.status(400).json({ error: 'Choose a valid scheme plan.' });
+    const q = String(req.query.q || '').trim();
+    const includePendingInstallments = String(req.query.payments || '') === '1';
+    const where = {
+      schemePlanId: planId,
+      status: 'ACTIVE',
+      ...(q ? { OR: [
+        { enrollmentNumber: { contains: q } },
+        { customer: { name: { contains: q } } },
+        { customer: { phone: { contains: normalizePhone(q) || q } } }
+      ] } : {})
+    };
+    const totalItems = await prisma.schemeEnrollment.count({ where });
+    const pagination = paginationFor(req, totalItems, req.query.page, 30);
+    const enrollments = await prisma.schemeEnrollment.findMany({
+      where,
+      select: {
+        id: true,
+        enrollmentNumber: true,
+        startDate: true,
+        customer: { select: { name: true, phone: true } },
+        ...(includePendingInstallments ? {
+          installments: {
+            where: { status: 'PENDING' },
+            select: { id: true, installmentNumber: true, dueDate: true },
+            orderBy: { installmentNumber: 'asc' }
+          }
+        } : {})
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      skip: (pagination.page - 1) * pagination.pageSize,
+      take: pagination.pageSize
+    });
+    res.json({
+      items: enrollments.map((enrollment) => ({
+        id: enrollment.id,
+        enrollmentNumber: enrollment.enrollmentNumber,
+        startDate: dateInput(enrollment.startDate),
+        customerName: enrollment.customer?.name || 'Unknown customer',
+        customerPhone: enrollment.customer?.phone || '',
+        pendingInstallments: includePendingInstallments
+          ? (enrollment.installments || []).map((installment) => ({
+            id: installment.id,
+            installmentNumber: installment.installmentNumber,
+            dueDate: dateInput(installment.dueDate)
+          }))
+          : undefined
+      })),
+      page: pagination.page,
+      pageSize: pagination.pageSize,
+      totalItems: pagination.totalItems,
+      totalPages: pagination.totalPages,
+      hasNext: Boolean(pagination.nextUrl),
+      hasPrevious: Boolean(pagination.previousUrl),
+      q
+    });
+  } catch (error) {
+    console.error('Scheme enrollment list error:', error);
+    res.status(500).json({ error: error.message || 'Could not load scheme customers.' });
+  }
+});
+
+// Record several scheme installment receipts in one transaction. The modal
+// submits split payment columns, so every Cashbook part and its scheme link
+// are committed together; blank rows are intentionally ignored by the client.
+app.post('/api/schemes/:planId/payments-batch', express.json(), async (req, res) => {
+  try {
+    const planId = Number(req.params.planId);
+    if (!Number.isInteger(planId) || planId < 1) return res.status(400).json({ error: 'Choose a valid scheme plan.' });
+    const inputRows = Array.isArray(req.body?.payments) ? req.body.payments : [];
+    if (!inputRows.length) return res.status(400).json({ error: 'Enter at least one scheme payment.' });
+    if (inputRows.length > 100) return res.status(400).json({ error: 'Record up to 100 scheme payments at a time.' });
+    const sharedPaymentDateInput = String(req.body?.paymentDate || '').trim();
+    const sharedPaymentDate = dateInput(dateTimeFromInput(sharedPaymentDateInput || dateInput()));
+
+    const rows = inputRows.map((row, index) => {
+      const source = row && typeof row === 'object' ? row : {};
+      const enrollmentId = Number(source.enrollmentId);
+      const installmentId = Number(source.installmentId);
+      if (!Number.isInteger(enrollmentId) || enrollmentId < 1 || !Number.isInteger(installmentId) || installmentId < 1) {
+        throw new Error(`Row ${index + 1}: choose a valid scheme customer and installment.`);
+      }
+      const payment = schemePaymentBreakdown({ ...source, paymentMethod: 'MIXED' });
+      if (payment.paid <= 0) throw new Error(`Row ${index + 1}: enter a payment amount.`);
+      return {
+        rowNumber: index + 1,
+        enrollmentId,
+        installmentId,
+        payment,
+        paymentDate: dateInput(dateTimeFromInput(source.paymentDate || sharedPaymentDate)),
+        narration: optionalText(source.narration, 1000)
+      };
+    });
+    const duplicateInstallment = rows.find((row, index) => rows.some((other, otherIndex) => otherIndex < index && other.installmentId === row.installmentId));
+    if (duplicateInstallment) throw new Error(`Row ${duplicateInstallment.rowNumber}: the same installment is entered more than once.`);
+
+    const result = await prisma.$transaction(async (tx) => {
+      const lockedPlans = await tx.$queryRaw`SELECT id FROM \`SchemePlan\` WHERE id = ${planId} FOR UPDATE`;
+      if (!lockedPlans.length) throw new Error('Scheme plan not found.');
+      const plan = await tx.schemePlan.findUniqueOrThrow({ where: { id: planId } });
+
+      const enrollmentIds = [...new Set(rows.map((row) => row.enrollmentId))];
+      const installmentIds = rows.map((row) => row.installmentId);
+      await tx.$queryRaw`SELECT id FROM \`SchemeEnrollment\` WHERE id IN (${Prisma.join(enrollmentIds)}) AND schemePlanId = ${planId} FOR UPDATE`;
+      await tx.$queryRaw`SELECT id FROM \`SchemeInstallment\` WHERE id IN (${Prisma.join(installmentIds)}) FOR UPDATE`;
+      const enrollments = await tx.schemeEnrollment.findMany({
+        where: { id: { in: enrollmentIds }, schemePlanId: planId },
+        include: { schemePlan: true }
+      });
+      const installments = await tx.schemeInstallment.findMany({ where: { id: { in: installmentIds } } });
+      const enrollmentById = new Map(enrollments.map((enrollment) => [enrollment.id, enrollment]));
+      const installmentById = new Map(installments.map((installment) => [installment.id, installment]));
+      for (const row of rows) {
+        const enrollment = enrollmentById.get(row.enrollmentId);
+        const installment = installmentById.get(row.installmentId);
+        if (!enrollment || enrollment.status !== 'ACTIVE') throw new Error(`Row ${row.rowNumber}: scheme customer is not active.`);
+        if (!installment || installment.enrollmentId !== enrollment.id || installment.status !== 'PENDING') throw new Error(`Row ${row.rowNumber}: installment is no longer pending. Refresh the list and try again.`);
+        if (!isFullInstallmentPayment(row.payment.paid, plan.monthlyAmount)) {
+          throw new Error(`Row ${row.rowNumber}: enter the exact monthly installment amount of ${money(plan.monthlyAmount)}.`);
+        }
+      }
+
+      const touchedEnrollments = new Set();
+      for (const row of rows) {
+        const enrollment = enrollmentById.get(row.enrollmentId);
+        const installment = installmentById.get(row.installmentId);
+        const cashbookEntries = [];
+        for (const component of row.payment.cashbookPayments) {
+          const cashbookEntry = await tx.cashbookEntry.create({
+            data: {
+              entryDate: row.paymentDate,
+              type: 'IN',
+              paymentMethod: component.method,
+              amount: component.amount,
+              description: `Scheme payment — ${enrollment.enrollmentNumber} — Installment ${installment.installmentNumber}`,
+              reference: generatedReference('SCH-PAY'),
+              customerId: enrollment.customerId,
+              notes: [`${plan.name} · Installment ${installment.installmentNumber} of ${plan.durationMonths}`, row.narration].filter(Boolean).join(' · ')
+            }
+          });
+          cashbookEntries.push({ ...component, id: cashbookEntry.id });
+        }
+        await tx.schemeInstallmentPayment.createMany({
+          data: cashbookEntries.map((entry) => ({
+            installmentId: installment.id,
+            cashbookEntryId: entry.id,
+            amount: entry.amount,
+            paymentDate: row.paymentDate,
+            paymentMethod: entry.method
+          }))
+        });
+        await tx.schemeInstallment.update({
+          where: { id: installment.id },
+          data: {
+            paidAmount: row.payment.paid,
+            paymentDate: row.paymentDate,
+            paymentMethod: row.payment.paymentMethod,
+            cashbookEntryId: cashbookEntries.length === 1 ? cashbookEntries[0].id : null,
+            notes: row.narration,
+            status: 'PAID'
+          }
+        });
+        touchedEnrollments.add(enrollment.id);
+      }
+
+      for (const enrollmentId of touchedEnrollments) {
+        const enrollment = enrollmentById.get(enrollmentId);
+        const [paidAggregate, installmentsPaid] = await Promise.all([
+          tx.schemeInstallment.aggregate({ where: { enrollmentId, status: 'PAID' }, _sum: { paidAmount: true } }),
+          tx.schemeInstallment.count({ where: { enrollmentId, status: 'PAID' } })
+        ]);
+        await tx.schemeEnrollment.update({
+          where: { id: enrollmentId },
+          data: {
+            totalPaid: roundedMoney(paidAggregate._sum.paidAmount || 0),
+            installmentsPaid,
+            status: installmentsPaid >= enrollment.schemePlan.durationMonths ? 'COMPLETED' : 'ACTIVE'
+          }
+        });
+      }
+      return { count: rows.length };
+    }, { maxWait: 10000, timeout: 30000 });
+    res.json({ success: true, count: result.count, paymentDate: sharedPaymentDate });
+  } catch (error) {
+    console.error('Batch scheme payment error:', error);
+    res.status(500).json({ error: error.message || 'Could not record the selected scheme payments.' });
+  }
+});
+
+app.post('/api/schemes/:planId/enrollments/batch-cancel', express.json(), async (req, res) => {
+  try {
+    const planId = Number(req.params.planId);
+    const ids = [...new Set(asArray(req.body?.enrollmentIds)
+      .map((value) => Number(value))
+      .filter((value) => Number.isInteger(value) && value > 0))];
+    if (!Number.isInteger(planId) || planId < 1) return res.status(400).json({ error: 'Choose a valid scheme plan.' });
+    if (!ids.length) return res.status(400).json({ error: 'Select at least one active customer to cancel.' });
+    if (ids.length > 500) return res.status(400).json({ error: 'Cancel up to 500 customers at a time.' });
+
+    const cancelled = await prisma.$transaction(async (tx) => {
+      const lockedPlans = await tx.$queryRaw`SELECT id FROM \`SchemePlan\` WHERE id = ${planId} FOR UPDATE`;
+      if (!lockedPlans.length) throw new Error('Scheme plan not found.');
+      const active = await tx.schemeEnrollment.findMany({
+        where: { id: { in: ids }, schemePlanId: planId, status: 'ACTIVE' },
+        select: { id: true }
+      });
+      if (active.length !== ids.length) throw new Error('One or more selected customers are no longer active. Refresh the list and try again.');
+      await tx.schemeEnrollment.updateMany({
+        where: { id: { in: ids }, schemePlanId: planId, status: 'ACTIVE' },
+        data: { status: 'CANCELLED' }
+      });
+      return active.length;
+    });
+    res.json({ success: true, count: cancelled });
+  } catch (error) {
+    console.error('Batch scheme cancellation error:', error);
+    res.status(500).json({ error: error.message || 'Could not cancel the selected customers.' });
+  }
+});
+
 app.get('/schemes/enrollments/:id', async (req, res, next) => {
   try {
     const id = Number(req.params.id);

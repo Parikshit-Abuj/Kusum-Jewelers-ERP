@@ -30,6 +30,11 @@
       <div class="action-menu-panel">
         <button type="button" class="action-menu-item" data-scheme-export-open>Export Excel</button>
         <button type="button" class="action-menu-item" data-edit-plan-open>Edit plan</button>
+        <% if (plan.isActive) { %>
+        <button type="button" class="action-menu-item" data-scheme-bulk-enroll-open>+ Batch enroll customers</button>
+        <% } %>
+        <button type="button" class="action-menu-item" data-scheme-bulk-payment-open>Batch record payments</button>
+        <button type="button" class="action-menu-item" data-scheme-bulk-cancel-open>− Batch cancel customers</button>
       </div>
     </details>
     <% if (plan.isActive) { %>
@@ -272,6 +277,127 @@
         <button class="button" type="submit">Download Excel</button>
       </footer>
     </form>
+  </section>
+</div>
+
+<!-- Fast batch enrollment keeps the plan page clean while letting the
+     counter enter several customers in one pass. -->
+<div class="modal-overlay scheme-bulk-modal" id="schemeBulkEnrollModal" style="display:none;" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="schemeBulkEnrollTitle">
+  <section class="modal-card scheme-bulk-modal-card" role="document">
+    <header class="modal-header">
+      <div>
+        <p class="eyebrow">Fast enrollment · <%= plan.name %></p>
+        <h2 id="schemeBulkEnrollTitle">Batch enroll customers</h2>
+        <p>Enter one customer per row. Existing mobile numbers use the saved customer profile.</p>
+      </div>
+      <button class="modal-close-btn" type="button" data-scheme-bulk-enroll-close aria-label="Close batch enrollment">×</button>
+    </header>
+    <form id="schemeBulkEnrollForm" data-plan-id="<%= plan.id %>">
+      <div class="modal-body scheme-bulk-modal-body">
+        <div class="scheme-bulk-toolbar">
+          <span><strong data-bulk-enroll-count>0 customers ready</strong><small>Blank rows are ignored.</small></span>
+          <label class="scheme-bulk-date-control"><span>Enrollment date for all rows</span><input type="date" data-bulk-enroll-date value="<%= dateInput() %>"></label>
+          <button type="button" class="button secondary small" data-bulk-enroll-add>+ Add row</button>
+        </div>
+        <div class="table-wrap scheme-bulk-table-wrap">
+          <table class="scheme-bulk-table">
+            <thead>
+              <tr><th style="width:44px;">#</th><th style="width:190px;">Mobile (optional)</th><th>Customer name</th><th style="width:220px;">Notes</th><th style="width:44px;"></th></tr>
+            </thead>
+            <tbody data-bulk-enroll-rows></tbody>
+          </table>
+        </div>
+        <p class="scheme-bulk-feedback" data-bulk-enroll-feedback role="status" aria-live="polite"></p>
+      </div>
+      <footer class="modal-footer">
+        <button type="button" class="button ghost" data-scheme-bulk-enroll-close>Cancel</button>
+        <button type="submit" class="button" data-bulk-enroll-submit>Enroll customers</button>
+      </footer>
+    </form>
+  </section>
+</div>
+
+<!-- Fast cancellation is status-only: existing receipts remain in the
+     financial audit trail, exactly like the single-customer cancel action. -->
+<div class="modal-overlay scheme-bulk-modal" id="schemeBulkCancelModal" style="display:none;" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="schemeBulkCancelTitle">
+  <section class="modal-card scheme-bulk-modal-card scheme-bulk-cancel-card" role="document">
+    <header class="modal-header">
+      <div>
+        <p class="eyebrow">Customer maintenance · <%= plan.name %></p>
+        <h2 id="schemeBulkCancelTitle">Batch cancel customers</h2>
+        <p>Select active customers to remove from this scheme. Payments already recorded remain in the cashbook history.</p>
+      </div>
+      <button class="modal-close-btn" type="button" data-scheme-bulk-cancel-close aria-label="Close batch cancellation">×</button>
+    </header>
+    <div class="modal-body scheme-bulk-modal-body">
+      <form class="scheme-bulk-cancel-filter" data-bulk-cancel-filter>
+        <label>Search customer or scheme document<input type="search" data-bulk-cancel-search placeholder="Name, mobile, or SCH number" autocomplete="off"></label>
+        <button type="submit" class="button secondary small">Search</button>
+      </form>
+      <div class="scheme-bulk-selection-bar">
+        <label><input type="checkbox" data-bulk-cancel-select-all> Select visible</label>
+        <strong data-bulk-cancel-count>0 selected</strong>
+      </div>
+      <div class="table-wrap scheme-bulk-table-wrap scheme-bulk-cancel-table-wrap">
+        <table class="scheme-bulk-table">
+          <thead><tr><th style="width:44px;"></th><th>Customer</th><th>Scheme doc no.</th><th style="width:140px;">Start date</th><th style="width:90px;">Status</th></tr></thead>
+          <tbody data-bulk-cancel-rows><tr><td colspan="5" class="center muted">Open this list to load active customers.</td></tr></tbody>
+        </table>
+      </div>
+      <div class="scheme-bulk-pagination" data-bulk-cancel-pagination hidden>
+        <button type="button" class="button ghost small" data-bulk-cancel-prev>Previous</button>
+        <span data-bulk-cancel-page>Page 1</span>
+        <button type="button" class="button ghost small" data-bulk-cancel-next>Next</button>
+      </div>
+      <p class="scheme-bulk-feedback" data-bulk-cancel-feedback role="status" aria-live="polite"></p>
+    </div>
+    <footer class="modal-footer">
+      <button type="button" class="button ghost" data-scheme-bulk-cancel-close>Close</button>
+      <button type="button" class="button danger" data-bulk-cancel-submit disabled>Cancel selected</button>
+    </footer>
+  </section>
+</div>
+
+<!-- Fast payment entry: fill only customers who paid. A shared payment date
+     keeps a counter's daily entries consistent while split columns preserve
+     the existing Cashbook/payment-method behavior. -->
+<div class="modal-overlay scheme-bulk-modal" id="schemeBulkPaymentModal" style="display:none;" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="schemeBulkPaymentTitle">
+  <section class="modal-card scheme-bulk-modal-card scheme-bulk-payment-card" role="document">
+    <header class="modal-header">
+      <div>
+        <p class="eyebrow">Fast collection · <%= plan.name %></p>
+        <h2 id="schemeBulkPaymentTitle">Batch record payments</h2>
+        <p>Choose a default month, then enter each customer’s payment details.</p>
+      </div>
+      <button class="modal-close-btn" type="button" data-scheme-bulk-payment-close aria-label="Close batch payments">×</button>
+    </header>
+    <div class="modal-body scheme-bulk-modal-body">
+      <form class="scheme-bulk-payment-filter" data-bulk-payment-filter>
+        <label>Search customer or scheme document<input type="search" data-bulk-payment-search placeholder="Name, mobile, or SCH number" autocomplete="off"></label>
+        <label>Default month<select data-bulk-payment-month><option value="">Auto · next pending</option><% for (let month = 1; month <= Number(plan.durationMonths || 0); month += 1) { %><option value="<%= month %>">Month <%= month %></option><% } %></select></label>
+        <button type="submit" class="button secondary small">Search</button>
+      </form>
+      <div class="scheme-bulk-selection-bar">
+          <span>Blank rows are ignored. Use the split columns for a mixed payment.</span>
+        <strong data-bulk-payment-count>0 payments ready</strong>
+      </div>
+      <div class="table-wrap scheme-bulk-table-wrap scheme-bulk-payment-table-wrap">
+        <table class="scheme-bulk-table">
+          <thead><tr><th style="width:210px;">Customer</th><th style="width:180px;">Installment</th><th style="width:130px;">Payment date</th><th style="width:105px;">Cash</th><th style="width:105px;">UPI</th><th style="width:105px;">Card</th><th style="width:125px;">Bank transfer</th><th style="width:110px;">Total</th><th style="width:210px;">Narration</th></tr></thead>
+          <tbody data-bulk-payment-rows><tr><td colspan="9" class="center muted">Open this list to load pending installments.</td></tr></tbody>
+        </table>
+      </div>
+      <div class="scheme-bulk-pagination" data-bulk-payment-pagination hidden>
+        <button type="button" class="button ghost small" data-bulk-payment-prev>Previous</button>
+        <span data-bulk-payment-page>Page 1</span>
+        <button type="button" class="button ghost small" data-bulk-payment-next>Next</button>
+      </div>
+      <p class="scheme-bulk-feedback" data-bulk-payment-feedback role="status" aria-live="polite"></p>
+    </div>
+    <footer class="modal-footer">
+      <button type="button" class="button ghost" data-scheme-bulk-payment-close>Close</button>
+      <button type="button" class="button" data-bulk-payment-submit>Record payments</button>
+    </footer>
   </section>
 </div>
 
@@ -539,5 +665,486 @@
   });
   monthSelect?.addEventListener('change', submit);
   statusSelect?.addEventListener('change', submit);
+})();
+
+// Fast batch enrollment: keep a small editable grid in the modal and submit
+// the completed rows together so the operator does not repeat the full form.
+(function initSchemeBulkEnroll() {
+  const modal = document.getElementById('schemeBulkEnrollModal');
+  const form = document.getElementById('schemeBulkEnrollForm');
+  const tbody = modal?.querySelector('[data-bulk-enroll-rows]');
+  const addButton = modal?.querySelector('[data-bulk-enroll-add]');
+  const submitButton = modal?.querySelector('[data-bulk-enroll-submit]');
+  const feedback = modal?.querySelector('[data-bulk-enroll-feedback]');
+  const countLabel = modal?.querySelector('[data-bulk-enroll-count]');
+  const dateInput = modal?.querySelector('[data-bulk-enroll-date]');
+  if (!modal || !form || !tbody) return;
+
+  const defaultDate = '<%= dateInput() %>';
+  const planId = '<%= plan.id %>';
+  let rowNumber = 0;
+  let previousFocus = null;
+
+  const setFeedback = (message, isError = false) => {
+    if (!feedback) return;
+    feedback.textContent = message || '';
+    feedback.classList.toggle('is-error', isError);
+  };
+
+  const updateCount = () => {
+    const count = [...tbody.querySelectorAll('tr')].filter((row) => {
+      const phone = row.querySelector('[data-bulk-phone]')?.value.trim();
+      const name = row.querySelector('[data-bulk-name]')?.value.trim();
+      return phone || name;
+    }).length;
+    if (countLabel) countLabel.textContent = `${count} customer${count === 1 ? '' : 's'} ready`;
+  };
+  const renumberRows = () => {
+    [...tbody.querySelectorAll('tr')].forEach((row, index) => {
+      const numberCell = row.querySelector('.scheme-bulk-row-number');
+      if (numberCell) numberCell.textContent = String(index + 1);
+    });
+  };
+
+  const wirePhoneLookup = (row) => {
+    const phoneInput = row.querySelector('[data-bulk-phone]');
+    const nameInput = row.querySelector('[data-bulk-name]');
+    if (!phoneInput || !nameInput) return;
+    let timer = null;
+    phoneInput.addEventListener('input', updateCount);
+    phoneInput.addEventListener('blur', () => {
+      clearTimeout(timer);
+      const digits = phoneInput.value.replace(/\D/g, '');
+      if (digits.length < 10 || digits.length > 15 || nameInput.value.trim()) return;
+      timer = setTimeout(async () => {
+        try {
+          const response = await fetch(`/api/customers/phone/${encodeURIComponent(digits)}`);
+          if (!response.ok) return;
+          const data = await response.json();
+          if (data.found && data.customer && !nameInput.value.trim()) {
+            nameInput.value = String(data.customer.name || '').toUpperCase();
+            updateCount();
+          }
+        } catch (_) {}
+      }, 250);
+    });
+  };
+
+  const addRow = (values = {}) => {
+    rowNumber += 1;
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td class="scheme-bulk-row-number">${rowNumber}</td>
+      <td><input type="text" inputmode="numeric" maxlength="15" placeholder="Optional" data-bulk-phone autocomplete="off"></td>
+      <td><input type="text" placeholder="Full name" data-bulk-name autocomplete="off"></td>
+      <td><input type="text" placeholder="Optional" data-bulk-notes autocomplete="off"></td>
+      <td><button type="button" class="scheme-bulk-remove" data-bulk-remove-row aria-label="Remove row">×</button></td>`;
+    row.querySelector('[data-bulk-phone]').value = values.phone || '';
+    row.querySelector('[data-bulk-name]').value = values.name || '';
+    row.querySelector('[data-bulk-notes]').value = values.notes || '';
+    row.querySelector('[data-bulk-name]').addEventListener('input', updateCount);
+    row.querySelector('[data-bulk-notes]').addEventListener('input', updateCount);
+    row.querySelector('[data-bulk-remove-row]').addEventListener('click', () => {
+      if (tbody.children.length > 1) row.remove();
+      else row.querySelectorAll('input').forEach((input) => { input.value = ''; });
+      renumberRows();
+      updateCount();
+    });
+    wirePhoneLookup(row);
+    tbody.appendChild(row);
+    updateCount();
+  };
+
+  for (let index = 0; index < 5; index += 1) addRow();
+  addButton?.addEventListener('click', () => {
+    if (tbody.children.length >= 100) return setFeedback('A maximum of 100 customers can be enrolled at once.', true);
+    addRow();
+    tbody.lastElementChild?.querySelector('[data-bulk-phone]')?.focus();
+  });
+
+  const close = () => {
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+    previousFocus?.focus();
+  };
+  const open = () => {
+    previousFocus = document.activeElement;
+    document.querySelectorAll('.action-menu[open]').forEach((menu) => menu.removeAttribute('open'));
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    setFeedback('');
+    setTimeout(() => tbody.querySelector('[data-bulk-phone]')?.focus(), 0);
+  };
+  document.querySelectorAll('[data-scheme-bulk-enroll-open]').forEach((button) => button.addEventListener('click', open));
+  modal.querySelectorAll('[data-scheme-bulk-enroll-close]').forEach((button) => button.addEventListener('click', close));
+  modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && modal.style.display === 'flex') close(); });
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const customers = [];
+    const enrollmentDate = dateInput?.value || defaultDate;
+    for (const [index, row] of [...tbody.querySelectorAll('tr')].entries()) {
+      const customerPhone = row.querySelector('[data-bulk-phone]')?.value.trim() || '';
+      const customerName = row.querySelector('[data-bulk-name]')?.value.trim() || '';
+      const notes = row.querySelector('[data-bulk-notes]')?.value.trim() || '';
+      if (!customerPhone && !customerName) continue;
+      const digits = customerPhone.replace(/\D/g, '').replace(/^91(?=\d{10}$)/, '');
+      if (digits && (digits.length < 10 || digits.length > 15)) {
+        setFeedback(`Row ${index + 1}: enter a valid mobile number, or leave it blank.`, true);
+        row.querySelector('[data-bulk-phone]')?.focus();
+        return;
+      }
+      customers.push({ customerPhone: digits, customerName, notes });
+    }
+    if (!customers.length) return setFeedback('Add at least one customer name or mobile number.', true);
+    submitButton.disabled = true;
+    submitButton.textContent = 'Enrolling…';
+    setFeedback('');
+    try {
+      const response = await fetch(`/api/schemes/${planId}/enroll-batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ customers, startDate: enrollmentDate })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) throw new Error(data.error || 'Could not enroll the selected customers.');
+      setFeedback(`${data.count} customer${data.count === 1 ? '' : 's'} enrolled successfully.`);
+      setTimeout(() => window.location.reload(), 450);
+    } catch (error) {
+      setFeedback(error.message || 'Could not enroll the selected customers.', true);
+    } finally {
+      submitButton.disabled = false;
+      submitButton.textContent = 'Enroll customers';
+    }
+  });
+})();
+
+// Batch scheme payments: drafts are retained while moving between pages, so
+// a cashier can fill several pages and submit them as one atomic operation.
+(function initSchemeBulkPayment() {
+  const modal = document.getElementById('schemeBulkPaymentModal');
+  if (!modal) return;
+  const planId = '<%= plan.id %>';
+  const monthlyAmount = Number('<%= Number(plan.monthlyAmount) %>') || 0;
+  const defaultDate = '<%= dateInput() %>';
+  const rowsBody = modal.querySelector('[data-bulk-payment-rows]');
+  const filterForm = modal.querySelector('[data-bulk-payment-filter]');
+  const searchInput = modal.querySelector('[data-bulk-payment-search]');
+  const defaultMonthInput = modal.querySelector('[data-bulk-payment-month]');
+  const countLabel = modal.querySelector('[data-bulk-payment-count]');
+  const submitButton = modal.querySelector('[data-bulk-payment-submit]');
+  const feedback = modal.querySelector('[data-bulk-payment-feedback]');
+  const pagination = modal.querySelector('[data-bulk-payment-pagination]');
+  const pageLabel = modal.querySelector('[data-bulk-payment-page]');
+  const previousButton = modal.querySelector('[data-bulk-payment-prev]');
+  const nextButton = modal.querySelector('[data-bulk-payment-next]');
+  if (!rowsBody || !filterForm || !searchInput || !defaultMonthInput || !countLabel || !submitButton || !feedback || !pagination || !pageLabel || !previousButton || !nextButton) return;
+
+  let page = 1;
+  let currentItems = [];
+  let drafts = new Map();
+  let previousFocus = null;
+
+  const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
+  const setFeedback = (message, isError = false) => {
+    feedback.textContent = message || '';
+    feedback.classList.toggle('is-error', isError);
+  };
+  const numericValue = (row, selector) => Math.max(0, Number(row.querySelector(selector)?.value || 0) || 0);
+  const rowTotal = (row) => ['cash', 'upi', 'card', 'bank'].reduce((total, method) => total + numericValue(row, `[data-bulk-payment-${method}]`), 0);
+  const captureRow = (row) => {
+    const enrollmentId = String(row.dataset.enrollmentId || '');
+    if (!enrollmentId) return;
+    drafts.set(enrollmentId, {
+      enrollmentId,
+      installmentId: row.querySelector('[data-bulk-payment-installment]')?.value || '',
+      paymentDate: row.querySelector('[data-bulk-payment-row-date]')?.value || defaultDate,
+      paymentDateManual: row.querySelector('[data-bulk-payment-row-date]')?.dataset.manual === '1',
+      installmentManual: row.querySelector('[data-bulk-payment-installment]')?.dataset.manual === '1',
+      cashPaid: numericValue(row, '[data-bulk-payment-cash]'),
+      upiPaid: numericValue(row, '[data-bulk-payment-upi]'),
+      cardPaid: numericValue(row, '[data-bulk-payment-card]'),
+      bankPaid: numericValue(row, '[data-bulk-payment-bank]'),
+      narration: row.querySelector('[data-bulk-payment-note]')?.value.trim() || '',
+      customerName: row.dataset.customerName || 'Customer',
+      enrollmentNumber: row.dataset.enrollmentNumber || ''
+    });
+  };
+  const captureDrafts = () => rowsBody.querySelectorAll('[data-bulk-payment-row]').forEach(captureRow);
+  const updateRowTotal = (row) => {
+    const total = rowTotal(row);
+    const output = row.querySelector('[data-bulk-payment-total]');
+    if (output) output.textContent = `₹${total.toFixed(2)} / ₹${monthlyAmount.toFixed(2)}`;
+    output?.classList.toggle('is-valid', Math.abs(total - monthlyAmount) < 0.01);
+    output?.classList.toggle('is-invalid', total > 0 && Math.abs(total - monthlyAmount) >= 0.01);
+  };
+  const updateCount = () => {
+    const count = [...drafts.values()].filter((draft) => (draft.cashPaid + draft.upiPaid + draft.cardPaid + draft.bankPaid) > 0).length;
+    countLabel.textContent = `${count} payment${count === 1 ? '' : 's'} ready`;
+  };
+  const draftFor = (item, pending) => {
+    const existing = drafts.get(String(item.id)) || {};
+    const existingInstallment = pending.find((installment) => String(installment.id) === String(existing.installmentId));
+    const requestedMonth = Number(defaultMonthInput.value || 0);
+    const preferredInstallment = requestedMonth > 0
+      ? pending.find((installment) => Number(installment.installmentNumber) === requestedMonth)
+      : null;
+    const installmentId = existing.installmentManual && existingInstallment
+      ? String(existingInstallment.id)
+      : String(preferredInstallment?.id || existingInstallment?.id || pending[0]?.id || '');
+    return {
+      installmentId,
+      installmentManual: Boolean(existing.installmentManual),
+      paymentDate: existing.paymentDate || defaultDate,
+      paymentDateManual: Boolean(existing.paymentDateManual),
+      cashPaid: Number(existing.cashPaid || 0),
+      upiPaid: Number(existing.upiPaid || 0),
+      cardPaid: Number(existing.cardPaid || 0),
+      bankPaid: Number(existing.bankPaid || 0),
+      narration: existing.narration || ''
+    };
+  };
+  const renderRows = () => {
+    if (!currentItems.length) {
+      rowsBody.innerHTML = '<tr><td colspan="9" class="center muted">No active customers with pending installments found.</td></tr>';
+      updateCount();
+      return;
+    }
+    rowsBody.innerHTML = currentItems.map((item) => {
+      const pending = Array.isArray(item.pendingInstallments) ? item.pendingInstallments : [];
+      const draft = draftFor(item, pending);
+      const options = pending.map((installment) => `<option value="${installment.id}" data-month="${installment.installmentNumber}" ${String(installment.id) === draft.installmentId ? 'selected' : ''}>Month ${installment.installmentNumber} · due ${escapeHtml(installment.dueDate)}</option>`).join('');
+      const disabled = !pending.length;
+      return `<tr data-bulk-payment-row data-enrollment-id="${item.id}" data-customer-name="${escapeHtml(item.customerName)}" data-enrollment-number="${escapeHtml(item.enrollmentNumber)}">
+        <td><strong>${escapeHtml(item.customerName)}</strong><small>${escapeHtml(item.enrollmentNumber)}${item.customerPhone ? ` · ${escapeHtml(item.customerPhone)}` : ''}</small></td>
+        <td><select data-bulk-payment-installment data-manual="${draft.installmentManual ? '1' : ''}" ${disabled ? 'disabled' : ''}>${options || '<option value="">No pending installment</option>'}</select></td>
+        <td><input type="date" data-bulk-payment-row-date data-manual="${draft.paymentDateManual ? '1' : ''}" value="${draft.paymentDate}" ${disabled ? 'disabled' : ''}></td>
+        <td><input type="number" min="0" step="0.01" inputmode="decimal" data-bulk-payment-cash value="${draft.cashPaid || ''}" ${disabled ? 'disabled' : ''} placeholder="0.00"></td>
+        <td><input type="number" min="0" step="0.01" inputmode="decimal" data-bulk-payment-upi value="${draft.upiPaid || ''}" ${disabled ? 'disabled' : ''} placeholder="0.00"></td>
+        <td><input type="number" min="0" step="0.01" inputmode="decimal" data-bulk-payment-card value="${draft.cardPaid || ''}" ${disabled ? 'disabled' : ''} placeholder="0.00"></td>
+        <td><input type="number" min="0" step="0.01" inputmode="decimal" data-bulk-payment-bank value="${draft.bankPaid || ''}" ${disabled ? 'disabled' : ''} placeholder="0.00"></td>
+        <td><output class="scheme-bulk-payment-total" data-bulk-payment-total>₹0.00 / ₹${monthlyAmount.toFixed(2)}</output>${disabled ? '' : '<button type="button" class="scheme-bulk-fill-cash" data-bulk-payment-fill>Full cash</button>'}</td>
+        <td><input type="text" data-bulk-payment-note value="${escapeHtml(draft.narration)}" ${disabled ? 'disabled' : ''} placeholder="Optional"></td>
+      </tr>`;
+    }).join('');
+    rowsBody.querySelectorAll('[data-bulk-payment-row]').forEach((row) => {
+      row.querySelectorAll('input, select').forEach((input) => input.addEventListener('input', () => { captureRow(row); updateRowTotal(row); updateCount(); }));
+      row.querySelector('[data-bulk-payment-installment]')?.addEventListener('change', (event) => { event.currentTarget.dataset.manual = '1'; captureRow(row); updateRowTotal(row); });
+      row.querySelector('[data-bulk-payment-row-date]')?.addEventListener('change', (event) => { event.currentTarget.dataset.manual = '1'; captureRow(row); });
+      row.querySelector('[data-bulk-payment-fill]')?.addEventListener('click', () => {
+        row.querySelector('[data-bulk-payment-cash]').value = monthlyAmount.toFixed(2);
+        ['upi', 'card', 'bank'].forEach((method) => { row.querySelector(`[data-bulk-payment-${method}]`).value = ''; });
+        captureRow(row);
+        updateRowTotal(row);
+        updateCount();
+      });
+      updateRowTotal(row);
+      captureRow(row);
+    });
+    updateCount();
+  };
+  const loadPage = async () => {
+    captureDrafts();
+    rowsBody.innerHTML = '<tr><td colspan="9" class="center muted">Loading pending installments…</td></tr>';
+    setFeedback('');
+    try {
+      const params = new URLSearchParams({ page: String(page), payments: '1' });
+      if (searchInput.value.trim()) params.set('q', searchInput.value.trim());
+      const response = await fetch(`/api/schemes/${planId}/enrollments?${params.toString()}`, { credentials: 'same-origin' });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Could not load pending installments.');
+      currentItems = Array.isArray(data.items) ? data.items : [];
+      page = Number(data.page) || 1;
+      pageLabel.textContent = `Page ${page} of ${Math.max(1, Number(data.totalPages) || 1)}`;
+      previousButton.disabled = !data.hasPrevious;
+      nextButton.disabled = !data.hasNext;
+      pagination.hidden = !data.totalItems;
+      renderRows();
+    } catch (error) {
+      currentItems = [];
+      renderRows();
+      setFeedback(error.message || 'Could not load pending installments.', true);
+    }
+  };
+  const close = () => {
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+    previousFocus?.focus();
+  };
+  const open = () => {
+    previousFocus = document.activeElement;
+    document.querySelectorAll('.action-menu[open]').forEach((menu) => menu.removeAttribute('open'));
+    page = 1;
+    drafts = new Map();
+    searchInput.value = '';
+    defaultMonthInput.value = '';
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    setTimeout(() => { searchInput.focus(); loadPage(); }, 0);
+  };
+  document.querySelectorAll('[data-scheme-bulk-payment-open]').forEach((button) => button.addEventListener('click', open));
+  modal.querySelectorAll('[data-scheme-bulk-payment-close]').forEach((button) => button.addEventListener('click', close));
+  modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && modal.style.display === 'flex') close(); });
+  filterForm.addEventListener('submit', (event) => { event.preventDefault(); page = 1; loadPage(); });
+  defaultMonthInput.addEventListener('change', () => { captureDrafts(); renderRows(); });
+  previousButton.addEventListener('click', () => { if (page > 1) { page -= 1; loadPage(); } });
+  nextButton.addEventListener('click', () => { page += 1; loadPage(); });
+  submitButton.addEventListener('click', async () => {
+    captureDrafts();
+    const rows = [...drafts.values()].filter((draft) => (draft.cashPaid + draft.upiPaid + draft.cardPaid + draft.bankPaid) > 0);
+    if (!rows.length) return setFeedback('Enter at least one payment amount.', true);
+    if (rows.length > 100) return setFeedback('Record up to 100 payments at a time.', true);
+    const invalid = rows.find((row) => Math.abs((row.cashPaid + row.upiPaid + row.cardPaid + row.bankPaid) - monthlyAmount) >= 0.01);
+    if (invalid) return setFeedback(`${invalid.customerName}: payment parts must total ₹${monthlyAmount.toFixed(2)}.`, true);
+    if (!window.confirm(`Record ${rows.length} scheme payment${rows.length === 1 ? '' : 's'}?`)) return;
+    submitButton.disabled = true;
+    submitButton.textContent = 'Recording…';
+    setFeedback('');
+    try {
+      const response = await fetch(`/api/schemes/${planId}/payments-batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ paymentDate: defaultDate, payments: rows })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) throw new Error(data.error || 'Could not record the selected payments.');
+      setFeedback(`${data.count} payment${data.count === 1 ? '' : 's'} recorded and synced to Cashbook.`);
+      setTimeout(() => window.location.reload(), 450);
+    } catch (error) {
+      setFeedback(error.message || 'Could not record the selected payments.', true);
+      submitButton.disabled = false;
+      submitButton.textContent = 'Record payments';
+    }
+  });
+})();
+
+// Batch cancellation uses a paginated active-customer list, so even a large
+// scheme can be cleaned up without rendering every enrollment at once.
+(function initSchemeBulkCancel() {
+  const modal = document.getElementById('schemeBulkCancelModal');
+  if (!modal) return;
+  const planId = '<%= plan.id %>';
+  const rowsBody = modal.querySelector('[data-bulk-cancel-rows]');
+  const filterForm = modal.querySelector('[data-bulk-cancel-filter]');
+  const searchInput = modal.querySelector('[data-bulk-cancel-search]');
+  const selectAll = modal.querySelector('[data-bulk-cancel-select-all]');
+  const countLabel = modal.querySelector('[data-bulk-cancel-count]');
+  const submitButton = modal.querySelector('[data-bulk-cancel-submit]');
+  const feedback = modal.querySelector('[data-bulk-cancel-feedback]');
+  const pagination = modal.querySelector('[data-bulk-cancel-pagination]');
+  const pageLabel = modal.querySelector('[data-bulk-cancel-page]');
+  const previousButton = modal.querySelector('[data-bulk-cancel-prev]');
+  const nextButton = modal.querySelector('[data-bulk-cancel-next]');
+  let page = 1;
+  let currentItems = [];
+  let selectedIds = new Set();
+  let previousFocus = null;
+
+  const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
+  const setFeedback = (message, isError = false) => {
+    feedback.textContent = message || '';
+    feedback.classList.toggle('is-error', isError);
+  };
+  const updateSelection = () => {
+    countLabel.textContent = `${selectedIds.size} selected`;
+    submitButton.disabled = selectedIds.size === 0;
+    const visibleIds = currentItems.map((item) => String(item.id));
+    selectAll.checked = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
+    selectAll.indeterminate = visibleIds.some((id) => selectedIds.has(id)) && !selectAll.checked;
+  };
+  const renderRows = () => {
+    if (!currentItems.length) {
+      rowsBody.innerHTML = '<tr><td colspan="5" class="center muted">No active customers found.</td></tr>';
+      updateSelection();
+      return;
+    }
+    rowsBody.innerHTML = currentItems.map((item) => `
+      <tr>
+        <td class="center"><input type="checkbox" data-bulk-cancel-id="${item.id}" ${selectedIds.has(String(item.id)) ? 'checked' : ''} aria-label="Select ${escapeHtml(item.customerName)}"></td>
+        <td><strong>${escapeHtml(item.customerName)}</strong><small>${escapeHtml(item.customerPhone || 'No mobile saved')}</small></td>
+        <td><strong>${escapeHtml(item.enrollmentNumber)}</strong></td>
+        <td>${escapeHtml(item.startDate)}</td>
+        <td><span class="pill active">ACTIVE</span></td>
+      </tr>`).join('');
+    rowsBody.querySelectorAll('[data-bulk-cancel-id]').forEach((checkbox) => checkbox.addEventListener('change', () => {
+      const id = String(checkbox.dataset.bulkCancelId);
+      if (checkbox.checked) selectedIds.add(id); else selectedIds.delete(id);
+      updateSelection();
+    }));
+    updateSelection();
+  };
+  const loadPage = async () => {
+    rowsBody.innerHTML = '<tr><td colspan="5" class="center muted">Loading active customers…</td></tr>';
+    setFeedback('');
+    try {
+      const params = new URLSearchParams({ page: String(page) });
+      if (searchInput.value.trim()) params.set('q', searchInput.value.trim());
+      const response = await fetch(`/api/schemes/${planId}/enrollments?${params.toString()}`, { credentials: 'same-origin' });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Could not load scheme customers.');
+      currentItems = Array.isArray(data.items) ? data.items : [];
+      page = Number(data.page) || 1;
+      pageLabel.textContent = `Page ${page} of ${Math.max(1, Number(data.totalPages) || 1)}`;
+      previousButton.disabled = !data.hasPrevious;
+      nextButton.disabled = !data.hasNext;
+      pagination.hidden = !data.totalItems;
+      renderRows();
+    } catch (error) {
+      currentItems = [];
+      renderRows();
+      setFeedback(error.message || 'Could not load scheme customers.', true);
+    }
+  };
+  const close = () => {
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+    previousFocus?.focus();
+  };
+  const open = () => {
+    previousFocus = document.activeElement;
+    document.querySelectorAll('.action-menu[open]').forEach((menu) => menu.removeAttribute('open'));
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    page = 1;
+    selectedIds = new Set();
+    setTimeout(() => { searchInput.focus(); loadPage(); }, 0);
+  };
+  document.querySelectorAll('[data-scheme-bulk-cancel-open]').forEach((button) => button.addEventListener('click', open));
+  modal.querySelectorAll('[data-scheme-bulk-cancel-close]').forEach((button) => button.addEventListener('click', close));
+  modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && modal.style.display === 'flex') close(); });
+  filterForm.addEventListener('submit', (event) => { event.preventDefault(); page = 1; selectedIds = new Set(); loadPage(); });
+  selectAll.addEventListener('change', () => {
+    currentItems.forEach((item) => { if (selectAll.checked) selectedIds.add(String(item.id)); else selectedIds.delete(String(item.id)); });
+    renderRows();
+  });
+  previousButton.addEventListener('click', () => { if (page > 1) { page -= 1; loadPage(); } });
+  nextButton.addEventListener('click', () => { page += 1; loadPage(); });
+  submitButton.addEventListener('click', async () => {
+    if (!selectedIds.size || !window.confirm(`Cancel ${selectedIds.size} selected scheme customer${selectedIds.size === 1 ? '' : 's'}? Existing payment history will remain in the cashbook.`)) return;
+    submitButton.disabled = true;
+    submitButton.textContent = 'Cancelling…';
+    setFeedback('');
+    try {
+      const response = await fetch(`/api/schemes/${planId}/enrollments/batch-cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ enrollmentIds: [...selectedIds] })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) throw new Error(data.error || 'Could not cancel the selected customers.');
+      setFeedback(`${data.count} customer${data.count === 1 ? '' : 's'} cancelled.`);
+      setTimeout(() => window.location.reload(), 450);
+    } catch (error) {
+      setFeedback(error.message || 'Could not cancel the selected customers.', true);
+      submitButton.disabled = false;
+      submitButton.textContent = 'Cancel selected';
+    }
+  });
 })();
 </script>
