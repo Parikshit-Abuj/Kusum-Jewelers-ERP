@@ -142,6 +142,7 @@ model Product {
 
 model StockMovement {
   id             Int          @id @default(autoincrement())
+  saleId         Int?
   productId      Int?
   productBarcode String?
   productSku     String       @default("")
@@ -153,8 +154,10 @@ model StockMovement {
   quantity       Int
   note           String?
   createdAt      DateTime     @default(now())
+  sale           Sale?        @relation(fields: [saleId], references: [id], onDelete: SetNull)
   product        Product?     @relation(fields: [productId], references: [id], onDelete: SetNull)
 
+  @@index([saleId])
   @@index([productId, createdAt])
   @@index([createdAt])
 }
@@ -184,6 +187,7 @@ model Sale {
   updatedAt       DateTime         @updatedAt
   customer        Customer?        @relation(fields: [customerId], references: [id], onDelete: SetNull)
   items           SaleItem[]
+  stockMovements  StockMovement[]
   ledgerEntries   CustomerLedger[]
   urdPurchase     UrdPurchase?
   cashbookEntries CashbookEntry[]
@@ -515,6 +519,7 @@ model SchemePlan {
   maturityAmount Decimal            @db.Decimal(12, 2)
   description    String?            @db.Text
   isActive       Boolean            @default(true)
+  deletionRequestedAt DateTime?
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
   enrollments    SchemeEnrollment[]

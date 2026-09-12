@@ -4,9 +4,9 @@ const path = require('path');
 const { createQrImage } = require('./qr-code');
 
 const bundledSignaturePath = path.join(__dirname, '..', 'assets', 'kusum-authorised-signature.jpg');
-// Match the printable A4 content area used by the sales invoice: 19pt side
-// margins, full-width body, and the same lower signature region.
-const page = { left: 19, right: 572, width: 553, footerY: 652 };
+// Keep standalone URD receipts on the original A4 register layout: 42pt
+// printable margins and a comfortable 511pt content width.
+const page = { left: 42, right: 553, width: 511, footerY: 700 };
 
 function amount(value) {
   return new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2, minimumFractionDigits: 2 }).format(Number(value || 0));
@@ -87,9 +87,10 @@ function drawHeader(doc, purchase, settings) {
   if (address) { doc.text(address, page.left, contactY, { width: 350 }); contactY += 12; }
   if (phones) { doc.text(phones, page.left, contactY, { width: 350, ellipsis: true }); contactY += 12; }
   if (settings.gstin) doc.text(`GSTIN: ${settings.gstin}${settings.panNumber ? `  ·  PAN: ${settings.panNumber}` : ''}`, page.left, contactY, { width: 350, ellipsis: true });
-  doc.fillColor('#111').font('Helvetica-Bold').fontSize(14).text('URD PURCHASE RECEIPT', 389, 44, { width: 183, align: 'right' });
-  doc.fillColor('#111').font('Helvetica').fontSize(8.5).text(`No. ${text(purchase.purchaseNumber)}`, 389, 66, { width: 183, align: 'right' });
-  doc.text(dateTime(purchase.purchaseDate), 389, 79, { width: 183, align: 'right' });
+  const headerRight = page.right - 200;
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(14).text('URD PURCHASE RECEIPT', headerRight, 44, { width: 200, align: 'right', ellipsis: true });
+  doc.fillColor('#111').font('Helvetica').fontSize(8.5).text(`No. ${text(purchase.purchaseNumber)}`, headerRight, 66, { width: 200, align: 'right' });
+  doc.text(dateTime(purchase.purchaseDate), headerRight, 79, { width: 200, align: 'right' });
   line(doc, 101, '#b88732', 1.1);
 }
 function drawCustomer(doc, purchase, y) {
@@ -121,13 +122,13 @@ function drawCustomer(doc, purchase, y) {
 function drawItem(doc, purchase, y) {
   y = sectionHeading(doc, 'Old jewellery / bullion received', y);
   const columns = [
-    ['DESCRIPTION', text(purchase.description, 'Old jewellery purchase'), 150, 'left'],
-    ['METAL', text(purchase.metal), 75, 'left'],
-    ['PURITY', text(purchase.purity), 55, 'center'],
-    ['GROSS WT.', weight(purchase.grossWeight), 72, 'right'],
-    ['NET WT.', weight(purchase.netWeight), 72, 'right'],
-    ['RATE / G', amount(purchase.ratePerGram), 65, 'right'],
-    ['VALUE', amount(purchase.totalAmount), 64, 'right']
+    ['DESCRIPTION', text(purchase.description, 'Old jewellery purchase'), 140, 'left'],
+    ['METAL', text(purchase.metal), 65, 'left'],
+    ['PURITY', text(purchase.purity), 50, 'center'],
+    ['GROSS WT.', weight(purchase.grossWeight), 66, 'right'],
+    ['NET WT.', weight(purchase.netWeight), 66, 'right'],
+    ['RATE / G', amount(purchase.ratePerGram), 62, 'right'],
+    ['VALUE', amount(purchase.totalAmount), 62, 'right']
   ];
   const top = y;
   const headerHeight = 24;
@@ -169,26 +170,33 @@ function drawTotals(doc, purchase, y) {
     const rowY = top + 8 + index * 22;
     const emphasis = index === rows.length - 1;
     doc.fillColor('#111').font(emphasis ? 'Helvetica-Bold' : 'Helvetica').fontSize(emphasis ? 9.2 : 8.6).text(label, split + 10, rowY, { width: 110 });
-    doc.font(emphasis ? 'Helvetica-Bold' : 'Helvetica').fontSize(emphasis ? 9.2 : 8.6).text(value, 500, rowY, { width: 62, align: 'right' });
+    doc.font(emphasis ? 'Helvetica-Bold' : 'Helvetica').fontSize(emphasis ? 9.2 : 8.6).text(value, page.right - 62, rowY, { width: 62, align: 'right' });
     if (emphasis) doc.save().moveTo(split, rowY - 4).lineTo(page.right, rowY - 4).lineWidth(0.45).strokeColor('#111').stroke().restore();
   });
   return top + height + 12;
 }
 function drawFooter(doc, purchase, settings, qr) {
   const y = page.footerY;
-  const height = 82;
-  const split = page.left + 108;
+  const height = 96;
+  const qrSplit = page.left + 100;
+  const authorisedSplit = page.right - 210;
   box(doc, page.left, y, page.width, height);
-  vertical(doc, split, y, height);
-  if (qr) doc.image(qr, page.left + 25, y + 5, { fit: [58, 58] });
-  doc.fillColor('#111').font('Helvetica-Bold').fontSize(6.6).text('SCAN URD DETAILS', page.left + 4, y + 67, { width: split - page.left - 8, align: 'center' });
-  const signatureX = split;
-  const signatureWidth = page.right - split;
+  vertical(doc, qrSplit, y, height);
+  vertical(doc, authorisedSplit, y, height);
+  if (qr) doc.image(qr, page.left + 14, y + 6, { fit: [58, 58] });
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(6.6).text('SCAN URD DETAILS', page.left + 4, y + 69, { width: qrSplit - page.left - 8, align: 'center' });
+  const customerX = qrSplit;
+  const customerWidth = authorisedSplit - qrSplit;
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(8.2).text('Customer signature', customerX + 10, y + 21, { width: customerWidth - 20, align: 'center' });
+  doc.save().moveTo(customerX + 16, y + 61).lineTo(authorisedSplit - 16, y + 61).lineWidth(0.6).strokeColor('#111').stroke().restore();
+  doc.fillColor('#111').font('Helvetica').fontSize(7.4).text('Customer acknowledgement', customerX + 10, y + 68, { width: customerWidth - 20, align: 'center' });
+  const signatureX = authorisedSplit;
+  const signatureWidth = page.right - authorisedSplit;
   doc.fillColor('#111').font('Helvetica-Bold').fontSize(9.2).text(`For ${text(settings.shopName, 'Kusum Jewellers')}`, signatureX + 10, y + 6, { width: signatureWidth - 20, align: 'center' });
   const signature = settings.signatureImage ? Buffer.from(settings.signatureImage) : (fs.existsSync(bundledSignaturePath) ? bundledSignaturePath : null);
-  if (signature) doc.image(signature, signatureX + 22, y + 22, { fit: [140, 42], align: 'center', valign: 'center' });
-  doc.save().moveTo(signatureX + 20, y + 66).lineTo(page.right - 10, y + 66).lineWidth(0.6).strokeColor('#111').stroke().restore();
-  doc.fillColor('#111').font('Helvetica-Bold').fontSize(8).text('Authorised Signatory', signatureX, y + 70, { width: signatureWidth, align: 'center' });
+  if (signature) doc.image(signature, signatureX + 32, y + 20, { fit: [140, 36], align: 'center', valign: 'center' });
+  doc.save().moveTo(signatureX + 20, y + 61).lineTo(page.right - 10, y + 61).lineWidth(0.6).strokeColor('#111').stroke().restore();
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(8).text('Authorised Signatory', signatureX, y + 68, { width: signatureWidth, align: 'center' });
 }
 async function writeUrdPurchaseInvoice(res, purchase, businessSettings = {}) {
   const qr = await qrImage(purchase);

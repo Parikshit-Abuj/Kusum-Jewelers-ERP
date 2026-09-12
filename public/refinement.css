@@ -27,21 +27,6 @@
 .erp-ui .summary-row { padding: 5px 0; }
 .erp-ui .summary-input-wrap { margin: 14px 0; }
 .erp-ui .net-payable-box { padding: 18px; }
-[data-theme='dark'] .erp-ui .billing-wayfinder { background: #15161f; border-color: #30313d; }
-[data-theme='dark'] .erp-ui .billing-wayfinder a { color: #e5e5eb; }
-[data-theme='dark'] .erp-ui .billing-wayfinder a:nth-child(1) b { background: #453720; color: #ffdb83; }
-[data-theme='dark'] .erp-ui .billing-wayfinder a:nth-child(2) b { background: #233e38; color: #96e5cc; }
-[data-theme='dark'] .erp-ui .billing-wayfinder a:nth-child(3) b { background: #393048; color: #d4b5ff; }
-[data-theme='dark'] .erp-ui .overview-metric.metric-gold { background: linear-gradient(125deg,#3a2e1a,#201e18) !important; border-color: #66512a !important; }
-[data-theme='dark'] .erp-ui .overview-metric.metric-silver { background: linear-gradient(125deg,#233a43,#1a222c) !important; border-color: #355663 !important; }
-[data-theme='dark'] .erp-ui .overview-metric.metric-sales { background: linear-gradient(125deg,#1e3c32,#18251f) !important; border-color: #326c51 !important; }
-[data-theme='dark'] .erp-ui .overview-metric.metric-cash { background: linear-gradient(125deg,#3b294b,#221d2c) !important; border-color: #624276 !important; }
-[data-theme='dark'] .erp-ui .report-menu-card { border-top: 3px solid #a9873f; }
-[data-theme='dark'] .erp-ui .report-menu-card:nth-child(3n + 2) { border-top-color: #7d63aa; }
-[data-theme='dark'] .erp-ui .report-menu-card:nth-child(3n) { border-top-color: #439a85; }
-[data-theme='dark'] .erp-ui #invoice-customer { border-top: 2px solid #b18c45; }
-[data-theme='dark'] .erp-ui #invoice-items { border-top: 2px solid #429b85; }
-[data-theme='dark'] .erp-ui #invoice-payment { border-top: 2px solid #9472bf; }
 @media(max-width:1100px) {
   .erp-ui .transaction-layout.barcode-sale { grid-template-columns: minmax(0,1fr) !important; }
   .erp-ui .transaction-summary { position: static; max-height: none; }

@@ -383,23 +383,33 @@ function footerTotals(doc, sale, y) {
 function signatureBox(doc, y, qrImage, sale) {
   const settings = sale._businessSettings || {};
   const height = 82;
-  const split = page.left + 108;
+  const qrSplit = page.left + 108;
+  const authorisedSplit = page.right - 203;
   box(doc, page.left, y, page.right - page.left, height);
-  line(doc, split, y, split, y + height, 0.45);
-  // Keep the existing footer box and page size. Its former customer-signature
-  // area now holds the scannable invoice summary; the right half remains the
-  // authorised Kusum Jewellers signature area.
+  line(doc, qrSplit, y, qrSplit, y + height, 0.45);
+  line(doc, authorisedSplit, y, authorisedSplit, y + height, 0.45);
+  // Keep the existing footer box and page size/table coordinates. The footer
+  // now carries QR, customer acknowledgement, and the shop signature in
+  // three clearly separated columns.
   doc.image(qrImage, page.left + 25, y + 5, { fit: [58, 58] });
-  doc.fillColor('#111').font('Helvetica-Bold').fontSize(6.6).text('SCAN INVOICE DETAILS', page.left + 4, y + 67, { width: split - page.left - 8, align: 'center' });
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(6.6).text('SCAN INVOICE DETAILS', page.left + 4, y + 67, { width: qrSplit - page.left - 8, align: 'center' });
 
-  const signatureWidth = page.right - split - 20;
-  doc.font('Helvetica-Bold').fontSize(9.2).text(`For ${settings.shopName || 'Kusum Jewellers'}`, split + 10, y + 6, { width: signatureWidth, align: 'center' });
+  const customerX = qrSplit;
+  const customerWidth = authorisedSplit - qrSplit;
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(9).text('Customer signature', customerX + 10, y + 20, { width: customerWidth - 20, align: 'center' });
+  line(doc, customerX + 16, y + 56, authorisedSplit - 16, y + 56, 0.6);
+  doc.fillColor('#111').font('Helvetica').fontSize(7.4).text('Customer acknowledgement', customerX + 10, y + 63, { width: customerWidth - 20, align: 'center' });
+
+  const signatureX = authorisedSplit;
+  const signatureWidth = page.right - authorisedSplit - 20;
+  doc.font('Helvetica-Bold').fontSize(9.2).text(`For ${settings.shopName || 'Kusum Jewellers'}`, signatureX + 10, y + 6, { width: signatureWidth, align: 'center' });
   const signatureImage = settings.signatureImage ? Buffer.from(settings.signatureImage) : authorisedSignaturePath;
   if (!settings.signatureImage && !fs.existsSync(authorisedSignaturePath)) {
     throw new Error('The authorised signature image is missing from the ERP installation.');
   }
-  doc.image(signatureImage, split + 10, y + 16, { fit: [signatureWidth, 42], align: 'center', valign: 'center' });
-  doc.font('Helvetica-Bold').fontSize(9.2).text('Authorised Signatory', split + 10, y + 66, { width: signatureWidth, align: 'center' });
+  doc.image(signatureImage, signatureX + 10, y + 16, { fit: [signatureWidth, 36], align: 'center', valign: 'center' });
+  line(doc, signatureX + 10, y + 56, page.right - 10, y + 56, 0.6);
+  doc.font('Helvetica-Bold').fontSize(8).text('Authorised Signatory', signatureX + 10, y + 63, { width: signatureWidth, align: 'center' });
 }
 
 async function writeSaleInvoice(res, sale, businessSettings = {}) {

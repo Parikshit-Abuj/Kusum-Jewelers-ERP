@@ -4,9 +4,9 @@ const path = require('path');
 const { createQrImage } = require('./qr-code');
 
 const bundledSignaturePath = path.join(__dirname, '..', 'assets', 'kusum-authorised-signature.jpg');
-// Keep pledge receipts on the same printable A4 area as sales, URD and scheme
-// receipts so all customer documents share one consistent table width.
-const page = { left: 19, right: 572, width: 553, footerY: 652 };
+// Keep standalone pledge receipts on the original A4 register layout: 42pt
+// printable margins and a comfortable 511pt content width.
+const page = { left: 42, right: 553, width: 511, footerY: 700 };
 
 function amount(value) {
   return new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value || 0));
@@ -102,9 +102,10 @@ function drawHeader(doc, loan, settings) {
   if (address) { doc.text(address, page.left, contactY, { width: 350 }); contactY += 12; }
   if (phones) { doc.text(phones, page.left, contactY, { width: 350, ellipsis: true }); contactY += 12; }
   if (settings.gstin) doc.text(`GSTIN: ${settings.gstin}${settings.panNumber ? `  ·  PAN: ${settings.panNumber}` : ''}`, page.left, contactY, { width: 350, ellipsis: true });
-  doc.fillColor('#111').font('Helvetica-Bold').fontSize(14).text('PLEDGE LOAN RECEIPT', 389, 44, { width: 183, align: 'right' });
-  doc.fillColor('#111').font('Helvetica').fontSize(8.5).text(`No. ${text(loan.pledgeNumber)}`, 389, 66, { width: 183, align: 'right' });
-  doc.text(dateTime(loan.pledgeDate), 389, 79, { width: 183, align: 'right' });
+  const headerRight = page.right - 200;
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(14).text('PLEDGE LOAN RECEIPT', headerRight, 44, { width: 200, align: 'right', ellipsis: true });
+  doc.fillColor('#111').font('Helvetica').fontSize(8.5).text(`No. ${text(loan.pledgeNumber)}`, headerRight, 66, { width: 200, align: 'right' });
+  doc.text(dateTime(loan.pledgeDate), headerRight, 79, { width: 200, align: 'right' });
   line(doc, page.left, 101, page.right, 101, '#b88732', 1.1);
 }
 
@@ -146,7 +147,7 @@ function drawCollateral(doc, loan, y) {
     ['STONE WT.', weight(loan.stoneWeight)],
     ['NET WT.', weight(loan.netWeight)]
   ];
-  const widths = [175, 75, 45, 75, 75, 108];
+  const widths = [185, 100, 45, 60, 60, 61];
   let x = page.left;
   const headerHeight = 24;
   const rowHeight = 32;
@@ -197,10 +198,16 @@ function drawPayments(doc, loan, y, settings) {
     doc.fillColor('#111').font('Helvetica').fontSize(9).text('No repayment recorded.', page.left, y);
     return y + 30;
   }
-  const heads = [['DATE', 19, 80], ['METHOD', 99, 110], ['PRINCIPAL', 209, 100], ['INTEREST', 309, 100], ['RECEIVED', 409, 163]];
+  const heads = [
+    ['DATE', page.left, 75],
+    ['METHOD', page.left + 75, 115],
+    ['PRINCIPAL', page.left + 190, 88],
+    ['INTEREST', page.left + 278, 88],
+    ['RECEIVED', page.left + 366, 145]
+  ];
   const headerHeight = 24;
   const rowHeight = 30;
-  const xPositions = [page.left, 99, 209, 309, 409, page.right];
+  const xPositions = [page.left, page.left + 75, page.left + 190, page.left + 278, page.left + 366, page.right];
   const drawTableHeader = () => {
     doc.rect(page.left, y, page.width, headerHeight).fill('#f2eee8');
     box(doc, page.left, y, page.width, headerHeight);
@@ -220,11 +227,11 @@ function drawPayments(doc, loan, y, settings) {
     box(doc, page.left, y, page.width, rowHeight, 0.45);
     xPositions.slice(1, -1).forEach((x) => vertical(doc, x, y, rowHeight, '#111', 0.4));
     const received = Number(payment.principalAmount || 0) + Number(payment.interestAmount || 0);
-    doc.fillColor('#111').font('Helvetica').fontSize(8.5).text(dateOnly(payment.paymentDate), 24, y + 9, { width: 70 });
-    doc.text(text(payment.paymentMethod).replaceAll('_', ' '), 104, y + 9, { width: 100, ellipsis: true });
-    doc.text(amount(payment.principalAmount), 214, y + 9, { width: 90, align: 'right' });
-    doc.text(amount(payment.interestAmount), 314, y + 9, { width: 90, align: 'right' });
-    doc.font('Helvetica-Bold').text(amount(received), 414, y + 9, { width: 153, align: 'right' });
+    doc.fillColor('#111').font('Helvetica').fontSize(8.5).text(dateOnly(payment.paymentDate), page.left + 5, y + 9, { width: 65 });
+    doc.text(text(payment.paymentMethod).replaceAll('_', ' '), page.left + 80, y + 9, { width: 105, ellipsis: true });
+    doc.text(amount(payment.principalAmount), page.left + 195, y + 9, { width: 78, align: 'right' });
+    doc.text(amount(payment.interestAmount), page.left + 283, y + 9, { width: 78, align: 'right' });
+    doc.font('Helvetica-Bold').text(amount(received), page.left + 371, y + 9, { width: 135, align: 'right' });
     y += rowHeight;
   });
   return y;
@@ -232,19 +239,26 @@ function drawPayments(doc, loan, y, settings) {
 
 function drawFooter(doc, loan, settings, qr) {
   const y = page.footerY;
-  const height = 82;
-  const split = page.left + 108;
+  const height = 96;
+  const qrSplit = page.left + 100;
+  const authorisedSplit = page.right - 210;
   box(doc, page.left, y, page.width, height);
-  vertical(doc, split, y, height);
-  if (qr) doc.image(qr, page.left + 25, y + 5, { fit: [58, 58] });
-  doc.fillColor('#111').font('Helvetica-Bold').fontSize(6.6).text('SCAN PLEDGE DETAILS', page.left + 4, y + 67, { width: split - page.left - 8, align: 'center' });
-  const signatureX = split;
-  const signatureWidth = page.right - split;
+  vertical(doc, qrSplit, y, height);
+  vertical(doc, authorisedSplit, y, height);
+  if (qr) doc.image(qr, page.left + 14, y + 6, { fit: [58, 58] });
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(6.6).text('SCAN PLEDGE DETAILS', page.left + 4, y + 69, { width: qrSplit - page.left - 8, align: 'center' });
+  const customerX = qrSplit;
+  const customerWidth = authorisedSplit - qrSplit;
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(8.2).text('Customer signature', customerX + 10, y + 21, { width: customerWidth - 20, align: 'center' });
+  line(doc, customerX + 16, y + 61, authorisedSplit - 16, y + 61, '#111', 0.6);
+  doc.fillColor('#111').font('Helvetica').fontSize(7.4).text('Customer acknowledgement', customerX + 10, y + 68, { width: customerWidth - 20, align: 'center' });
+  const signatureX = authorisedSplit;
+  const signatureWidth = page.right - authorisedSplit;
   doc.fillColor('#111').font('Helvetica-Bold').fontSize(9.2).text(`For ${text(settings.shopName, 'Kusum Jewellers')}`, signatureX + 10, y + 6, { width: signatureWidth - 20, align: 'center' });
   const signature = settings.signatureImage ? Buffer.from(settings.signatureImage) : (fs.existsSync(bundledSignaturePath) ? bundledSignaturePath : null);
-  if (signature) doc.image(signature, signatureX + 22, y + 22, { fit: [140, 42], align: 'center', valign: 'center' });
-  line(doc, signatureX + 20, y + 66, page.right - 10, y + 66, '#111', 0.6);
-  doc.fillColor('#111').font('Helvetica-Bold').fontSize(8).text('Authorised Signatory', signatureX, y + 70, { width: signatureWidth, align: 'center' });
+  if (signature) doc.image(signature, signatureX + 32, y + 20, { fit: [140, 36], align: 'center', valign: 'center' });
+  line(doc, signatureX + 20, y + 61, page.right - 10, y + 61, '#111', 0.6);
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(8).text('Authorised Signatory', signatureX, y + 68, { width: signatureWidth, align: 'center' });
 }
 
 async function writePledgeLoanInvoice(res, loan, businessSettings = {}) {

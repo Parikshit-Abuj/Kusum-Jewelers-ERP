@@ -5,10 +5,10 @@ const { createQrImage } = require('./qr-code');
 
 const bundledSignaturePath = path.join(__dirname, '..', 'assets', 'kusum-authorised-signature.jpg');
 
-// Customer orders use the same A4 printable width, margins, and footer region
-// as the existing sales invoice. The sales invoice renderer itself is kept
-// untouched so its pre-printed layout remains stable.
-const page = { left: 19, right: 572, width: 553, footerY: 652 };
+// Standalone customer-order receipts use the original A4 printable layout:
+// 42pt margins, a 511pt content width, and a lower signature footer. The
+// sales invoice renderer remains on its established pre-printed coordinates.
+const page = { left: 42, right: 553, width: 511, footerY: 700 };
 
 function amount(value) {
   return new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -147,9 +147,10 @@ function drawHeader(doc, order, settings, continued = false) {
   }
   const status = text(order.status, 'OPEN').toUpperCase();
   const title = continued ? 'CUSTOMER ORDER - CONTINUED' : `CUSTOMER ORDER - ${status}`;
-  doc.fillColor('#111').font('Helvetica-Bold').fontSize(12).text(title, 369, 44, { width: 203, align: 'right', ellipsis: true });
-  doc.fillColor('#111').font('Helvetica').fontSize(8.5).text(`Order ${text(order.orderNumber)}`, 369, 66, { width: 203, align: 'right' });
-  doc.text(`Order date ${dateTime(order.orderDate)}`, 369, 79, { width: 203, align: 'right' });
+  const headerRight = page.right - 184;
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(12).text(title, headerRight, 44, { width: 184, align: 'right', ellipsis: true });
+  doc.fillColor('#111').font('Helvetica').fontSize(8.5).text(`Order ${text(order.orderNumber)}`, headerRight, 66, { width: 184, align: 'right' });
+  doc.text(`Order date ${dateTime(order.orderDate)}`, headerRight, 79, { width: 184, align: 'right' });
   line(doc, page.left, 101, page.right, 101, '#b88732', 1.1);
 }
 
@@ -187,32 +188,34 @@ function drawOrderItem(doc, order, y) {
   const headerHeight = 24;
   const rowHeight = 40;
   const columns = [
-    ['DESCRIPTION', 190, 'left'],
-    ['METAL / PURITY', 95, 'left'],
-    ['PCS', 42, 'right'],
-    ['GROSS WT.', 70, 'right'],
-    ['NET WT.', 70, 'right'],
-    ['QUOTED AMOUNT', 86, 'right']
+    ['DESCRIPTION', 175, 'left'],
+    ['METAL / PURITY', 90, 'left'],
+    ['PCS', 40, 'right'],
+    ['GROSS WT.', 68, 'right'],
+    ['NET WT.', 68, 'right'],
+    ['QUOTED AMOUNT', 70, 'right']
   ];
   const tableHeight = headerHeight + rowHeight;
   doc.rect(page.left, top, page.width, headerHeight).fill('#f2eee8');
   box(doc, page.left, top, page.width, tableHeight);
+  const starts = [];
   let x = page.left;
   columns.forEach(([label, width, align], index) => {
+    starts.push(x);
     if (index) vertical(doc, x, top, tableHeight);
     doc.fillColor('#111').font('Helvetica-Bold').fontSize(7).text(label, x + 4, top + 8, { width: width - 8, align, ellipsis: true });
     x += width;
   });
   line(doc, page.left, top + headerHeight, page.right, top + headerHeight, '#111', 0.45);
   const description = text(order.itemName, 'Jewellery item');
-  doc.fillColor('#111').font('Helvetica-Bold').fontSize(8.4).text(description, page.left + 5, top + headerHeight + 8, { width: 180, ellipsis: true });
-  doc.font('Helvetica').fontSize(7.6).text(text(order.category), page.left + 5, top + headerHeight + 22, { width: 180, ellipsis: true });
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(8.4).text(description, starts[0] + 5, top + headerHeight + 8, { width: columns[0][1] - 10, ellipsis: true });
+  doc.font('Helvetica').fontSize(7.6).text(text(order.category), starts[0] + 5, top + headerHeight + 22, { width: columns[0][1] - 10, ellipsis: true });
   const metalPurity = `${text(order.metal)}${order.purity ? ` / ${text(order.purity)}` : ''}`;
-  doc.font('Helvetica').fontSize(8).text(metalPurity, 214, top + headerHeight + 13, { width: 87, ellipsis: true });
-  doc.text(String(order.quantity || 1), 309, top + headerHeight + 13, { width: 30, align: 'right' });
-  doc.text(weight(order.targetGrossWeight), 350, top + headerHeight + 13, { width: 61, align: 'right' });
-  doc.text(weight(order.targetNetWeight), 420, top + headerHeight + 13, { width: 61, align: 'right' });
-  doc.font('Helvetica-Bold').fontSize(8.3).text(`Rs. ${amount(order.quotedAmount)}`, 490, top + headerHeight + 13, { width: 77, align: 'right', ellipsis: true });
+  doc.font('Helvetica').fontSize(8).text(metalPurity, starts[1] + 5, top + headerHeight + 13, { width: columns[1][1] - 10, ellipsis: true });
+  doc.text(String(order.quantity || 1), starts[2] + 5, top + headerHeight + 13, { width: columns[2][1] - 10, align: 'right' });
+  doc.text(weight(order.targetGrossWeight), starts[3] + 5, top + headerHeight + 13, { width: columns[3][1] - 10, align: 'right' });
+  doc.text(weight(order.targetNetWeight), starts[4] + 5, top + headerHeight + 13, { width: columns[4][1] - 10, align: 'right' });
+  doc.font('Helvetica-Bold').fontSize(8.3).text(`Rs. ${amount(order.quotedAmount)}`, starts[5] + 5, top + headerHeight + 13, { width: columns[5][1] - 10, align: 'right', ellipsis: true });
   return top + tableHeight + 18;
 }
 
@@ -263,16 +266,19 @@ function drawPaymentHistory(doc, order, settings, y) {
 
   const headerHeight = 24;
   const rowHeight = 20;
-  const xPositions = [page.left, 114, 217, 397, page.right];
+  const typeBoundary = page.left + 95;
+  const methodBoundary = page.left + 198;
+  const amountBoundary = page.right - 155;
+  const xPositions = [page.left, typeBoundary, methodBoundary, amountBoundary, page.right];
   const drawTableHeader = () => {
     doc.rect(page.left, currentY, page.width, headerHeight).fill('#f2eee8');
     box(doc, page.left, currentY, page.width, headerHeight);
     xPositions.slice(1, -1).forEach((x) => vertical(doc, x, currentY, headerHeight));
     const heads = [
-      ['DATE', page.left + 8, 80, 'left'],
-      ['TYPE', 123, 84, 'left'],
-      ['METHOD', 226, 163, 'left'],
-      ['AMOUNT', 407, 156, 'right']
+      ['DATE', page.left + 8, 87, 'left'],
+      ['TYPE', typeBoundary + 8, 87, 'left'],
+      ['METHOD', methodBoundary + 8, amountBoundary - methodBoundary - 16, 'left'],
+      ['AMOUNT', amountBoundary + 10, page.right - amountBoundary - 18, 'right']
     ];
     heads.forEach(([label, x, width, align]) => doc.fillColor('#111').font('Helvetica-Bold').fontSize(7.2).text(label, x, currentY + 8, { width, align }));
     currentY += headerHeight;
@@ -290,39 +296,46 @@ function drawPaymentHistory(doc, order, settings, y) {
     box(doc, page.left, currentY, page.width, rowHeight, 0.45);
     xPositions.slice(1, -1).forEach((x) => vertical(doc, x, currentY, rowHeight, '#111', 0.4));
     doc.fillColor('#111').font('Helvetica').fontSize(8.1).text(dateOnly(payment.date), page.left + 8, currentY + 6, { width: 87, ellipsis: true });
-    doc.text(payment.type, 123, currentY + 6, { width: 84, ellipsis: true });
-    doc.text(payment.method, 226, currentY + 6, { width: 163, ellipsis: true });
-    doc.font('Helvetica-Bold').text(`Rs. ${amount(payment.amount)}`, 407, currentY + 6, { width: 156, align: 'right', ellipsis: true });
+    doc.text(payment.type, typeBoundary + 8, currentY + 6, { width: 87, ellipsis: true });
+    doc.text(payment.method, methodBoundary + 8, currentY + 6, { width: amountBoundary - methodBoundary - 16, ellipsis: true });
+    doc.font('Helvetica-Bold').text(`Rs. ${amount(payment.amount)}`, amountBoundary + 10, currentY + 6, { width: page.right - amountBoundary - 18, align: 'right', ellipsis: true });
     currentY += rowHeight;
   });
   doc.fillColor('#111').font('Helvetica-Bold').fontSize(9).text('Total advances received', page.left + 8, currentY + 7);
-  doc.text(`Rs. ${amount(order.customerAdvance)}`, 407, currentY + 7, { width: 156, align: 'right' });
+  doc.text(`Rs. ${amount(order.customerAdvance)}`, amountBoundary + 10, currentY + 7, { width: page.right - amountBoundary - 18, align: 'right' });
   return currentY + 28;
 }
 
 function drawFooter(doc, order, settings, qr) {
   const y = page.footerY;
-  const height = 82;
-  const split = page.left + 108;
+  const height = 96;
+  const qrSplit = page.left + 100;
+  const authorisedSplit = page.right - 210;
   box(doc, page.left, y, page.width, height);
-  vertical(doc, split, y, height);
+  vertical(doc, qrSplit, y, height);
+  vertical(doc, authorisedSplit, y, height);
   if (qr) {
-    doc.image(qr, page.left + 25, y + 5, { fit: [58, 58] });
-    doc.fillColor('#111').font('Helvetica-Bold').fontSize(6.6).text('SCAN ORDER DETAILS', page.left + 4, y + 67, { width: split - page.left - 8, align: 'center' });
+    doc.image(qr, page.left + 14, y + 6, { fit: [58, 58] });
+    doc.fillColor('#111').font('Helvetica-Bold').fontSize(6.6).text('SCAN ORDER DETAILS', page.left + 4, y + 69, { width: qrSplit - page.left - 8, align: 'center' });
   }
-  const signatureX = split;
-  const signatureWidth = page.right - split;
+  const customerX = qrSplit;
+  const customerWidth = authorisedSplit - qrSplit;
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(8.2).text('Customer signature', customerX + 10, y + 20, { width: customerWidth - 20, align: 'center' });
+  line(doc, customerX + 16, y + 60, authorisedSplit - 16, y + 60, '#111', 0.6);
+  doc.fillColor('#111').font('Helvetica').fontSize(7.4).text('Customer acknowledgement', customerX + 10, y + 67, { width: customerWidth - 20, align: 'center' });
+  doc.fillColor('#111').font('Helvetica').fontSize(6.8).text(
+    order.status === 'CANCELLED'
+      ? 'Order cancelled; any advance refund is shown above.'
+      : 'This document records a customer order and is not a tax invoice.',
+    customerX + 10, y + 79, { width: customerWidth - 20, height: 12, align: 'center', ellipsis: true }
+  );
+  const signatureX = authorisedSplit;
+  const signatureWidth = page.right - authorisedSplit;
   doc.fillColor('#111').font('Helvetica-Bold').fontSize(9.2).text(`For ${text(settings.shopName, 'Kusum Jewellers')}`, signatureX + 10, y + 6, { width: signatureWidth - 20, align: 'center' });
   const signature = settings.signatureImage ? Buffer.from(settings.signatureImage) : (fs.existsSync(bundledSignaturePath) ? bundledSignaturePath : null);
-  if (signature) doc.image(signature, signatureX + 22, y + 22, { fit: [140, 42], align: 'center', valign: 'center' });
-  line(doc, signatureX + 20, y + 66, page.right - 10, y + 66, '#111', 0.6);
-  doc.fillColor('#111').font('Helvetica-Bold').fontSize(8).text('Authorised Signatory', signatureX, y + 70, { width: signatureWidth, align: 'center' });
-  doc.fillColor('#111').font('Helvetica').fontSize(7.5).text(
-    order.status === 'CANCELLED'
-      ? 'Customer order cancelled. Any recorded advance refund is shown above.'
-      : 'This document records a customer order and is not a tax invoice.',
-    page.left + 122, y + 24, { width: 260, height: 42, ellipsis: true }
-  );
+  if (signature) doc.image(signature, signatureX + 35, y + 20, { fit: [140, 36], align: 'center', valign: 'center' });
+  line(doc, signatureX + 20, y + 61, page.right - 10, y + 61, '#111', 0.6);
+  doc.fillColor('#111').font('Helvetica-Bold').fontSize(8).text('Authorised Signatory', signatureX, y + 68, { width: signatureWidth, align: 'center' });
 }
 
 async function writeCustomerOrderInvoice(res, order, businessSettings = {}) {

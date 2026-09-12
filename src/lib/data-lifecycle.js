@@ -1019,14 +1019,14 @@ async function getExportPayload(db, key, range, options = {}) {
           ]
         },
         orderBy: [{ startDate: 'asc' }, { id: 'asc' }],
-        include: {
-          customer: true,
-          installments: {
-            select: {
-              installmentNumber: true, paidAmount: true, paymentDate: true, paymentMethod: true,
-              payments: { select: { amount: true, paymentDate: true, paymentMethod: true } }
-            }
-          }
+        // The generic register only renders customer identity and the
+        // enrollment lifetime total.  Keep installment/payment relations in
+        // the `where` clause above for activity matching, but do not load the
+        // complete payment history for every enrollment.
+        select: {
+          enrollmentNumber: true,
+          totalPaid: true,
+          customer: { select: { name: true, phone: true } }
         },
         take: MAX_SOURCE_ROWS + 1
       });
@@ -1254,6 +1254,41 @@ async function archiveData(db, key, range) {
     }
     return rows;
   };
+  const chunks = (rows, size) => {
+    const result = [];
+    for (let index = 0; index < rows.length; index += size) result.push(rows.slice(index, index + size));
+    return result;
+  };
+  // Cashbook reversal touches several linked ledgers per entry. Keep each
+  // transaction small so a large archive cannot exceed the database timeout,
+  // while preserving all-or-nothing accounting for every individual entry.
+  if (key === 'cashbook') {
+    const entries = await db.cashbookEntry.findMany({
+      where: { entryDate: { gte: range.from, lte: range.to } },
+      select: { id: true }, orderBy: { id: 'asc' }, take: MAX_ARCHIVE_OPERATION_ROWS + 1
+    });
+    if (entries.length > MAX_ARCHIVE_OPERATION_ROWS) {
+      throw new Error(`More than ${MAX_ARCHIVE_OPERATION_ROWS} ${resource.label.toLowerCase()} records match this range. Choose a shorter date range before permanently deleting data.`);
+    }
+    let deleted = 0;
+    for (const batch of chunks(entries, 25)) {
+      try {
+        const result = await db.$transaction(async (tx) => {
+          let count = 0;
+          for (const entry of batch) {
+            const reversed = await reverseAndDeleteCashbookEntry(tx, entry.id);
+            count += reversed.deleted;
+          }
+          return count;
+        }, { maxWait: 10000, timeout: 30000 });
+        deleted += result;
+      } catch (error) {
+        if (deleted) error.message = `${error.message || error} ${deleted} earlier Cashbook entries were already removed; retry the same range to continue safely.`;
+        throw error;
+      }
+    }
+    return { deleted, skipped: 0, note: 'Linked customer, invoice, URD and scheme installment accounting was reversed before each cashbook entry was removed.' };
+  }
   return db.$transaction(async (tx) => {
     if (key === 'sales') {
       const candidates = await takeArchiveWindow(tx, 'sale', { saleDate: archiveRange }, { id: true, invoiceNumber: true, balance: true });
@@ -1271,7 +1306,13 @@ async function archiveData(db, key, range) {
         // ledger allocations so later cashbook deletion remains safe.
         await tx.cashbookEntry.updateMany({ where: { saleId: { in: ids } }, data: { saleId: null, syncLedger: false } });
         if (cashbookIds.length) await tx.cashbookEntry.updateMany({ where: { id: { in: cashbookIds } }, data: { syncLedger: false } });
-        await tx.stockMovement.deleteMany({ where: { type: 'SALE', note: { in: invoiceNumbers.map((invoiceNumber) => `Sold via ${invoiceNumber}`) } } });
+        await tx.stockMovement.deleteMany({ where: {
+          type: 'SALE',
+          OR: [
+            { saleId: { in: ids } },
+            { saleId: null, note: { in: invoiceNumbers.map((invoiceNumber) => `Sold via ${invoiceNumber}`) } }
+          ]
+        } });
         await tx.sale.deleteMany({ where: { id: { in: ids } } });
       }
       return { deleted: ids.length, skipped: candidates.length - ids.length, note: 'Invoices with an outstanding customer balance were kept. Related invoice ledger and sale-movement history was removed; independent cashbook entries were retained.' };
@@ -1281,15 +1322,6 @@ async function archiveData(db, key, range) {
       const settled = candidates.filter((p) => num(p.totalAmount) - num(p.paid) - num(p.saleOffset) <= 0);
       for (const purchase of settled) await deleteSettledUrdPurchase(tx, purchase);
       return { deleted: settled.length, skipped: candidates.length - settled.length, note: 'URD purchases with an unpaid customer amount were kept. Linked payout entries were removed with each deleted purchase.' };
-    }
-    if (key === 'cashbook') {
-      const entries = await takeArchiveWindow(tx, 'cashbookEntry', { entryDate: { gte: range.from, lte: range.to } }, { id: true });
-      let deleted = 0;
-      for (const entry of entries) {
-        const result = await reverseAndDeleteCashbookEntry(tx, entry.id);
-        deleted += result.deleted;
-      }
-      return { deleted, skipped: 0, note: 'Linked customer, invoice, URD and scheme installment accounting was reversed before each cashbook entry was removed.' };
     }
     if (key === 'inventory') {
       const candidates = await takeArchiveWindow(tx, 'product', { createdAt: archiveRange }, { id: true, quantity: true });

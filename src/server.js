@@ -133,16 +133,16 @@ function regenerateAndSaveSession(req, res, values, destination, failureTitle) {
   });
 }
 
-function paginationFor(req, totalItems, requestedPage, pageSize) {
+function paginationFor(req, totalItems, requestedPage, pageSize, pageParam = 'page') {
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
   const page = Math.min(totalPages, Math.max(1, Math.floor(number(requestedPage, 1))));
   const pageUrl = (targetPage) => {
     const params = new URLSearchParams();
     Object.entries(req.query || {}).forEach(([key, value]) => {
-      if (key === 'page' || value === undefined || value === null || value === '') return;
+      if (key === pageParam || value === undefined || value === null || value === '') return;
       params.set(key, String(Array.isArray(value) ? value[0] : value));
     });
-    params.set('page', String(targetPage));
+    params.set(pageParam, String(targetPage));
     return `${req.path}?${params.toString()}`;
   };
   return {
@@ -215,10 +215,20 @@ function saleRows(body) {
 }
 
 async function getRateForDate(db, rateDate = dateInput()) {
-  const exact = await db.dailyRate.findUnique({ where: { rateDate } });
-  if (exact) return { rate: exact, sourceDate: rateDate, isFallback: false };
-  const latest = await db.dailyRate.findFirst({ where: { rateDate: { lte: rateDate } }, orderBy: { rateDate: 'desc' } });
+  // Keep rate lookups on the same strict YYYY-MM-DD contract as every other
+  // financial date. Without this normalization a crafted API value such as
+  // "2026-99-99" could be stored/used as a lexicographic rate key.
+  const normalizedRateDate = dateInput(dateTimeFromInput(rateDate || dateInput()));
+  const exact = await db.dailyRate.findUnique({ where: { rateDate: normalizedRateDate } });
+  if (exact) return { rate: exact, sourceDate: normalizedRateDate, isFallback: false };
+  const latest = await db.dailyRate.findFirst({ where: { rateDate: { lte: normalizedRateDate } }, orderBy: { rateDate: 'desc' } });
   return { rate: latest, sourceDate: latest?.rateDate || null, isFallback: Boolean(latest) };
+}
+
+function chunkArray(rows, size) {
+  const chunks = [];
+  for (let index = 0; index < rows.length; index += size) chunks.push(rows.slice(index, index + size));
+  return chunks;
 }
 
 function salePaymentBreakdown(body) {
@@ -304,6 +314,7 @@ function roundedMoney(value) {
 
 function stockMovementSnapshot(product, type, quantity, note, overrides = {}) {
   return {
+    saleId: overrides.saleId ?? null,
     productId: product.id,
     productBarcode: product.barcode || null,
     productSku: product.sku || '',
@@ -1058,7 +1069,7 @@ app.get('/rates', async (req, res, next) => {
 
 app.post('/rates', async (req, res, next) => {
   try {
-    const rateDate = req.body.rateDate || dateInput();
+    const rateDate = dateInput(dateTimeFromInput(req.body.rateDate || dateInput()));
     const gold22k = number(req.body.gold22k);
     const gold24k = number(req.body.gold24k);
     const silver = number(req.body.silver);
@@ -1418,7 +1429,7 @@ app.post('/api/inventory/batch-piece', express.json(), async (req, res, next) =>
       const rateInfo = await getRateForDate(tx);
       const metalAmount = metalRateFromDailyRate({ metal, purity }, rateInfo.rate) * netWeight;
       const suggestedPrice = metalAmount + makingAmount(makingChargeType, makingChargeValue, metalAmount, netWeight);
-      const barcode = await nextBarcode(tx, metal, purity);
+      const barcode = await nextBarcode(tx, metal);
       const newProduct = await tx.product.create({
         data: {
           barcode,
@@ -1571,7 +1582,7 @@ app.post('/inventory', async (req, res, next) => {
       const makingChargeValue = number(req.body.makingChargeValue);
       const metalAmount = metalRateFromDailyRate({ metal, purity }, rateInfo.rate) * netWeight;
       const suggestedPrice = metalAmount + makingAmount(makingChargeType, makingChargeValue, metalAmount, netWeight);
-      const barcode = await nextBarcode(tx, metal, purity);
+      const barcode = await nextBarcode(tx, metal);
       const product = await tx.product.create({
         data: {
           barcode,
@@ -1793,22 +1804,56 @@ app.get('/customers/:id', async (req, res, next) => {
 app.get('/customers/:id/activity', async (req, res, next) => {
   try {
     const customerId = Number(req.params.id);
-    const [customer, sales, payments, purchases, enrollments, pledgeLoans] = await Promise.all([
+    if (!Number.isInteger(customerId) || customerId <= 0) throw new Error('Customer not found.');
+    const pageSize = 50;
+    const [customer, counts] = await Promise.all([
       prisma.customer.findUniqueOrThrow({ where: { id: customerId }, select: { id: true, name: true, phone: true } }),
-      prisma.sale.findMany({ where: { customerId, cancelledAt: null }, select: { id: true, invoiceNumber: true, saleDate: true, total: true }, orderBy: { saleDate: 'desc' }, take: 30 }),
-      prisma.customerLedger.findMany({ where: { customerId, type: { not: 'SALE_CREDIT' } }, select: { entryDate: true, amount: true, paymentMethod: true }, orderBy: [{ entryDate: 'desc' }, { id: 'desc' }], take: 30 }),
-      prisma.urdPurchase.findMany({ where: { customerId, cancelledAt: null }, select: { purchaseNumber: true, purchaseDate: true, totalAmount: true, metal: true }, orderBy: { purchaseDate: 'desc' }, take: 30 }),
-      prisma.schemeEnrollment.findMany({ where: { customerId, status: { not: 'CANCELLED' } }, include: { schemePlan: { select: { name: true } } }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 30 }),
-      prisma.pledgeLoan.findMany({ where: { customerId }, select: { id: true, pledgeNumber: true, pledgeDate: true, itemDescription: true, metal: true, principalAmount: true, principalRepaid: true, status: true }, orderBy: [{ pledgeDate: 'desc' }, { id: 'desc' }], take: 30 })
+      Promise.all([
+        prisma.sale.count({ where: { customerId, cancelledAt: null } }),
+        prisma.customerLedger.count({ where: { customerId, type: { not: 'SALE_CREDIT' } } }),
+        prisma.urdPurchase.count({ where: { customerId, cancelledAt: null } }),
+        prisma.schemeEnrollment.count({ where: { customerId, status: { not: 'CANCELLED' } } }),
+        prisma.pledgeLoan.count({ where: { customerId } }),
+        prisma.customerOrder.count({ where: { customerId } }),
+        prisma.schemeInstallmentPayment.count({ where: { installment: { enrollment: { customerId, status: { not: 'CANCELLED' } } } } }),
+        prisma.pledgeLoanPayment.count({ where: { pledgeLoan: { customerId } } })
+      ])
+    ]);
+    const totalEvents = counts.reduce((sum, count) => sum + count, 0);
+    const pagination = paginationFor(req, totalEvents, req.query.page, pageSize);
+    // Fetch enough of each independently ordered stream to build the requested
+    // global page. This keeps the first page small while allowing every older
+    // event to be reached through normal pagination.
+    const windowSize = pagination.page * pageSize;
+    const [sales, payments, purchases, enrollments, pledgeLoans, orders, schemePayments, pledgePayments] = await Promise.all([
+      prisma.sale.findMany({ where: { customerId, cancelledAt: null }, select: { id: true, invoiceNumber: true, saleDate: true, total: true }, orderBy: [{ saleDate: 'desc' }, { id: 'desc' }], take: windowSize }),
+      prisma.customerLedger.findMany({ where: { customerId, type: { not: 'SALE_CREDIT' } }, select: { id: true, saleId: true, entryDate: true, amount: true, paymentMethod: true, type: true, reference: true, note: true }, orderBy: [{ entryDate: 'desc' }, { id: 'desc' }], take: windowSize }),
+      prisma.urdPurchase.findMany({ where: { customerId, cancelledAt: null }, select: { id: true, purchaseNumber: true, purchaseDate: true, totalAmount: true, metal: true }, orderBy: [{ purchaseDate: 'desc' }, { id: 'desc' }], take: windowSize }),
+      prisma.schemeEnrollment.findMany({ where: { customerId, status: { not: 'CANCELLED' } }, include: { schemePlan: { select: { name: true } } }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: windowSize }),
+      prisma.pledgeLoan.findMany({ where: { customerId }, select: { id: true, pledgeNumber: true, pledgeDate: true, itemDescription: true, metal: true, principalAmount: true, principalRepaid: true, status: true }, orderBy: [{ pledgeDate: 'desc' }, { id: 'desc' }], take: windowSize }),
+      prisma.customerOrder.findMany({ where: { customerId }, select: { id: true, orderNumber: true, orderDate: true, itemName: true, status: true, quotedAmount: true, customerAdvance: true }, orderBy: [{ orderDate: 'desc' }, { id: 'desc' }], take: windowSize }),
+      prisma.schemeInstallmentPayment.findMany({
+        where: { installment: { enrollment: { customerId, status: { not: 'CANCELLED' } } } },
+        select: { id: true, amount: true, paymentDate: true, paymentMethod: true, installment: { select: { installmentNumber: true, enrollment: { select: { id: true, enrollmentNumber: true, schemePlan: { select: { name: true } } } } } } },
+        orderBy: [{ paymentDate: 'desc' }, { id: 'desc' }], take: windowSize
+      }),
+      prisma.pledgeLoanPayment.findMany({
+        where: { pledgeLoan: { customerId } },
+        select: { id: true, paymentDate: true, principalAmount: true, interestAmount: true, paymentMethod: true, pledgeLoan: { select: { pledgeNumber: true } } },
+        orderBy: [{ paymentDate: 'desc' }, { id: 'desc' }], take: windowSize
+      })
     ]);
     const activity = [
       ...sales.map((sale) => ({ kind: 'SALE', occurredAt: sale.saleDate, title: sale.invoiceNumber, amount: Number(sale.total), detail: 'Bill generated', href: `/sales/${sale.id}` })),
-      ...payments.map((entry) => ({ kind: 'PAYMENT', occurredAt: entry.entryDate, title: 'Payment received', amount: Math.abs(Number(entry.amount)), detail: entry.paymentMethod?.replace('_', ' ') || 'Payment', href: null })),
+      ...payments.map((entry) => ({ kind: 'PAYMENT', occurredAt: entry.entryDate, title: entry.reference || 'Payment received', amount: Math.abs(Number(entry.amount)), detail: `${entry.type === 'ADJUSTMENT' ? 'Customer order balance' : 'Payment received'} · ${entry.paymentMethod?.replace('_', ' ') || 'Payment'}${entry.note ? ` · ${entry.note}` : ''}`, href: entry.saleId ? `/sales/${entry.saleId}` : null })),
       ...purchases.map((purchase) => ({ kind: 'URD', occurredAt: purchase.purchaseDate, title: purchase.purchaseNumber, amount: Number(purchase.totalAmount), detail: `${purchase.metal} purchase`, href: `/urd-purchases?q=${encodeURIComponent(purchase.purchaseNumber)}` })),
       ...enrollments.map((enrollment) => ({ kind: 'SCHEME', occurredAt: enrollment.createdAt, title: enrollment.schemePlan.name, detail: `Scheme joined · ${enrollment.enrollmentNumber}`, href: `/schemes/enrollments/${enrollment.id}` })),
-      ...pledgeLoans.map((loan) => ({ kind: 'PLEDGE', occurredAt: loan.pledgeDate, title: loan.pledgeNumber, amount: Math.max(0, Number(loan.principalAmount) - Number(loan.principalRepaid)), detail: `${loan.metal} collateral · ${loan.itemDescription} · ${loan.status.toLowerCase()}`, href: `/pledges/${loan.id}` }))
-    ].sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt)).slice(0, 80);
-    res.render('contacts/customer-activity', { title: `${customer.name} activity`, customer, activity });
+      ...pledgeLoans.map((loan) => ({ kind: 'PLEDGE', occurredAt: loan.pledgeDate, title: loan.pledgeNumber, amount: Math.max(0, Number(loan.principalAmount) - Number(loan.principalRepaid)), detail: `${loan.metal} collateral · ${loan.itemDescription} · ${loan.status.toLowerCase()}`, href: `/pledges/${loan.id}` })),
+      ...orders.map((order) => ({ kind: 'ORDER', occurredAt: order.orderDate, title: order.orderNumber, detail: `Order placed · ${order.itemName} · ${order.status.toLowerCase()}${Number(order.customerAdvance) > 0 ? ` · advance ${money(order.customerAdvance)}` : ''}`, href: `/customer-orders?q=${encodeURIComponent(order.orderNumber)}` })),
+      ...schemePayments.map((payment) => ({ kind: 'SCHEME_PAYMENT', occurredAt: payment.paymentDate, title: payment.installment.enrollment.enrollmentNumber, amount: Number(payment.amount), detail: `${payment.installment.enrollment.schemePlan.name} · Installment ${payment.installment.installmentNumber} · ${payment.paymentMethod.replace('_', ' ')}`, href: `/schemes/enrollments/${payment.installment.enrollment.id}` })),
+      ...pledgePayments.map((payment) => ({ kind: 'PLEDGE_PAYMENT', occurredAt: payment.paymentDate, title: payment.pledgeLoan.pledgeNumber, amount: Number(payment.principalAmount) + Number(payment.interestAmount), detail: `Pledge repayment · ${payment.paymentMethod.replace('_', ' ')}`, href: `/pledges?q=${encodeURIComponent(payment.pledgeLoan.pledgeNumber)}` }))
+    ].sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt)).slice((pagination.page - 1) * pageSize, pagination.page * pageSize);
+    res.render('contacts/customer-activity', { title: `${customer.name} activity`, customer, activity, pagination });
   } catch (error) { next(error); }
 });
 
@@ -2215,7 +2260,7 @@ app.post('/sales', async (req, res, next) => {
         const saleRow = pricedRows.find((row) => row.productId === product.id);
         const quantitySold = saleRow.quantity;
         await tx.stockMovement.create({
-          data: stockMovementSnapshot(product, 'SALE', -quantitySold, `Sold via ${sale.invoiceNumber}`, { netWeight: saleRow.weight })
+          data: stockMovementSnapshot(product, 'SALE', -quantitySold, `Sold via ${sale.invoiceNumber}`, { netWeight: saleRow.weight, saleId: sale.id })
         });
         // One barcode represents one physical jewellery item. Once that barcode
         // appears on a committed bill, remove its inventory row permanently.
@@ -2759,7 +2804,7 @@ app.post('/sales/:id/edit', async (req, res, next) => {
           }
         });
         await tx.stockMovement.create({
-          data: { ...stockMovementSnapshot(row.product, 'SALE', -1, `Sold via ${sale.invoiceNumber}`, { netWeight: row.weight }), createdAt: saleDate }
+          data: { ...stockMovementSnapshot(row.product, 'SALE', -1, `Sold via ${sale.invoiceNumber}`, { netWeight: row.weight, saleId: sale.id }), createdAt: saleDate }
         });
         await tx.product.delete({ where: { id: row.product.id } });
       }
@@ -3043,11 +3088,19 @@ app.get('/pledges/:id', async (req, res, next) => {
       where: { id },
       include: {
         customer: true,
-        payments: { include: { cashbookEntry: true }, orderBy: [{ paymentDate: 'desc' }, { id: 'desc' }] },
         cashbookEntries: { where: { type: 'OUT' }, orderBy: { id: 'asc' }, take: 1 }
       }
     });
-    res.render('pledges/detail', { title: loan.pledgeNumber, loan, outstanding: pledgeOutstanding(loan) });
+    const paymentCount = await prisma.pledgeLoanPayment.count({ where: { pledgeLoanId: id } });
+    const pagination = paginationFor(req, paymentCount, req.query.page, 50);
+    loan.payments = await prisma.pledgeLoanPayment.findMany({
+      where: { pledgeLoanId: id },
+      include: { cashbookEntry: true },
+      orderBy: [{ paymentDate: 'desc' }, { id: 'desc' }],
+      skip: (pagination.page - 1) * pagination.pageSize,
+      take: pagination.pageSize
+    });
+    res.render('pledges/detail', { title: loan.pledgeNumber, loan, outstanding: pledgeOutstanding(loan), pagination });
   } catch (error) { next(error); }
 });
 
@@ -3187,6 +3240,26 @@ app.post('/pledges/:id/payments/:paymentId', async (req, res) => {
     redirectWith(res, `/pledges/${id}`, 'message', 'Pledge repayment corrected in the loan and Cashbook.');
   } catch (error) {
     redirectWith(res, `/pledges/${id}`, 'error', error.message || 'Could not correct the pledge repayment.');
+  }
+});
+
+app.post('/pledges/:id/payments/:paymentId/delete', async (req, res) => {
+  const id = Number(req.params.id);
+  const paymentId = Number(req.params.paymentId);
+  try {
+    if (!Number.isInteger(id) || !Number.isInteger(paymentId) || id <= 0 || paymentId <= 0) throw new Error('Pledge repayment not found.');
+    await prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw`SELECT id FROM \`PledgeLoan\` WHERE id = ${id} FOR UPDATE`;
+      if (!locked.length) throw new Error('Pledge loan not found.');
+      const loan = await tx.pledgeLoan.findUniqueOrThrow({ where: { id } });
+      if (loan.status !== 'ACTIVE') throw new Error('Only an active pledge repayment can be removed.');
+      const payment = await tx.pledgeLoanPayment.findFirst({ where: { id: paymentId, pledgeLoanId: id }, select: { cashbookEntryId: true } });
+      if (!payment) throw new Error('Pledge repayment not found.');
+      await reverseAndDeleteCashbookEntry(tx, payment.cashbookEntryId);
+    });
+    redirectWith(res, `/pledges/${id}`, 'message', 'Pledge repayment removed and the loan balance was recalculated.');
+  } catch (error) {
+    redirectWith(res, `/pledges/${id}`, 'error', error.message || 'Could not remove the pledge repayment.');
   }
 });
 
@@ -3475,6 +3548,16 @@ function supplierText(value) {
   return String(value || '').trim().replace(/\s+/g, ' ');
 }
 
+function supplierPhoneFromInput(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+  const phone = normalizePhone(raw);
+  if (!validCustomerPhone(phone)) {
+    throw new Error('Enter a valid supplier mobile number (10 to 15 digits), or leave it blank.');
+  }
+  return phone;
+}
+
 function supplierNameKey(value) {
   return supplierText(value).toLocaleUpperCase();
 }
@@ -3517,7 +3600,7 @@ async function similarSupplier(tx, name) {
   const tokens = normalized.split(/\s+/).filter((token) => token.length >= 3);
   const saved = await tx.supplier.findMany({
     where: { OR: [{ name: { contains: normalized } }, ...tokens.slice(0, 3).map((token) => ({ name: { contains: token } }))] },
-    select: { id: true, name: true }, orderBy: { id: 'asc' }, take: 250
+    select: { id: true, name: true }, orderBy: { id: 'asc' }
   });
   return saved
     .filter((supplier) => looksLikeSupplierTypo(name, supplier.name))
@@ -3568,22 +3651,27 @@ async function sameNamedSuppliers(tx, name) {
   // JavaScript also handles old records that had accidental extra whitespace.
   const candidates = await tx.supplier.findMany({
     where: { name: { contains: name } },
-    include: { _count: { select: { purchases: true, customerOrders: true } } },
-    take: 100
+    include: { _count: { select: { purchases: true, customerOrders: true } } }
   });
   return candidates.filter((supplier) => supplierNameKey(supplier.name) === nameKey);
 }
 
 async function resolveSupplier(tx, body) {
   const name = titleCase(supplierText(body.supplierName));
-  const phone = String(body.supplierPhone || '').replace(/\D/g, '').slice(0, 15) || null;
+  const phone = supplierPhoneFromInput(body.supplierPhone);
   if (!name) throw new Error('Enter the supplier name.');
   const named = await sameNamedSuppliers(tx, name);
+  // Two legally distinct businesses can share a name. If more than one exact
+  // name match already has a phone number, require that identifying number
+  // instead of silently merging the accounts.
+  if (named.length > 1 && !phone && named.some((supplier) => supplier.phone)) {
+    throw new Error('More than one supplier has this name. Enter the supplier mobile number so the correct account is selected.');
+  }
   const phoneMatch = phone ? await tx.supplier.findUnique({ where: { phone } }) : null;
   if (phoneMatch && supplierNameKey(phoneMatch.name) !== supplierNameKey(name)) {
     throw new Error(`This mobile number already belongs to supplier ${phoneMatch.name}. Open that supplier account instead of creating a second one.`);
   }
-  const candidates = [...named];
+  const candidates = [...new Map(named.map((supplier) => [supplier.id, supplier])).values()];
   if (phoneMatch && !candidates.some((supplier) => supplier.id === phoneMatch.id)) candidates.push({ ...phoneMatch, _count: { purchases: 0, customerOrders: 0 } });
   const existing = await mergeSupplierRecords(tx, candidates);
   if (existing) return tx.supplier.update({ where: { id: existing.id }, data: {
@@ -3653,8 +3741,9 @@ app.get('/api/suppliers/search', async (req, res) => {
 // one canonical supplier profile without loading the whole directory.
 app.get('/api/suppliers/phone/:phone', async (req, res, next) => {
   try {
-    const phone = String(decodeURIComponent(req.params.phone || '')).replace(/\D/g, '').slice(0, 15);
-    if (phone.length < 10 || phone.length > 15) return res.json({ found: false, phone });
+    const raw = String(decodeURIComponent(req.params.phone || '')).trim();
+    const phone = normalizePhone(raw);
+    if (!validCustomerPhone(phone)) return res.json({ found: false, phone: phone || '' });
     const supplier = await prisma.supplier.findUnique({ where: { phone } });
     if (!supplier) return res.json({ found: false, phone });
     res.json({ found: true, supplier: {
@@ -3707,24 +3796,33 @@ app.get('/suppliers/:id', async (req, res, next) => {
   try {
     const supplierId = Number(req.params.id);
     if (!Number.isInteger(supplierId) || supplierId <= 0) throw new Error('Supplier not found.');
-    const [supplier, purchaseTotals] = await Promise.all([
-      prisma.supplier.findUniqueOrThrow({
-        where: { id: supplierId },
-        include: {
-          // Keep the detail view responsive. The summary below is calculated
-          // independently across every active purchase, not this preview.
-          purchases: {
-            where: { cancelledAt: null }, orderBy: [{ purchaseDate: 'desc' }, { id: 'desc' }], take: 200,
-            include: { product: true, cashbookEntries: { orderBy: [{ entryDate: 'desc' }, { id: 'desc' }] } }
-          }
-        }
+    const purchaseWhere = { supplierId, cancelledAt: null };
+    const [supplier, purchaseTotals, purchaseCount, paymentCount] = await Promise.all([
+      prisma.supplier.findUniqueOrThrow({ where: { id: supplierId } }),
+      prisma.supplierPurchase.aggregate({ where: purchaseWhere, _count: { _all: true }, _sum: { quantity: true, netWeight: true, totalAmount: true, paid: true } }),
+      prisma.supplierPurchase.count({ where: purchaseWhere }),
+      prisma.cashbookEntry.count({ where: { supplierPurchase: purchaseWhere } })
+    ]);
+    const purchasePagination = paginationFor(req, purchaseCount, req.query.page, 50);
+    const paymentPagination = paginationFor(req, paymentCount, req.query.paymentPage, 50, 'paymentPage');
+    const [purchases, paymentRows] = await Promise.all([
+      prisma.supplierPurchase.findMany({
+        where: purchaseWhere,
+        orderBy: [{ purchaseDate: 'desc' }, { id: 'desc' }],
+        skip: (purchasePagination.page - 1) * purchasePagination.pageSize,
+        take: purchasePagination.pageSize,
+        include: { product: true, cashbookEntries: { orderBy: [{ entryDate: 'desc' }, { id: 'desc' }] } }
       }),
-      prisma.supplierPurchase.aggregate({
-        where: { supplierId, cancelledAt: null },
-        _count: { _all: true },
-        _sum: { quantity: true, netWeight: true, totalAmount: true, paid: true }
+      prisma.cashbookEntry.findMany({
+        where: { supplierPurchase: purchaseWhere },
+        orderBy: [{ entryDate: 'desc' }, { id: 'desc' }],
+        skip: (paymentPagination.page - 1) * paymentPagination.pageSize,
+        take: paymentPagination.pageSize,
+        include: { supplierPurchase: true }
       })
     ]);
+    supplier.purchases = purchases;
+    supplier.paymentRows = paymentRows;
     const summary = {
       purchaseCount: Number(purchaseTotals._count._all || 0),
       pieces: Number(purchaseTotals._sum.quantity || 0),
@@ -3733,7 +3831,7 @@ app.get('/suppliers/:id', async (req, res, next) => {
       weight: Number(purchaseTotals._sum.netWeight || 0)
     };
     summary.due = roundedMoney(Math.max(0, summary.purchased - summary.paid));
-    res.render('contacts/supplier-detail', { title: supplier.name, supplier, summary });
+    res.render('contacts/supplier-detail', { title: supplier.name, supplier, summary, purchasePagination, paymentPagination });
   } catch (error) { next(error); }
 });
 
@@ -3742,7 +3840,7 @@ app.post('/suppliers/:id', async (req, res, next) => {
   try {
     if (!Number.isInteger(supplierId) || supplierId <= 0) throw new Error('Supplier not found.');
     const name = titleCase(supplierText(req.body.name));
-    const phone = String(req.body.phone || '').replace(/\D/g, '').slice(0, 15) || null;
+    const phone = supplierPhoneFromInput(req.body.phone);
     if (!name) throw new Error('Enter the supplier name.');
     const updated = await prisma.$transaction(async (tx) => {
       const current = await tx.supplier.findUniqueOrThrow({
@@ -3750,11 +3848,14 @@ app.post('/suppliers/:id', async (req, res, next) => {
         include: { _count: { select: { purchases: true, customerOrders: true } } }
       });
       const named = await sameNamedSuppliers(tx, name);
+      if (named.some((supplier) => supplier.id !== supplierId && supplier.phone) && !phone) {
+        throw new Error('More than one supplier has this name. Enter the supplier mobile number so the correct account is selected.');
+      }
       const phoneMatch = phone ? await tx.supplier.findUnique({ where: { phone } }) : null;
       if (phoneMatch && phoneMatch.id !== supplierId && supplierNameKey(phoneMatch.name) !== supplierNameKey(name)) {
         throw new Error(`This mobile number already belongs to supplier ${phoneMatch.name}.`);
       }
-      const candidates = [...named, current];
+      const candidates = [...new Map([...named, current].map((supplier) => [supplier.id, supplier])).values()];
       if (phoneMatch && !candidates.some((supplier) => supplier.id === phoneMatch.id)) candidates.push({ ...phoneMatch, _count: { purchases: 0, customerOrders: 0 } });
       const canonical = await mergeSupplierRecords(tx, candidates);
       return tx.supplier.update({ where: { id: canonical.id }, data: {
@@ -4672,6 +4773,7 @@ app.post('/schemes/plans/:id/edit', async (req, res, next) => {
       include: { _count: { select: { enrollments: { where: { status: { not: 'CANCELLED' } } } } } }
     });
     if (!plan) return redirectWith(res, '/schemes', 'error', 'Scheme plan not found.');
+    if (plan.deletionRequestedAt) return redirectWith(res, '/schemes', 'error', 'This scheme plan is being deleted and cannot be edited.');
     const hasEnrollments = plan._count.enrollments > 0;
     const financialTermsChanged = plan.durationMonths !== durationMonths
       || roundedMoney(plan.monthlyAmount) !== monthlyAmount
@@ -4698,40 +4800,58 @@ app.post('/schemes/plans/:id/edit', async (req, res, next) => {
 });
 
 app.post('/schemes/plans/:id/delete', async (req, res, next) => {
+  let completedEnrollments = 0;
+  let completedPayments = 0;
   try {
     const id = Number(req.params.id);
-    const result = await prisma.$transaction(async (tx) => {
+    if (!Number.isInteger(id) || id <= 0) throw new Error('Scheme plan not found.');
+    // Mark first in a short transaction. If a later chunk fails, the plan is
+    // left inactive and this same endpoint can safely resume the cleanup.
+    const plan = await prisma.$transaction(async (tx) => {
       const lockedPlans = await tx.$queryRaw`SELECT id FROM \`SchemePlan\` WHERE id = ${id} FOR UPDATE`;
       if (!lockedPlans.length) throw new Error('Scheme plan not found.');
-      const plan = await tx.schemePlan.findUniqueOrThrow({ where: { id }, select: { id: true, name: true } });
-      const enrollments = await tx.schemeEnrollment.findMany({
-        where: { schemePlanId: id },
-        select: {
-          id: true,
-          installments: {
-            select: {
-              cashbookEntryId: true,
-              payments: { select: { cashbookEntryId: true } }
-            }
-          }
-        }
-      });
-      const cashbookEntryIds = [...new Set(enrollments.flatMap((enrollment) => enrollment.installments.flatMap((installment) => [
-        installment.cashbookEntryId,
-        ...installment.payments.map((payment) => payment.cashbookEntryId)
-      ])).filter(Boolean))];
-      for (const cashbookEntryId of cashbookEntryIds) {
-        await reverseAndDeleteCashbookEntry(tx, cashbookEntryId);
-      }
-      if (enrollments.length) await tx.schemeEnrollment.deleteMany({ where: { schemePlanId: id } });
+      const current = await tx.schemePlan.findUniqueOrThrow({ where: { id }, select: { id: true, name: true, deletionRequestedAt: true } });
+      await tx.schemePlan.update({ where: { id }, data: { isActive: false, deletionRequestedAt: current.deletionRequestedAt || new Date() } });
+      return current;
+    }, { maxWait: 10000, timeout: 30000 });
+
+    const chunkSize = 10;
+    while (true) {
+      const chunkResult = await prisma.$transaction(async (tx) => {
+        const idRows = await tx.$queryRaw`SELECT id FROM \`SchemeEnrollment\` WHERE schemePlanId = ${id} ORDER BY id ASC LIMIT ${chunkSize} FOR UPDATE`;
+        const enrollmentIds = idRows.map((row) => Number(row.id)).filter((value) => Number.isInteger(value));
+        if (!enrollmentIds.length) return { done: true, enrollments: 0, payments: 0 };
+        const enrollments = await tx.schemeEnrollment.findMany({
+          where: { id: { in: enrollmentIds }, schemePlanId: id },
+          select: { id: true, installments: { select: { cashbookEntryId: true, payments: { select: { cashbookEntryId: true } } } } }
+        });
+        const cashbookEntryIds = [...new Set(enrollments.flatMap((enrollment) => enrollment.installments.flatMap((installment) => [
+          installment.cashbookEntryId, ...installment.payments.map((payment) => payment.cashbookEntryId)
+        ])).filter(Boolean))];
+        for (const cashbookEntryId of cashbookEntryIds) await reverseAndDeleteCashbookEntry(tx, cashbookEntryId);
+        await tx.schemeEnrollment.deleteMany({ where: { id: { in: enrollmentIds }, schemePlanId: id } });
+        return { done: false, enrollments: enrollments.length, payments: cashbookEntryIds.length };
+      }, { maxWait: 10000, timeout: 30000 });
+      completedEnrollments += chunkResult.enrollments;
+      completedPayments += chunkResult.payments;
+      if (chunkResult.done) break;
+    }
+    await prisma.$transaction(async (tx) => {
+      const lockedPlans = await tx.$queryRaw`SELECT id FROM \`SchemePlan\` WHERE id = ${id} FOR UPDATE`;
+      if (!lockedPlans.length) return;
+      const remaining = await tx.schemeEnrollment.count({ where: { schemePlanId: id } });
+      if (remaining) throw new Error('Some scheme enrollments could not be removed. Retry deleting this plan to resume safely.');
       await tx.schemePlan.delete({ where: { id } });
-      return { plan, enrollmentCount: enrollments.length, paymentCount: cashbookEntryIds.length };
-    });
+    }, { maxWait: 10000, timeout: 30000 });
+    const result = { plan, enrollmentCount: completedEnrollments, paymentCount: completedPayments };
     const details = result.enrollmentCount
       ? ` ${result.enrollmentCount} enrollment${result.enrollmentCount === 1 ? '' : 's'} and ${result.paymentCount} Cashbook payment${result.paymentCount === 1 ? '' : 's'} were reversed.`
       : '';
     redirectWith(res, '/schemes', 'message', `Scheme plan "${result.plan.name}" deleted.${details}`);
-  } catch (error) { redirectWith(res, '/schemes', 'error', error.message || 'Could not delete scheme plan.'); }
+  } catch (error) {
+    const progress = completedEnrollments ? ` ${completedEnrollments} enrollment${completedEnrollments === 1 ? '' : 's'} and ${completedPayments} payment${completedPayments === 1 ? '' : 's'} were removed before the interruption; retry delete to resume.` : '';
+    redirectWith(res, '/schemes', 'error', `${error.message || 'Could not delete scheme plan.'}${progress}`);
+  }
 });
 
 app.post('/schemes/:planId/enroll', async (req, res, next) => {
@@ -4750,7 +4870,7 @@ app.post('/schemes/:planId/enroll', async (req, res, next) => {
       const lockedPlans = await tx.$queryRaw`SELECT id FROM \`SchemePlan\` WHERE id = ${planId} FOR UPDATE`;
       if (!lockedPlans.length) throw new Error('Scheme plan not found.');
       const plan = await tx.schemePlan.findUniqueOrThrow({ where: { id: planId } });
-      if (!plan.isActive) throw new Error('This scheme plan is not available for enrollment.');
+      if (!plan.isActive || plan.deletionRequestedAt) throw new Error('This scheme plan is not available for enrollment.');
 
       // Find or create the one shared customer profile. Do not silently
       // overwrite established customer details while enrolling a scheme.
@@ -4762,7 +4882,7 @@ app.post('/schemes/:planId/enroll', async (req, res, next) => {
       // Reserve a compact, atomic scheme number. The counter is scoped to
       // this plan, so every plan starts at SCH-1 while two PCs cannot receive
       // the same number inside the same plan.
-      const enrollmentNumber = await nextDocumentNumber(tx, 'SCH', startDate, { schemePlanId });
+      const enrollmentNumber = await nextDocumentNumber(tx, 'SCH', startDate, { schemePlanId: planId });
       const schedule = createInstallmentSchedule(startDate, plan.durationMonths);
 
       const enrollment = await tx.schemeEnrollment.create({
@@ -4802,6 +4922,7 @@ app.post('/schemes/:planId/enroll', async (req, res, next) => {
 // customers and their installment schedules while keeping the same plan lock
 // and customer de-duplication rules as the single-customer workflow.
 app.post('/api/schemes/:planId/enroll-batch', express.json(), async (req, res) => {
+  let completedCount = 0;
   try {
     const planId = Number(req.params.planId);
     if (!Number.isInteger(planId) || planId < 1) return res.status(400).json({ error: 'Choose a valid scheme plan.' });
@@ -4826,52 +4947,55 @@ app.post('/api/schemes/:planId/enroll-batch', express.json(), async (req, res) =
     }).filter((row) => row.name || row.phone);
     if (!rows.length) return res.status(400).json({ error: 'Add a customer name or mobile number before enrolling.' });
 
-    const result = await prisma.$transaction(async (tx) => {
-      const lockedPlans = await tx.$queryRaw`SELECT id FROM \`SchemePlan\` WHERE id = ${planId} FOR UPDATE`;
-      if (!lockedPlans.length) throw new Error('Scheme plan not found.');
-      const plan = await tx.schemePlan.findUniqueOrThrow({ where: { id: planId } });
-      if (!plan.isActive) throw new Error('This scheme plan is not available for enrollment.');
-
-      const created = [];
-      const installmentRows = [];
-      for (const row of rows) {
-        let customer = row.phone ? await tx.customer.findUnique({ where: { phone: row.phone } }) : null;
-        if (!customer) {
-          if (!row.name) throw new Error(`Row ${row.rowNumber}: enter a customer name when no saved mobile profile is found.`);
-          customer = await tx.customer.create({ data: { name: row.name, phone: row.phone || null } });
-        }
-        const enrollmentNumber = await nextDocumentNumber(tx, 'SCH', row.startDate, { schemePlanId });
-        const schedule = createInstallmentSchedule(row.startDate, plan.durationMonths);
-        const enrollment = await tx.schemeEnrollment.create({
-          data: {
-            enrollmentNumber,
-            schemePlanId: planId,
-            customerId: customer.id,
-            startDate: row.startDate,
-            endDate: schemeEndDate(row.startDate, plan.durationMonths),
-            status: 'ACTIVE',
-            totalPaid: 0,
-            installmentsPaid: 0,
-            notes: row.notes
+    const created = [];
+    let planName = '';
+    // Keep each transaction bounded. A 100-row request is still accepted by
+    // the UI, but four smaller atomic chunks prevent a long lock from timing
+    // out on a shop PC or LAN database.
+    for (const chunk of chunkArray(rows, 25)) {
+      const result = await prisma.$transaction(async (tx) => {
+        const lockedPlans = await tx.$queryRaw`SELECT id FROM \`SchemePlan\` WHERE id = ${planId} FOR UPDATE`;
+        if (!lockedPlans.length) throw new Error('Scheme plan not found.');
+        const plan = await tx.schemePlan.findUniqueOrThrow({ where: { id: planId } });
+        if (!plan.isActive || plan.deletionRequestedAt) throw new Error('This scheme plan is not available for enrollment.');
+        const chunkCreated = [];
+        const installmentRows = [];
+        for (const row of chunk) {
+          let customer = row.phone ? await tx.customer.findUnique({ where: { phone: row.phone } }) : null;
+          if (!customer) {
+            if (!row.name) throw new Error(`Row ${row.rowNumber}: enter a customer name when no saved mobile profile is found.`);
+            customer = await tx.customer.create({ data: { name: row.name, phone: row.phone || null } });
           }
-        });
-        installmentRows.push(...schedule.map(({ installmentNumber, dueDate }) => ({
-          enrollmentId: enrollment.id,
-          installmentNumber,
-          dueDate,
-          paidAmount: 0,
-          status: 'PENDING'
-        })));
-        created.push({ enrollmentNumber, customerName: customer.name });
-      }
-      if (installmentRows.length) await tx.schemeInstallment.createMany({ data: installmentRows });
-      return { planName: plan.name, created };
-    }, { maxWait: 10000, timeout: 30000 });
+          const enrollmentNumber = await nextDocumentNumber(tx, 'SCH', row.startDate, { schemePlanId: planId });
+          const schedule = createInstallmentSchedule(row.startDate, plan.durationMonths);
+          const enrollment = await tx.schemeEnrollment.create({
+            data: {
+              enrollmentNumber,
+              schemePlanId: planId,
+              customerId: customer.id,
+              startDate: row.startDate,
+              endDate: schemeEndDate(row.startDate, plan.durationMonths),
+              status: 'ACTIVE',
+              totalPaid: 0,
+              installmentsPaid: 0,
+              notes: row.notes
+            }
+          });
+          installmentRows.push(...schedule.map(({ installmentNumber, dueDate }) => ({ enrollmentId: enrollment.id, installmentNumber, dueDate, paidAmount: 0, status: 'PENDING' })));
+          chunkCreated.push({ enrollmentNumber, customerName: customer.name });
+        }
+        if (installmentRows.length) await tx.schemeInstallment.createMany({ data: installmentRows });
+        return { planName: plan.name, created: chunkCreated };
+      }, { maxWait: 10000, timeout: 30000 });
+      planName = result.planName;
+      created.push(...result.created);
+      completedCount += result.created.length;
+    }
 
-    res.json({ success: true, count: result.created.length, planName: result.planName, enrollments: result.created });
+    res.json({ success: true, count: created.length, planName, enrollments: created });
   } catch (error) {
     console.error('Batch scheme enrollment error:', error);
-    res.status(500).json({ error: error.message || 'Could not enroll the selected customers.' });
+    res.status(500).json({ error: error.message || 'Could not enroll the selected customers.', completedCount: typeof completedCount === 'number' ? completedCount : 0 });
   }
 });
 
@@ -4948,6 +5072,7 @@ app.get('/api/schemes/:planId/enrollments', async (req, res) => {
 // submits split payment columns, so every Cashbook part and its scheme link
 // are committed together; blank rows are intentionally ignored by the client.
 app.post('/api/schemes/:planId/payments-batch', express.json(), async (req, res) => {
+  let completedCount = 0;
   try {
     const planId = Number(req.params.planId);
     if (!Number.isInteger(planId) || planId < 1) return res.status(400).json({ error: 'Choose a valid scheme plan.' });
@@ -4978,96 +5103,69 @@ app.post('/api/schemes/:planId/payments-batch', express.json(), async (req, res)
     const duplicateInstallment = rows.find((row, index) => rows.some((other, otherIndex) => otherIndex < index && other.installmentId === row.installmentId));
     if (duplicateInstallment) throw new Error(`Row ${duplicateInstallment.rowNumber}: the same installment is entered more than once.`);
 
-    const result = await prisma.$transaction(async (tx) => {
-      const lockedPlans = await tx.$queryRaw`SELECT id FROM \`SchemePlan\` WHERE id = ${planId} FOR UPDATE`;
-      if (!lockedPlans.length) throw new Error('Scheme plan not found.');
-      const plan = await tx.schemePlan.findUniqueOrThrow({ where: { id: planId } });
-
-      const enrollmentIds = [...new Set(rows.map((row) => row.enrollmentId))];
-      const installmentIds = rows.map((row) => row.installmentId);
-      await tx.$queryRaw`SELECT id FROM \`SchemeEnrollment\` WHERE id IN (${Prisma.join(enrollmentIds)}) AND schemePlanId = ${planId} FOR UPDATE`;
-      await tx.$queryRaw`SELECT id FROM \`SchemeInstallment\` WHERE id IN (${Prisma.join(installmentIds)}) FOR UPDATE`;
-      const enrollments = await tx.schemeEnrollment.findMany({
-        where: { id: { in: enrollmentIds }, schemePlanId: planId },
-        include: { schemePlan: true }
-      });
-      const installments = await tx.schemeInstallment.findMany({ where: { id: { in: installmentIds } } });
-      const enrollmentById = new Map(enrollments.map((enrollment) => [enrollment.id, enrollment]));
-      const installmentById = new Map(installments.map((installment) => [installment.id, installment]));
-      for (const row of rows) {
-        const enrollment = enrollmentById.get(row.enrollmentId);
-        const installment = installmentById.get(row.installmentId);
-        if (!enrollment || enrollment.status !== 'ACTIVE') throw new Error(`Row ${row.rowNumber}: scheme customer is not active.`);
-        if (!installment || installment.enrollmentId !== enrollment.id || installment.status !== 'PENDING') throw new Error(`Row ${row.rowNumber}: installment is no longer pending. Refresh the list and try again.`);
-        if (!isFullInstallmentPayment(row.payment.paid, plan.monthlyAmount)) {
-          throw new Error(`Row ${row.rowNumber}: enter the exact monthly installment amount of ${money(plan.monthlyAmount)}.`);
+    let processed = 0;
+    for (const chunk of chunkArray(rows, 25)) {
+      const result = await prisma.$transaction(async (tx) => {
+        const lockedPlans = await tx.$queryRaw`SELECT id FROM \`SchemePlan\` WHERE id = ${planId} FOR UPDATE`;
+        if (!lockedPlans.length) throw new Error('Scheme plan not found.');
+        const plan = await tx.schemePlan.findUniqueOrThrow({ where: { id: planId } });
+        if (plan.deletionRequestedAt) throw new Error('This scheme plan is being deleted and cannot receive payments.');
+        const enrollmentIds = [...new Set(chunk.map((row) => row.enrollmentId))];
+        const installmentIds = chunk.map((row) => row.installmentId);
+        await tx.$queryRaw`SELECT id FROM \`SchemeEnrollment\` WHERE id IN (${Prisma.join(enrollmentIds)}) AND schemePlanId = ${planId} FOR UPDATE`;
+        await tx.$queryRaw`SELECT id FROM \`SchemeInstallment\` WHERE id IN (${Prisma.join(installmentIds)}) FOR UPDATE`;
+        const enrollments = await tx.schemeEnrollment.findMany({ where: { id: { in: enrollmentIds }, schemePlanId: planId }, include: { schemePlan: true } });
+        const installments = await tx.schemeInstallment.findMany({ where: { id: { in: installmentIds } } });
+        const enrollmentById = new Map(enrollments.map((enrollment) => [enrollment.id, enrollment]));
+        const installmentById = new Map(installments.map((installment) => [installment.id, installment]));
+        for (const row of chunk) {
+          const enrollment = enrollmentById.get(row.enrollmentId);
+          const installment = installmentById.get(row.installmentId);
+          if (!enrollment || enrollment.status !== 'ACTIVE') throw new Error(`Row ${row.rowNumber}: scheme customer is not active.`);
+          if (!installment || installment.enrollmentId !== enrollment.id || installment.status !== 'PENDING') throw new Error(`Row ${row.rowNumber}: installment is no longer pending. Refresh the list and try again.`);
+          if (!isFullInstallmentPayment(row.payment.paid, plan.monthlyAmount)) throw new Error(`Row ${row.rowNumber}: enter the exact monthly installment amount of ${money(plan.monthlyAmount)}.`);
         }
-      }
-
-      const touchedEnrollments = new Set();
-      for (const row of rows) {
-        const enrollment = enrollmentById.get(row.enrollmentId);
-        const installment = installmentById.get(row.installmentId);
-        const cashbookEntries = [];
-        for (const component of row.payment.cashbookPayments) {
-          const cashbookEntry = await tx.cashbookEntry.create({
-            data: {
-              entryDate: row.paymentDate,
-              type: 'IN',
-              paymentMethod: component.method,
-              amount: component.amount,
+        const touchedEnrollments = new Set();
+        for (const row of chunk) {
+          const enrollment = enrollmentById.get(row.enrollmentId);
+          const installment = installmentById.get(row.installmentId);
+          const cashbookEntries = [];
+          for (const component of row.payment.cashbookPayments) {
+            const cashbookEntry = await tx.cashbookEntry.create({ data: {
+              entryDate: row.paymentDate, type: 'IN', paymentMethod: component.method, amount: component.amount,
               description: `Scheme payment — ${enrollment.enrollmentNumber} — Installment ${installment.installmentNumber}`,
-              reference: generatedReference('SCH-PAY'),
-              customerId: enrollment.customerId,
+              reference: generatedReference('SCH-PAY'), customerId: enrollment.customerId,
               notes: [`${plan.name} · Installment ${installment.installmentNumber} of ${plan.durationMonths}`, row.narration].filter(Boolean).join(' · ')
-            }
-          });
-          cashbookEntries.push({ ...component, id: cashbookEntry.id });
+            } });
+            cashbookEntries.push({ ...component, id: cashbookEntry.id });
+          }
+          await tx.schemeInstallmentPayment.createMany({ data: cashbookEntries.map((entry) => ({ installmentId: installment.id, cashbookEntryId: entry.id, amount: entry.amount, paymentDate: row.paymentDate, paymentMethod: entry.method })) });
+          await tx.schemeInstallment.update({ where: { id: installment.id }, data: {
+            paidAmount: row.payment.paid, paymentDate: row.paymentDate, paymentMethod: row.payment.paymentMethod,
+            cashbookEntryId: cashbookEntries.length === 1 ? cashbookEntries[0].id : null, notes: row.narration, status: 'PAID'
+          } });
+          touchedEnrollments.add(enrollment.id);
         }
-        await tx.schemeInstallmentPayment.createMany({
-          data: cashbookEntries.map((entry) => ({
-            installmentId: installment.id,
-            cashbookEntryId: entry.id,
-            amount: entry.amount,
-            paymentDate: row.paymentDate,
-            paymentMethod: entry.method
-          }))
-        });
-        await tx.schemeInstallment.update({
-          where: { id: installment.id },
-          data: {
-            paidAmount: row.payment.paid,
-            paymentDate: row.paymentDate,
-            paymentMethod: row.payment.paymentMethod,
-            cashbookEntryId: cashbookEntries.length === 1 ? cashbookEntries[0].id : null,
-            notes: row.narration,
-            status: 'PAID'
-          }
-        });
-        touchedEnrollments.add(enrollment.id);
-      }
-
-      for (const enrollmentId of touchedEnrollments) {
-        const enrollment = enrollmentById.get(enrollmentId);
-        const [paidAggregate, installmentsPaid] = await Promise.all([
-          tx.schemeInstallment.aggregate({ where: { enrollmentId, status: 'PAID' }, _sum: { paidAmount: true } }),
-          tx.schemeInstallment.count({ where: { enrollmentId, status: 'PAID' } })
-        ]);
-        await tx.schemeEnrollment.update({
-          where: { id: enrollmentId },
-          data: {
-            totalPaid: roundedMoney(paidAggregate._sum.paidAmount || 0),
-            installmentsPaid,
+        for (const enrollmentId of touchedEnrollments) {
+          const enrollment = enrollmentById.get(enrollmentId);
+          const [paidAggregate, installmentsPaid] = await Promise.all([
+            tx.schemeInstallment.aggregate({ where: { enrollmentId, status: 'PAID' }, _sum: { paidAmount: true } }),
+            tx.schemeInstallment.count({ where: { enrollmentId, status: 'PAID' } })
+          ]);
+          await tx.schemeEnrollment.update({ where: { id: enrollmentId }, data: {
+            totalPaid: roundedMoney(paidAggregate._sum.paidAmount || 0), installmentsPaid,
             status: installmentsPaid >= enrollment.schemePlan.durationMonths ? 'COMPLETED' : 'ACTIVE'
-          }
-        });
-      }
-      return { count: rows.length };
-    }, { maxWait: 10000, timeout: 30000 });
-    res.json({ success: true, count: result.count, paymentDate: sharedPaymentDate });
+          } });
+        }
+        return { count: chunk.length };
+      }, { maxWait: 10000, timeout: 30000 });
+      processed += result.count;
+      completedCount += result.count;
+    }
+    res.json({ success: true, count: processed, paymentDate: sharedPaymentDate });
   } catch (error) {
     console.error('Batch scheme payment error:', error);
-    res.status(500).json({ error: error.message || 'Could not record the selected scheme payments.' });
+    res.status(500).json({ error: error.message || 'Could not record the selected scheme payments.', completedCount });
   }
 });
 
@@ -5143,7 +5241,8 @@ app.get('/schemes/enrollments/:id/receipt.pdf', async (req, res, next) => {
       }
     });
     if (!enrollment || enrollment.status === 'CANCELLED') return res.status(404).send('Enrollment not found.');
-    await writeSchemeConsolidatedReceipt(res, enrollment, await getBusinessSettings(prisma));
+    const narration = optionalText(req.query.narration, 1000);
+    await writeSchemeConsolidatedReceipt(res, enrollment, await getBusinessSettings(prisma), { narration });
   } catch (error) { next(error); }
 });
 
@@ -5189,6 +5288,7 @@ app.post('/schemes/enrollments/:id/pay', async (req, res, next) => {
         include: { schemePlan: true }
       });
       if (!enrollment || enrollment.status !== 'ACTIVE') throw new Error('This enrollment is not active.');
+      if (enrollment.schemePlan.deletionRequestedAt) throw new Error('This scheme plan is being deleted and cannot receive payments.');
 
       const lockedInstallments = await tx.$queryRaw`SELECT id FROM \`SchemeInstallment\` WHERE id = ${installmentId} FOR UPDATE`;
       if (!lockedInstallments.length) throw new Error('Installment not found.');
@@ -5286,6 +5386,7 @@ app.post('/schemes/enrollments/:id/installments/:installmentId/edit-payment', as
         include: { schemePlan: true }
       });
       if (!enrollment || enrollment.status === 'CANCELLED') throw new Error('A cancelled scheme enrollment cannot be edited.');
+      if (enrollment.schemePlan.deletionRequestedAt) throw new Error('This scheme plan is being deleted and cannot be edited.');
 
       const lockedInstallments = await tx.$queryRaw`SELECT id FROM \`SchemeInstallment\` WHERE id = ${installmentId} FOR UPDATE`;
       if (!lockedInstallments.length) throw new Error('Installment not found.');

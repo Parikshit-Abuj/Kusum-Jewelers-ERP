@@ -44,10 +44,10 @@ function formatBarcode(prefix, serial) {
 /**
  * Reserve the next variable-length (1–6 character) Base-36 barcode while holding the caller's database
  * transaction. `LAST_INSERT_ID(expr)` is connection-local in MySQL, making
- * the returned value safe even when several shop PCs add the same metal and
- * purity at the exact same time.
+ * the returned value safe even when several shop PCs add the same metal at
+ * the exact same time.
  */
-async function nextBarcode(tx, metal, purity) {
+async function nextBarcode(tx, metal) {
   const prefix = base36BarcodePrefix(metal);
   const seriesKey = barcodeSeriesKey(metal);
 

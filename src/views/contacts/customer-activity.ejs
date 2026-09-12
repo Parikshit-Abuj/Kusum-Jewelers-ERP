@@ -22,6 +22,7 @@
     <% }) %>
   </ol>
   <% } else { %>
-  <div class="empty-state compact"><span>◷</span><h3>No activity yet</h3><p>Bills, received payments, URD purchases, pledge loans and schemes will appear here.</p></div>
+  <div class="empty-state compact"><span>◷</span><h3>No activity yet</h3><p>Bills, payments, URD purchases, pledge loans, customer orders and schemes will appear here.</p></div>
   <% } %>
+  <%- include('../_pagination', { pagination: typeof pagination !== 'undefined' ? pagination : null }) %>
 </section>
