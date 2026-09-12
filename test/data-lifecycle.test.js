@@ -35,8 +35,8 @@ test('sales bill numbers use an India financial-year counter and roll over on 1 
     schemeEnrollment: { findUnique: async () => null }
   };
 
-  assert.equal(await nextDocumentNumber(tx, 'SB', new Date(2026, 2, 31, 12, 0)), 'SB/25-26/00001');
-  assert.equal(await nextDocumentNumber(tx, 'SB', new Date(2026, 3, 1, 12, 0)), 'SB/26-27/00001');
+  assert.equal(await nextDocumentNumber(tx, 'SB', new Date(2026, 2, 31, 12, 0)), 'SB-2526-1');
+  assert.equal(await nextDocumentNumber(tx, 'SB', new Date(2026, 3, 1, 12, 0)), 'SB-2627-1');
   assert.deepEqual(sequenceKeys, ['SB-2025-2026', 'SB-2026-2027']);
 });
 
@@ -56,8 +56,8 @@ test('URD purchase numbers use their own India financial-year counter', async ()
     schemeEnrollment: { findUnique: async () => null }
   };
 
-  assert.equal(await nextDocumentNumber(tx, 'UR', new Date(2027, 2, 31, 12, 0)), 'UR/26-27/00001');
-  assert.equal(await nextDocumentNumber(tx, 'UR', new Date(2027, 3, 1, 12, 0)), 'UR/27-28/00001');
+  assert.equal(await nextDocumentNumber(tx, 'UR', new Date(2027, 2, 31, 12, 0)), 'UR-2627-1');
+  assert.equal(await nextDocumentNumber(tx, 'UR', new Date(2027, 3, 1, 12, 0)), 'UR-2728-1');
   assert.deepEqual(sequenceKeys, ['UR-2026-2027', 'UR-2027-2028']);
 });
 
@@ -81,6 +81,31 @@ test('supplier purchase numbers have their own atomic daily document series', as
   assert.equal(await nextDocumentNumber(tx, 'PO', new Date(2026, 8, 9, 12, 0)), 'PO-20260909-0001');
   assert.equal(await nextDocumentNumber(tx, 'PO', new Date(2026, 8, 9, 12, 1)), 'PO-20260909-0002');
   assert.deepEqual(sequenceKeys, ['PO-20260909', 'PO-20260909']);
+});
+
+test('pledge, supplier purchase and customer order numbers use compact financial-year series', async () => {
+  const sequenceKeys = [];
+  const counters = new Map();
+  let currentKey = '';
+  const tx = {
+    $executeRaw: async (_strings, ...values) => {
+      currentKey = values[0];
+      sequenceKeys.push(currentKey);
+      counters.set(currentKey, (counters.get(currentKey) || 0) + 1);
+    },
+    $queryRaw: async () => [{ lastNumber: counters.get(currentKey) }],
+    sale: { findUnique: async () => null },
+    urdPurchase: { findUnique: async () => null },
+    pledgeLoan: { findUnique: async () => null },
+    supplierPurchase: { findUnique: async () => null },
+    customerOrder: { findUnique: async () => null }
+  };
+
+  assert.equal(await nextDocumentNumber(tx, 'PL', new Date(2026, 8, 12)), 'PL-2627-1');
+  assert.equal(await nextDocumentNumber(tx, 'PR', new Date(2026, 8, 12)), 'PR-2627-1');
+  assert.equal(await nextDocumentNumber(tx, 'CO', new Date(2026, 8, 12)), 'CO-2627-1');
+  assert.equal(await nextDocumentNumber(tx, 'PL', new Date(2027, 3, 1)), 'PL-2728-1');
+  assert.deepEqual(sequenceKeys, ['PL-2026-2027', 'PR-2026-2027', 'CO-2026-2027', 'PL-2027-2028']);
 });
 
 test('cashbook export carries each payment method opening balance into its own sheet', async () => {

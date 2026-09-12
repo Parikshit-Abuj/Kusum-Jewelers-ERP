@@ -2185,7 +2185,7 @@ app.post('/sales', async (req, res, next) => {
       });
       if (includeUrdPurchase) {
         const urdPurchase = await tx.urdPurchase.create({ data: {
-          purchaseNumber: await nextDocumentNumber(tx, 'UR', saleDate), customerId, purchaseDate: saleDate,
+          purchaseNumber: await nextDocumentNumber(tx, 'UR', saleDate, { financialYearStartMonth: businessSettings.financialYearStartMonth }), customerId, purchaseDate: saleDate,
           metal: req.body.urdMetal || 'GOLD', purity: req.body.urdPurity ? String(req.body.urdPurity).trim().toUpperCase() : null,
           grossWeight: number(req.body.urdGrossWeight), netWeight: number(req.body.urdNetWeight),
           ratePerGram: number(req.body.urdRatePerGram), totalAmount: urdAmount, saleOffset: settlement.saleAdjustment,
@@ -2599,7 +2599,7 @@ app.post('/sales/:id/edit', async (req, res, next) => {
       } else if (includeUrdPurchase) {
         urdPurchase = await tx.urdPurchase.create({
           data: {
-            purchaseNumber: await nextDocumentNumber(tx, 'UR', saleDate),
+            purchaseNumber: await nextDocumentNumber(tx, 'UR', saleDate, { financialYearStartMonth: businessSettings.financialYearStartMonth }),
             customerId: finalCustomerId,
             purchaseDate: saleDate,
             metal: req.body.urdMetal || 'GOLD',
@@ -3010,10 +3010,11 @@ app.post('/pledges', async (req, res) => {
     if (principalAmount <= 0) throw new Error('Enter the money given to the customer.');
     if (dueDate && dueDate < pledgeDate) throw new Error('Return due date cannot be before the pledge date.');
     const payoutMethod = receiptPaymentMethod(req.body.payoutMethod);
+    const businessSettings = await getBusinessSettings(prisma);
     const loan = await prisma.$transaction(async (tx) => {
       const customer = await resolveOrderCustomer(tx, req.body);
       const record = await tx.pledgeLoan.create({ data: {
-        pledgeNumber: await nextDocumentNumber(tx, 'PL', pledgeDate), customerId: customer.id,
+        pledgeNumber: await nextDocumentNumber(tx, 'PL', pledgeDate, { financialYearStartMonth: businessSettings.financialYearStartMonth }), customerId: customer.id,
         pledgeDate, dueDate, metal, itemDescription,
         purity: supplierText(req.body.purity).toUpperCase() || null,
         quantity, grossWeight: grossWeight || netWeight, stoneWeight, netWeight,
@@ -3281,6 +3282,7 @@ app.post('/customer-orders', async (req, res) => {
     if (!Number.isInteger(quantity) || quantity <= 0) throw new Error('Enter the number of pieces ordered.');
     if (advance > quotedAmount && quotedAmount > 0) throw new Error('Advance cannot be greater than the quoted amount.');
     const method = advance > 0 ? receiptPaymentMethod(req.body.advancePaymentMethod) : null;
+    const businessSettings = await getBusinessSettings(prisma);
     const order = await prisma.$transaction(async (tx) => {
       const customer = await resolveOrderCustomer(tx, req.body);
       const selectedSellerId = Number(req.body.sellerId);
@@ -3290,7 +3292,7 @@ app.post('/customer-orders', async (req, res) => {
           ? await resolveSupplier(tx, { supplierName: req.body.sellerName, supplierPhone: req.body.sellerPhone })
           : null;
       const record = await tx.customerOrder.create({ data: {
-        orderNumber: await nextDocumentNumber(tx, 'CO', orderDate), customerId: customer.id, supplierId: supplier?.id || null,
+        orderNumber: await nextDocumentNumber(tx, 'CO', orderDate, { financialYearStartMonth: businessSettings.financialYearStartMonth }), customerId: customer.id, supplierId: supplier?.id || null,
         orderDate, dueDate, itemName, category: titleCase(req.body.category) || null, metal,
         purity: supplierText(req.body.purity).toUpperCase() || null, quantity,
         targetGrossWeight: Math.max(0, number(req.body.targetGrossWeight)), targetNetWeight: Math.max(0, number(req.body.targetNetWeight)),
@@ -3792,7 +3794,8 @@ app.get('/purchases', async (req, res, next) => {
       where.purchaseDate = { ...(from ? { gte: range.gte } : {}), ...(to ? { lte: range.lte } : {}) };
     }
     // Use MySQL field references rather than filtering after pagination. This
-    // keeps the pending-payment register correct and fast with years of POs.
+    // keeps the pending-payment register correct and fast with years of
+    // supplier purchase records.
     if (state === 'ACTIVE' && paymentStatus === 'PENDING') {
       where.paid = { lt: prisma.supplierPurchase.fields.totalAmount };
     } else if (state === 'ACTIVE' && paymentStatus === 'PAID') {
@@ -3851,11 +3854,12 @@ app.post('/purchases', async (req, res, next) => {
     if (totalAmount <= 0) throw new Error('Enter a valid purchase amount.');
     if (paid > totalAmount) throw new Error('Amount paid cannot exceed the purchase amount.');
     const purchaseDate = dateTimeFromInput(req.body.purchaseDate);
+    const businessSettings = await getBusinessSettings(prisma);
     const purchase = await prisma.$transaction(async (tx) => {
       const supplier = await resolveSupplier(tx, req.body);
       const purity = supplierText(req.body.purity).toUpperCase() || null;
       const record = await tx.supplierPurchase.create({ data: {
-        purchaseNumber: await nextDocumentNumber(tx, 'PO', purchaseDate), supplierId: supplier.id, quantity,
+        purchaseNumber: await nextDocumentNumber(tx, 'PR', purchaseDate, { financialYearStartMonth: businessSettings.financialYearStartMonth }), supplierId: supplier.id, quantity,
         purchaseDate, metal, purity, itemName, category, grossWeight: grossWeight || netWeight, stoneWeight, netWeight,
         ratePerGram, totalAmount, paid, paymentMethod,
         reference: supplierText(req.body.reference).toUpperCase() || null, notes: supplierText(req.body.notes).toUpperCase() || null
@@ -3981,7 +3985,7 @@ app.post('/purchases/:id/payments', async (req, res) => {
 });
 
 // Supplier payment corrections are an update, not a second receipt. Rebuild
-// the paid total from its Cashbook rows inside the same transaction so the PO
+// the paid total from its Cashbook rows inside the same transaction so the
 // due, Cashbook and Supplier account cannot drift apart.
 app.post('/purchases/:id/payments/:entryId', async (req, res) => {
   try {
@@ -4119,10 +4123,11 @@ app.post('/urd-purchases', async (req, res, next) => {
     if (totalAmount <= 0) return redirectWith(res, '/urd-purchases/new', 'error', 'Enter a valuation amount greater than zero.');
     if (paid > totalAmount) return redirectWith(res, '/urd-purchases/new', 'error', `Payout is greater than the valuation amount of ${money(totalAmount)}.`);
     const purchaseDate = dateTimeFromInput(req.body.purchaseDate);
+    const businessSettings = await getBusinessSettings(prisma);
     const purchase = await prisma.$transaction(async (tx) => {
       const record = await tx.urdPurchase.create({
         data: {
-          purchaseNumber: await nextDocumentNumber(tx, 'UR', purchaseDate),
+          purchaseNumber: await nextDocumentNumber(tx, 'UR', purchaseDate, { financialYearStartMonth: businessSettings.financialYearStartMonth }),
           customerId,
           purchaseDate,
           metal: req.body.metal || 'GOLD', purity: req.body.purity || null,
@@ -4754,9 +4759,10 @@ app.post('/schemes/:planId/enroll', async (req, res, next) => {
         customer = await tx.customer.create({ data: { name, phone: phone || null } });
       }
 
-      // Reserve a compact, atomic scheme number. Two PCs cannot receive the
-      // same enrollment number, even when they enroll at the same moment.
-      const enrollmentNumber = await nextDocumentNumber(tx, 'SCH', startDate);
+      // Reserve a compact, atomic scheme number. The counter is scoped to
+      // this plan, so every plan starts at SCH-1 while two PCs cannot receive
+      // the same number inside the same plan.
+      const enrollmentNumber = await nextDocumentNumber(tx, 'SCH', startDate, { schemePlanId });
       const schedule = createInstallmentSchedule(startDate, plan.durationMonths);
 
       const enrollment = await tx.schemeEnrollment.create({
@@ -4834,7 +4840,7 @@ app.post('/api/schemes/:planId/enroll-batch', express.json(), async (req, res) =
           if (!row.name) throw new Error(`Row ${row.rowNumber}: enter a customer name when no saved mobile profile is found.`);
           customer = await tx.customer.create({ data: { name: row.name, phone: row.phone || null } });
         }
-        const enrollmentNumber = await nextDocumentNumber(tx, 'SCH', row.startDate);
+        const enrollmentNumber = await nextDocumentNumber(tx, 'SCH', row.startDate, { schemePlanId });
         const schedule = createInstallmentSchedule(row.startDate, plan.durationMonths);
         const enrollment = await tx.schemeEnrollment.create({
           data: {

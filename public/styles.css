@@ -2438,9 +2438,9 @@ body.billing-focus-mode .transaction-summary { position: sticky; top: 92px; max-
 .scheme-bulk-payment-filter label { display: grid; gap: 5px; margin: 0; color: var(--muted); font-size: 11px; font-weight: 700; }
 .scheme-bulk-payment-filter input,
 .scheme-bulk-payment-filter select { min-width: 0; }
-.scheme-bulk-payment-card { width: min(1320px, 96vw); }
+.scheme-bulk-payment-card { width: min(980px, 96vw); }
 .scheme-bulk-payment-table-wrap { max-height: 55vh; }
-.scheme-bulk-payment-table-wrap table { min-width: 1280px; }
+.scheme-bulk-payment-table-wrap table { min-width: 720px; }
 .scheme-bulk-payment-table-wrap td input,
 .scheme-bulk-payment-table-wrap td select { min-width: 0; min-height: 36px; padding: 7px 8px; font-size: 12px; }
 .scheme-bulk-payment-table-wrap td input { min-height: 36px; }
@@ -2448,6 +2448,32 @@ body.billing-focus-mode .transaction-summary { position: sticky; top: 92px; max-
 .scheme-bulk-payment-total { display: block; color: var(--muted); font-size: 11px; font-weight: 750; white-space: nowrap; }
 .scheme-bulk-payment-total.is-valid { color: #2e7d32; }
 .scheme-bulk-payment-total.is-invalid { color: #b53d36; }
+.scheme-bulk-payment-summary { display: block; max-width: 320px; margin-top: 4px; color: var(--muted); font-size: 11px; line-height: 1.4; white-space: normal; }
+.scheme-bulk-payment-installment-label { display: block; font-size: 12px; font-weight: 700; line-height: 1.4; }
+.scheme-bulk-payment-edit { white-space: nowrap; }
+.scheme-bulk-payment-hidden-control,
+.scheme-bulk-payment-draft { position: absolute !important; width: 1px !important; height: 1px !important; margin: -1px !important; padding: 0 !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
+.scheme-bulk-payment-editor-modal { z-index: 10030; }
+.scheme-bulk-payment-editor-card { width: min(640px, 94vw); max-height: 90vh; }
+.scheme-bulk-payment-editor-body { display: grid; gap: 16px; }
+.scheme-bulk-payment-editor-grid,
+.scheme-bulk-payment-method-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.scheme-bulk-payment-editor-grid label,
+.scheme-bulk-payment-method-grid label,
+.scheme-bulk-payment-editor-note { display: grid; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 750; }
+.scheme-bulk-payment-editor-grid input,
+.scheme-bulk-payment-editor-grid select,
+.scheme-bulk-payment-method-grid input,
+.scheme-bulk-payment-editor-note textarea { width: 100%; box-sizing: border-box; min-height: 38px; padding: 8px 10px; }
+.scheme-bulk-payment-editor-note textarea { resize: vertical; }
+.scheme-bulk-payment-editor-total { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 12px 14px; border: 1px solid #eadfca; border-radius: 9px; background: #fffaf0; }
+.scheme-bulk-payment-editor-total span { color: var(--muted); font-size: 12px; font-weight: 700; }
+.scheme-bulk-payment-editor-total strong { color: var(--ink); font-size: 20px; }
+.scheme-bulk-payment-editor-total small { color: var(--muted); font-size: 11px; }
+.scheme-bulk-payment-editor-total strong.is-valid { color: #2e7d32; }
+.scheme-bulk-payment-editor-total strong.is-invalid { color: #b53d36; }
+.scheme-bulk-payment-editor-card .modal-header p { margin: 4px 0 0; color: var(--muted); }
+.scheme-bulk-payment-editor-card .modal-header p small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
 .scheme-bulk-fill-cash { margin-top: 4px; padding: 2px 5px; border: 0; border-radius: 4px; background: #fff4d9; color: var(--gold-dark); font-size: 10px; font-weight: 750; cursor: pointer; white-space: nowrap; }
 .scheme-bulk-fill-cash:hover { background: #fbe7b5; }
 .scheme-bulk-cancel-table-wrap td strong,
@@ -2461,6 +2487,8 @@ body.billing-focus-mode .transaction-summary { position: sticky; top: 92px; max-
   .scheme-bulk-cancel-filter button { width: auto; justify-self: start; }
   .scheme-bulk-payment-filter { grid-template-columns: 1fr; }
   .scheme-bulk-payment-filter button { width: auto; justify-self: start; }
+  .scheme-bulk-payment-editor-grid,
+  .scheme-bulk-payment-method-grid { grid-template-columns: 1fr; }
   .scheme-bulk-modal .modal-footer { align-items: stretch; }
 }
 

@@ -116,13 +116,25 @@ function indianFinancialYear(value = new Date(), startMonth = 4) {
 
 async function reserveDocumentNumber(tx, prefix, value = new Date(), options = {}) {
   const day = dateInput(value).replaceAll('-', '');
-  const isFinancialYearDocument = prefix === 'SB' || prefix === 'UR';
+  // All operational documents use the shop's Indian financial year. Sales
+  // keep the configured invoice prefix; the other registers use their fixed
+  // prefixes (UR, PL, PR and CO).
+  const isFinancialYearDocument = ['SB', 'UR', 'PL', 'PR', 'CO'].includes(prefix);
+  const isSchemeDocument = prefix === 'SCH';
+  const schemePlanId = isSchemeDocument ? Number(options.schemePlanId) : null;
+  if (isSchemeDocument && (!Number.isInteger(schemePlanId) || schemePlanId < 1)) {
+    throw new Error('A scheme plan is required to reserve a scheme receipt number.');
+  }
   const documentPrefix = prefix === 'SB'
     ? String(options.invoicePrefix || 'SB').trim().toUpperCase()
     : prefix;
   const financialYear = isFinancialYearDocument ? indianFinancialYear(value, options.financialYearStartMonth) : null;
   const keyPrefix = prefix === 'SB' && documentPrefix !== 'SB' ? `SB-${documentPrefix}` : prefix;
-  const key = isFinancialYearDocument ? `${keyPrefix}-${financialYear.key}` : `${prefix}-${day}`;
+  const key = isFinancialYearDocument
+    ? `${keyPrefix}-${financialYear.key}`
+    : isSchemeDocument
+      ? `SCH-PLAN-${schemePlanId}`
+      : `${prefix}-${day}`;
   // LAST_INSERT_ID(expr) is scoped to this MySQL connection. Combined with an
   // interactive Prisma transaction, it atomically reserves a counter value
   // for every LAN client, including the very first request of a new day.
@@ -139,19 +151,27 @@ async function reserveDocumentNumber(tx, prefix, value = new Date(), options = {
     if (!Number.isInteger(lastNumber) || lastNumber < 1) {
       throw new Error(`Could not reserve the next ${prefix} document number.`);
     }
-    const serial = String(lastNumber).padStart(isFinancialYearDocument ? 5 : 4, '0');
+    const serial = String(lastNumber).padStart(isFinancialYearDocument ? 1 : isSchemeDocument ? 1 : 4, '0');
     const candidate = prefix === 'SB'
-      ? `${documentPrefix}/${financialYear.label}/${serial}`
+      ? `${documentPrefix}-${financialYear.label.replaceAll('-', '')}-${serial}`
       : prefix === 'UR'
-        ? `UR/${financialYear.label}/${serial}`
-      : prefix === 'INV' ? `${day}${serial}` : `${prefix}-${day}-${serial}`;
+        ? `UR-${financialYear.label.replaceAll('-', '')}-${serial}`
+        : prefix === 'PL'
+          ? `PL-${financialYear.label.replaceAll('-', '')}-${serial}`
+          : prefix === 'PR'
+            ? `PR-${financialYear.label.replaceAll('-', '')}-${serial}`
+            : prefix === 'CO'
+              ? `CO-${financialYear.label.replaceAll('-', '')}-${serial}`
+              : prefix === 'SCH'
+                ? `SCH-${serial}`
+                : prefix === 'INV' ? `${day}${serial}` : `${prefix}-${day}-${serial}`;
     const existing = (prefix === 'INV' || prefix === 'SB')
       ? await tx.sale.findUnique({ where: { invoiceNumber: candidate }, select: { id: true } })
       : prefix === 'SCH'
-        ? await tx.schemeEnrollment.findUnique({ where: { enrollmentNumber: candidate }, select: { id: true } })
+        ? await tx.schemeEnrollment.findFirst({ where: { schemePlanId, enrollmentNumber: candidate }, select: { id: true } })
         : prefix === 'CO'
           ? await tx.customerOrder.findUnique({ where: { orderNumber: candidate }, select: { id: true } })
-        : prefix === 'PO'
+        : (prefix === 'PO' || prefix === 'PR')
           ? await tx.supplierPurchase.findUnique({ where: { purchaseNumber: candidate }, select: { id: true } })
           : prefix === 'PL'
             ? await tx.pledgeLoan.findUnique({ where: { pledgeNumber: candidate }, select: { id: true } })

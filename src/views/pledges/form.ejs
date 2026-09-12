@@ -3,14 +3,32 @@
 <form class="panel form-panel" method="post" action="/pledges" data-pledge-form data-enter-scope>
   <section class="form-section">
     <h2>Customer</h2>
-    <div class="form-grid four">
-      <input type="hidden" name="customerId" data-pledge-customer-id>
-      <label>Customer name *<input name="customerName" autocomplete="off" required data-pledge-customer placeholder="Search or enter customer"></label>
-      <label>Mobile number<input name="customerPhone" inputmode="numeric" maxlength="15" placeholder="Optional"></label>
-      <label>Address<input name="customerAddress" placeholder="Optional"></label>
-      <label>PAN<input name="customerPan" maxlength="20" placeholder="Optional"></label>
+    <div class="form-grid four pledge-customer-meta">
+      <label>Mobile number<input name="customerPhone" inputmode="numeric" autocomplete="tel" maxlength="15" placeholder="Optional mobile number" data-customer-phone autofocus></label>
     </div>
-    <div class="supplier-suggestions" data-pledge-customer-suggestions hidden></div>
+    <section class="customer-lookup" data-customer-lookup>
+      <input type="hidden" name="customerId" data-customer-id>
+      <div class="customer-search-control">
+        <label for="pledgeCustomerSearch">Find existing customer</label>
+        <input id="pledgeCustomerSearch" type="search" autocomplete="off" spellcheck="false" placeholder="Search by name or mobile" data-customer-search>
+        <div class="customer-search-results" data-customer-search-results role="listbox" hidden></div>
+      </div>
+      <button class="button ghost small customer-new-action" type="button" data-new-customer-open>+ New customer</button>
+      <div class="cust-status-badge" data-customer-status>Enter a customer name. Mobile number is optional.</div>
+      <div class="cust-existing-box" data-existing-customer hidden>
+        <div class="cust-existing-info"><strong data-existing-name></strong><span data-existing-details></span></div>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <label style="margin:0; font-size:10.5px; display:inline-flex; align-items:center; gap:4px; font-weight:700; color:#2e7d32;"><span>PAN (opt):</span><input name="existingCustomerPan" data-existing-pan placeholder="e.g. ABCDE1234F" maxlength="10" autocomplete="off" style="padding:4px 7px; font-size:11.5px; width:110px; text-transform:uppercase; border:1px solid #a3d9b8; border-radius:6px;"></label>
+          <a class="button ghost small" data-existing-ledger href="#" hidden style="background:#fff; border-color:#a3d9b8; color:#145a32; padding:3px 8px; font-size:11px;">Open Ledger →</a>
+        </div>
+      </div>
+      <div class="cust-new-grid" data-new-customer-fields hidden>
+        <div class="pos-field"><label>Customer Name *</label><input name="customerName" disabled data-customer-name data-uppercase placeholder="Customer full name"></div>
+        <div class="pos-field"><label>PAN No. (optional)</label><input name="customerPan" disabled data-customer-pan placeholder="e.g. ABCDE1234F" maxlength="10" autocomplete="off" style="text-transform:uppercase;"></div>
+        <div class="pos-field"><label>Email (optional)</label><input name="customerEmail" type="email" disabled data-customer-email placeholder="customer@gmail.com"></div>
+        <div class="pos-field"><label>City / Address</label><input name="customerAddress" disabled data-customer-address data-uppercase placeholder="City / Area"></div>
+      </div>
+    </section>
   </section>
 
   <section class="form-section">
@@ -41,70 +59,26 @@
   <footer class="form-footer"><a class="button ghost" href="/pledges">Cancel</a><button class="button" type="submit">Save pledge loan</button></footer>
 </form>
 
-<script>
-(() => {
-  const form = document.querySelector('[data-pledge-form]'); if (!form) return;
-  const input = form.querySelector('[data-pledge-customer]');
-  const phoneInput = form.querySelector('[name=customerPhone]');
-  const addressInput = form.querySelector('[name=customerAddress]');
-  const panInput = form.querySelector('[name=customerPan]');
-  const box = form.querySelector('[data-pledge-customer-suggestions]');
-  const id = form.querySelector('[data-pledge-customer-id]');
-  let timer, controller, phoneTimer, phoneController;
-  function setCustomer(row) {
-    if (!row) return;
-    id.value = row.id || '';
-    input.value = row.name || '';
-    if (phoneInput) phoneInput.value = row.phone || '';
-    if (addressInput) addressInput.value = row.address || '';
-    if (panInput) panInput.value = row.panNumber || '';
-    box.hidden = true;
-  }
-
-  async function lookupByPhone() {
-    if (!phoneInput) return;
-    const phone = String(phoneInput.value || '').replace(/\D/g, '').slice(0, 15);
-    phoneInput.value = phone;
-    if (!phone || phone.length < 10) { id.value = ''; return; }
-    phoneController?.abort(); phoneController = new AbortController();
-    try {
-      const response = await fetch('/api/customers/phone/' + encodeURIComponent(phone), { signal: phoneController.signal });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Could not look up this customer.');
-      if (data.found) setCustomer(data.customer);
-      else id.value = '';
-    } catch (error) { if (error.name !== 'AbortError') id.value = ''; }
-  }
-
-  input.addEventListener('input', () => {
-    id.value = ''; clearTimeout(timer); const q = input.value.trim();
-    if (q.length < 2) { box.hidden = true; return; }
-    timer = setTimeout(async () => {
-      controller?.abort(); controller = new AbortController();
-      try {
-        const response = await fetch('/api/customers/search?q=' + encodeURIComponent(q), { signal: controller.signal });
-        const data = await response.json(); const rows = data.customers || [];
-        box.replaceChildren(...rows.map((row) => {
-          const button = document.createElement('button'); button.type = 'button';
-          button.textContent = `${row.name}${row.phone ? ' · ' + row.phone : ''}`;
-          button.addEventListener('click', () => setCustomer(row));
-          return button;
-        }));
-        box.hidden = !rows.length;
-      } catch (error) { if (error.name !== 'AbortError') box.hidden = true; }
-    }, 220);
-  });
-
-  phoneInput?.addEventListener('input', () => {
-    id.value = '';
-    clearTimeout(phoneTimer);
-    const digits = String(phoneInput.value || '').replace(/\D/g, '');
-    if (digits.length >= 10) phoneTimer = setTimeout(lookupByPhone, 300);
-  });
-  phoneInput?.addEventListener('blur', lookupByPhone);
-  phoneInput?.addEventListener('keydown', async (event) => {
-    if (event.key !== 'Enter' || event.isComposing) return;
-    event.preventDefault(); clearTimeout(phoneTimer); await lookupByPhone(); input.focus();
-  });
-})();
-</script>
+<style>
+  /* Match the Sales customer picker for a consistent mobile-first workflow. */
+  .form-grid.pledge-customer-meta { grid-template-columns: minmax(280px, 380px); max-width: 100%; }
+  .pledge-customer-meta > label { min-width: 0; }
+  @media (max-width: 760px) { .form-grid.pledge-customer-meta { grid-template-columns: minmax(0, 1fr); } }
+  .form-section:has(> .customer-lookup) .customer-lookup { margin: 14px 0 0; padding: 13px 15px; }
+  .customer-search-control { position: relative; display: grid; gap: 4px; margin-bottom: 8px; }
+  .customer-search-control label { color: #63584c; font-size: 10.5px; font-weight: 750; letter-spacing: .03em; text-transform: uppercase; }
+  .customer-search-control input { width: 100%; box-sizing: border-box; padding: 8px 11px; border: 1.5px solid #ded5c5; border-radius: 8px; background: #fff; color: #1a1612; font-size: 13px; font-weight: 550; font-family: inherit; }
+  .customer-search-control input:focus { outline: none; border-color: #c9a044; box-shadow: 0 0 0 2.5px rgba(201, 160, 68, .15); }
+  .customer-search-results { position: absolute; z-index: 30; top: calc(100% + 23px); left: 0; right: 0; max-height: 220px; overflow-y: auto; border: 1px solid #dfd4c3; border-radius: 9px; background: #fff; box-shadow: 0 12px 28px rgba(46, 33, 15, .16); }
+  .customer-search-option { display: flex; width: 100%; flex-direction: column; align-items: flex-start; gap: 2px; padding: 9px 11px; border: 0; border-bottom: 1px solid #f0ebe4; background: #fff; color: #2b2319; cursor: pointer; text-align: left; }
+  .customer-search-option:last-child { border-bottom: 0; }
+  .customer-search-option:hover, .customer-search-option:focus, .customer-search-option.is-highlighted { background: #fff8eb; outline: none; }
+  .customer-search-option strong { font-size: 12.5px; }
+  .customer-search-option small, .customer-search-empty { color: #837665; font-size: 11.5px; }
+  .customer-search-empty { padding: 11px; }
+  .customer-new-action { margin: 0 0 8px; justify-self: start; }
+  .cust-status-badge { padding: 8px 12px; border-radius: 8px; font-size: 11.5px; background: #fdfbf7; border: 1px dashed #ded4c1; color: #706557; margin-bottom: 8px; }
+  .cust-existing-box { background: #f3faf5; border: 1.5px solid #b7e4c7; border-radius: 9px; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
+  .cust-existing-info strong { color: #145a32; font-size: 13px; display: block; }
+  .cust-existing-info span { color: #2e7d32; font-size: 11.5px; }
+</style>

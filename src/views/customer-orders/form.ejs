@@ -4,13 +4,45 @@
   <a class="button ghost" href="/customer-orders">Cancel</a>
 </header>
 <form class="panel form-panel" method="post" action="<%= formAction %>" data-order-form>
-  <section class="form-section"><h2>Customer</h2><div class="form-grid four">
-    <input type="hidden" name="customerId" data-order-customer-id value="<%= customer.id || '' %>">
-    <label>Customer name *<input name="customerName" autocomplete="off" required data-order-customer placeholder="Search or enter customer" value="<%= customer.name || '' %>"></label>
-    <label>Mobile number<input name="customerPhone" inputmode="numeric" maxlength="15" placeholder="Optional" value="<%= customer.phone || '' %>"></label>
-    <label>Address<input name="customerAddress" placeholder="Optional" value="<%= customer.address || '' %>"></label>
-    <label>PAN<input name="customerPan" maxlength="20" placeholder="Optional" value="<%= customer.panNumber || '' %>"></label>
-  </div><div class="supplier-suggestions" data-order-customer-suggestions hidden></div></section>
+  <section class="form-section customer-order-customer">
+    <div class="customer-order-section-heading"><div><h2>Customer</h2><p>Enter the mobile number first to load an existing customer, or create a new profile.</p></div></div>
+    <% if (isEditing) { %>
+      <input type="hidden" name="customerId" data-order-customer-id value="<%= customer.id || '' %>">
+      <div class="form-grid four customer-order-edit-fields">
+        <label>Mobile number<input name="customerPhone" inputmode="numeric" autocomplete="tel" maxlength="15" placeholder="Optional mobile number" value="<%= customer.phone || '' %>"></label>
+        <label>Customer name *<input name="customerName" autocomplete="off" required placeholder="Customer full name" value="<%= customer.name || '' %>"></label>
+        <label>Address<input name="customerAddress" placeholder="Optional" value="<%= customer.address || '' %>"></label>
+        <label>PAN<input name="customerPan" maxlength="20" placeholder="Optional" value="<%= customer.panNumber || '' %>"></label>
+      </div>
+    <% } else { %>
+      <div class="form-grid customer-order-mobile-field">
+        <label>Mobile number<input name="customerPhone" inputmode="numeric" autocomplete="tel" maxlength="15" placeholder="Optional mobile number" data-customer-phone autofocus></label>
+      </div>
+      <section class="customer-lookup" data-customer-lookup>
+        <input type="hidden" name="customerId" data-order-customer-id data-customer-id>
+        <div class="customer-search-control">
+          <label for="orderCustomerSearch">Find existing customer</label>
+          <input id="orderCustomerSearch" type="search" autocomplete="off" spellcheck="false" placeholder="Search by name or mobile" data-customer-search>
+          <div class="customer-search-results" data-customer-search-results role="listbox" hidden></div>
+        </div>
+        <button class="button ghost small customer-new-action" type="button" data-new-customer-open>+ New customer</button>
+        <div class="cust-status-badge" data-customer-status>Enter a customer name. Mobile number is optional.</div>
+        <div class="cust-existing-box" data-existing-customer hidden>
+          <div class="cust-existing-info"><strong data-existing-name></strong><span data-existing-details></span></div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <label style="margin:0; font-size:10.5px; display:inline-flex; align-items:center; gap:4px; font-weight:700; color:#2e7d32;"><span>PAN (opt):</span><input name="existingCustomerPan" data-existing-pan placeholder="e.g. ABCDE1234F" maxlength="10" autocomplete="off" style="padding:4px 7px; font-size:11.5px; width:110px; text-transform:uppercase; border:1px solid #a3d9b8; border-radius:6px;"></label>
+            <a class="button ghost small" data-existing-ledger href="#" hidden style="background:#fff; border-color:#a3d9b8; color:#145a32; padding:3px 8px; font-size:11px;">Open Ledger →</a>
+          </div>
+        </div>
+        <div class="cust-new-grid" data-new-customer-fields hidden>
+          <div class="pos-field"><label>Customer Name *</label><input name="customerName" disabled data-customer-name data-uppercase placeholder="Customer full name"></div>
+          <div class="pos-field"><label>PAN No. (optional)</label><input name="customerPan" disabled data-customer-pan placeholder="e.g. ABCDE1234F" maxlength="10" autocomplete="off" style="text-transform:uppercase;"></div>
+          <div class="pos-field"><label>Email (optional)</label><input name="customerEmail" type="email" disabled data-customer-email placeholder="customer@gmail.com"></div>
+          <div class="pos-field"><label>City / Address</label><input name="customerAddress" disabled data-customer-address data-uppercase placeholder="City / Area"></div>
+        </div>
+      </section>
+    <% } %>
+  </section>
   <section class="form-section"><h2>Ordered jewellery</h2><div class="form-grid four">
     <label>Order date *<input name="orderDate" type="date" required value="<%= current.orderDate ? dateInput(current.orderDate) : dateInput() %>"></label>
     <label>Expected delivery<input name="dueDate" type="date" value="<%= current.dueDate ? dateInput(current.dueDate) : '' %>"></label>
@@ -35,6 +67,29 @@
   <% } %></section>
   <footer class="form-footer"><a class="button ghost" href="/customer-orders">Cancel</a><button class="button" type="submit"><%= isEditing ? 'Save changes' : 'Save customer order' %></button></footer>
 </form>
+<style>
+  /* Keep customer orders on the same predictable mobile-first customer flow as billing. */
+  .customer-order-section-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:10px; }
+  .customer-order-section-heading p { margin:4px 0 0; color:#7a6d5e; font-size:12px; }
+  .customer-order-mobile-field { max-width:380px; }
+  .customer-order-customer .customer-lookup { margin:14px 0 0; padding:13px 15px; }
+  .customer-order-customer .customer-search-control { position:relative; display:grid; gap:4px; margin-bottom:8px; }
+  .customer-order-customer .customer-search-control label { color:#63584c; font-size:10.5px; font-weight:750; letter-spacing:.03em; text-transform:uppercase; }
+  .customer-order-customer .customer-search-control input { width:100%; box-sizing:border-box; padding:8px 11px; border:1.5px solid #ded5c5; border-radius:8px; background:#fff; color:#1a1612; font-size:13px; font-weight:550; font-family:inherit; }
+  .customer-order-customer .customer-search-control input:focus { outline:none; border-color:#c9a044; box-shadow:0 0 0 2.5px rgba(201,160,68,.15); }
+  .customer-order-customer .customer-search-results { position:absolute; z-index:30; top:calc(100% + 23px); left:0; right:0; max-height:220px; overflow-y:auto; border:1px solid #dfd4c3; border-radius:9px; background:#fff; box-shadow:0 12px 28px rgba(46,33,15,.16); }
+  .customer-order-customer .customer-search-option { display:flex; width:100%; flex-direction:column; align-items:flex-start; gap:2px; padding:9px 11px; border:0; border-bottom:1px solid #f0ebe4; background:#fff; color:#2b2319; cursor:pointer; text-align:left; }
+  .customer-order-customer .customer-search-option:last-child { border-bottom:0; }
+  .customer-order-customer .customer-search-option:hover, .customer-order-customer .customer-search-option:focus, .customer-order-customer .customer-search-option.is-highlighted { background:#fff8eb; outline:none; }
+  .customer-order-customer .customer-search-option strong { font-size:12.5px; }
+  .customer-order-customer .customer-search-option small, .customer-order-customer .customer-search-empty { color:#837665; font-size:11.5px; }
+  .customer-order-customer .customer-search-empty { padding:11px; }
+  .customer-order-customer .customer-new-action { margin:0 0 8px; justify-self:start; }
+  .customer-order-customer .cust-status-badge { padding:8px 12px; border-radius:8px; font-size:11.5px; background:#fdfbf7; border:1px dashed #ded4c1; color:#706557; margin-bottom:8px; }
+  .customer-order-customer .cust-existing-box { background:#f3faf5; border:1.5px solid #b7e4c7; border-radius:9px; padding:10px 14px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:10px; }
+  .customer-order-customer .cust-existing-info strong { color:#145a32; font-size:13px; display:block; }
+  .customer-order-customer .cust-existing-info span { color:#2e7d32; font-size:11.5px; }
+</style>
 <script>
 (() => {
   const form = document.querySelector('[data-order-form]');
@@ -68,43 +123,6 @@
       }, 220);
     });
   }
-
-  const customer = field('[data-order-customer]');
-  const customerPhone = field('[name=customerPhone]');
-  const customerBox = field('[data-order-customer-suggestions]');
-  const customerId = field('[data-order-customer-id]');
-  const fillCustomer = (row) => {
-    customerId.value = row.id || '';
-    customer.value = row.name || '';
-    customerPhone.value = row.phone || '';
-    field('[name=customerAddress]').value = row.address || '';
-    field('[name=customerPan]').value = row.panNumber || '';
-  };
-  bindSearch(customer, customerBox, '/api/customers/search?q=', fillCustomer, () => { customerId.value = ''; });
-
-  async function lookupCustomerByPhone() {
-    const phone = String(customerPhone?.value || '').replace(/\D/g, '').slice(0, 15);
-    if (customerPhone) customerPhone.value = phone;
-    if (!phone || phone.length < 10) { if (customerId) customerId.value = ''; return; }
-    try {
-      const response = await fetch('/api/customers/phone/' + encodeURIComponent(phone));
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Could not look up this customer.');
-      if (data.found) fillCustomer(data.customer); else customerId.value = '';
-    } catch (_) { customerId.value = ''; }
-  }
-  let customerPhoneTimer;
-  customerPhone?.addEventListener('input', () => {
-    customerId.value = '';
-    clearTimeout(customerPhoneTimer);
-    const digits = String(customerPhone.value || '').replace(/\D/g, '');
-    if (digits.length >= 10) customerPhoneTimer = setTimeout(lookupCustomerByPhone, 300);
-  });
-  customerPhone?.addEventListener('blur', lookupCustomerByPhone);
-  customerPhone?.addEventListener('keydown', async (event) => {
-    if (event.key !== 'Enter' || event.isComposing) return;
-    event.preventDefault(); clearTimeout(customerPhoneTimer); await lookupCustomerByPhone(); customer?.focus();
-  });
 
   const seller = field('[data-order-seller]');
   const sellerPhone = field('[name=sellerPhone]');

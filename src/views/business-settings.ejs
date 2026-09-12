@@ -20,7 +20,7 @@
   <section class="panel settings-section">
     <div class="panel-heading"><div><h2>Invoice and tax</h2></div></div>
     <div class="form-grid three">
-      <label>Invoice prefix<input name="invoicePrefix" required maxlength="8" value="<%= settings.invoicePrefix %>" style="text-transform:uppercase"><small>Example: SB gives SB/26-27/00001.</small></label>
+      <label>Invoice prefix<input name="invoicePrefix" required maxlength="8" value="<%= settings.invoicePrefix %>" style="text-transform:uppercase"><small>Example: SB gives SB-2627-1.</small></label>
       <label>Financial year starts<select name="financialYearStartMonth"><% ['January','February','March','April','May','June','July','August','September','October','November','December'].forEach((month, index) => { %><option value="<%= index + 1 %>" <%= settings.financialYearStartMonth === index + 1 ? 'selected' : '' %>><%= month %></option><% }) %></select></label>
       <label>Default GST (%)<input name="defaultGstRate" type="number" min="0" max="100" step="0.01" required value="<%= settings.defaultGstRate %>"></label>
       <label>Default HSN<input name="defaultHsnCode" maxlength="50" value="<%= settings.defaultHsnCode || '' %>"></label>

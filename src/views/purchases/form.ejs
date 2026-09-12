@@ -5,7 +5,7 @@
 <form class="panel form-panel purchase-form" method="post" action="<%= editing ? `/purchases/${formPurchase.id}/edit` : '/purchases' %>" data-supplier-purchase-form data-editing="<%= editing ? 'true' : 'false' %>">
   <section class="form-section">
     <div class="purchase-section-title"><div><h2>Supplier</h2><p>Select the existing supplier so all purchases stay in one account.</p></div><span class="purchase-step">1</span></div>
-    <div class="form-grid purchase-supplier-core"><label>Purchase date *<input name="purchaseDate" type="date" required value="<%= purchaseDateValue %>"></label><label class="purchase-supplier-name">Supplier name *<input name="supplierName" required autocomplete="off" data-supplier-name placeholder="Search supplier" value="<%= formSupplier.name || '' %>"></label><label>Mobile number<input name="supplierPhone" inputmode="numeric" maxlength="15" placeholder="Optional" value="<%= formSupplier.phone || '' %>"></label></div>
+    <div class="form-grid purchase-supplier-core"><label>Purchase date *<input name="purchaseDate" type="date" required value="<%= purchaseDateValue %>"></label><label>Mobile number<input name="supplierPhone" inputmode="numeric" autocomplete="tel" maxlength="15" placeholder="Optional mobile number" value="<%= formSupplier.phone || '' %>"></label><label class="purchase-supplier-name">Supplier name *<input name="supplierName" required autocomplete="off" data-supplier-name placeholder="Enter or search supplier name" value="<%= formSupplier.name || '' %>"></label></div>
     <div class="supplier-suggestions" data-supplier-suggestions hidden></div>
     <label class="purchase-different-supplier"><input name="confirmDifferentSupplier" type="checkbox" value="yes"> This is a different supplier</label>
     <details class="purchase-optional-details" <%= editing && (formSupplier.email || formSupplier.address || formSupplier.gstin || formSupplier.panNumber) ? 'open' : '' %>><summary>More supplier details <span>GSTIN, PAN, email and address</span></summary><div class="form-grid four purchase-extra-fields"><label>GSTIN<input name="supplierGstin" maxlength="20" placeholder="Optional" value="<%= formSupplier.gstin || '' %>"></label><label>PAN<input name="supplierPan" maxlength="20" placeholder="Optional" value="<%= formSupplier.panNumber || '' %>"></label><label>Email<input name="supplierEmail" type="email" placeholder="Optional" value="<%= formSupplier.email || '' %>"></label><label>Address<input name="supplierAddress" placeholder="Optional" value="<%= formSupplier.address || '' %>"></label></div></details>
@@ -22,6 +22,12 @@
   <footer class="form-footer"><a class="button ghost" href="/purchases">Cancel</a><% if (editing) { %><button class="button" type="submit">Save changes</button><% } else { %><button class="button ghost" type="submit" name="action" value="save-add">Save &amp; add another</button><button class="button" type="submit" name="action" value="save">Save purchase lot</button><% } %></footer>
 </form>
 <style>.purchase-form-header .muted{margin-top:5px}.purchase-rate-notice{margin-bottom:14px}.purchase-linked-notice{display:flex;gap:10px;align-items:flex-start;margin-bottom:14px}.purchase-linked-notice strong{white-space:nowrap}.purchase-step{display:grid;place-items:center;width:26px;height:26px;border-radius:50%;background:rgba(193,142,33,.14);color:#9a6811;font-weight:800}.purchase-section-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.purchase-section-title h2{margin:0;font-size:17px}.purchase-section-title p{margin:4px 0 0;color:var(--muted,#70685e);font-size:13px}.purchase-supplier-core{grid-template-columns:180px minmax(260px,1fr) 220px}.purchase-supplier-name{min-width:0}.purchase-different-supplier{display:inline-flex;align-items:center;gap:7px;margin-top:11px;color:var(--muted,#70685e);font-size:12px;cursor:pointer}.purchase-different-supplier input{width:auto;min-height:auto;margin:0}.purchase-optional-details{margin-top:14px;padding:11px 13px;border:1px solid var(--border,#e6dfd3);border-radius:10px;background:rgba(193,142,33,.035)}.purchase-optional-details summary{cursor:pointer;font-size:13px;font-weight:700}.purchase-optional-details summary span{margin-left:7px;color:var(--muted,#70685e);font-size:12px;font-weight:400}.purchase-extra-fields{margin-top:13px}.purchase-note-details>label{display:grid;gap:6px;margin-top:12px;font-size:12px;font-weight:700;color:var(--muted,#70685e)}.purchase-paid-readout{min-height:74px}.purchase-paid-readout strong{color:#2c7d54}@media(max-width:760px){.purchase-supplier-core{grid-template-columns:1fr}.purchase-section-title{align-items:flex-start}.purchase-optional-details summary span{display:block;margin:3px 0 0}.purchase-linked-notice{display:block}.purchase-linked-notice span{display:block;margin-top:4px}}</style>
+<style>
+  /* The supplier workflow starts with mobile, then resolves the name. Keep
+     the mobile field compact while giving the resolved supplier name room. */
+  .purchase-supplier-core { grid-template-columns: 180px 220px minmax(260px, 1fr); }
+  @media (max-width: 760px) { .purchase-supplier-core { grid-template-columns: 1fr; } }
+</style>
 <script>
 (() => {
   const form = document.querySelector('[data-supplier-purchase-form]');
@@ -63,9 +69,18 @@
   const name = q('[data-supplier-name]');
   const phone = q('[name=supplierPhone]');
   const box = q('[data-supplier-suggestions]');
+  let loadedSupplierPhone = '';
+  const clearSupplierProfileFields = () => {
+    name.value = '';
+    q('[name=supplierEmail]').value = '';
+    q('[name=supplierAddress]').value = '';
+    q('[name=supplierGstin]').value = '';
+    q('[name=supplierPan]').value = '';
+  };
   const fillSupplier = (supplier) => {
     name.value = supplier.name || '';
     phone.value = supplier.phone || '';
+    loadedSupplierPhone = String(supplier.phone || '').replace(/\D/g, '');
     q('[name=supplierEmail]').value = supplier.email || '';
     q('[name=supplierAddress]').value = supplier.address || '';
     q('[name=supplierGstin]').value = supplier.gstin || '';
@@ -74,6 +89,9 @@
   };
   let timer, controller, phoneTimer, phoneController;
   name?.addEventListener('input', () => {
+    // Once the name is edited manually, do not treat a previous phone lookup
+    // as the active supplier selection.
+    loadedSupplierPhone = '';
     clearTimeout(timer);
     const term = name.value.trim();
     if (term.length < 2) { if (box) box.hidden = true; return; }
@@ -105,7 +123,18 @@
       if (data.found) fillSupplier(data.supplier);
     } catch (error) { if (error.name !== 'AbortError') { /* keep manual supplier entry available */ } }
   }
-  phone?.addEventListener('input', () => { clearTimeout(phoneTimer); const digits = String(phone.value || '').replace(/\D/g, ''); if (digits.length >= 10) phoneTimer = setTimeout(lookupSupplierByPhone, 300); });
+  phone?.addEventListener('input', () => {
+    clearTimeout(phoneTimer);
+    const digits = String(phone.value || '').replace(/\D/g, '');
+    // If the counter changes the mobile after selecting a supplier, discard
+    // the old auto-filled profile so a purchase cannot be saved to the wrong
+    // account. A new exact match will populate the name again below.
+    if (loadedSupplierPhone && digits !== loadedSupplierPhone) {
+      loadedSupplierPhone = '';
+      clearSupplierProfileFields();
+    }
+    if (digits.length >= 10) phoneTimer = setTimeout(lookupSupplierByPhone, 300);
+  });
   phone?.addEventListener('blur', lookupSupplierByPhone);
   phone?.addEventListener('keydown', async (event) => { if (event.key !== 'Enter' || event.isComposing) return; event.preventDefault(); clearTimeout(phoneTimer); await lookupSupplierByPhone(); name?.focus(); });
 })();

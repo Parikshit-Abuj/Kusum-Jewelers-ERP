@@ -383,8 +383,8 @@
       </div>
       <div class="table-wrap scheme-bulk-table-wrap scheme-bulk-payment-table-wrap">
         <table class="scheme-bulk-table">
-          <thead><tr><th style="width:210px;">Customer</th><th style="width:180px;">Installment</th><th style="width:130px;">Payment date</th><th style="width:105px;">Cash</th><th style="width:105px;">UPI</th><th style="width:105px;">Card</th><th style="width:125px;">Bank transfer</th><th style="width:110px;">Total</th><th style="width:210px;">Narration</th></tr></thead>
-          <tbody data-bulk-payment-rows><tr><td colspan="9" class="center muted">Open this list to load pending installments.</td></tr></tbody>
+          <thead><tr><th style="width:250px;">Customer</th><th style="width:220px;">Installment</th><th>Payment summary</th><th style="width:150px;">Action</th></tr></thead>
+          <tbody data-bulk-payment-rows><tr><td colspan="4" class="center muted">Open this list to load pending installments.</td></tr></tbody>
         </table>
       </div>
       <div class="scheme-bulk-pagination" data-bulk-payment-pagination hidden>
@@ -397,6 +397,37 @@
     <footer class="modal-footer">
       <button type="button" class="button ghost" data-scheme-bulk-payment-close>Close</button>
       <button type="button" class="button" data-bulk-payment-submit>Record payments</button>
+    </footer>
+  </section>
+</div>
+
+<!-- Focused payment editor: the batch list stays readable while each payment
+     is entered in one clear, keyboard-friendly popup. -->
+<div class="modal-overlay scheme-bulk-payment-editor-modal" id="schemeBulkPaymentEditorModal" style="display:none;" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="schemeBulkPaymentEditorTitle">
+  <section class="modal-card scheme-bulk-payment-editor-card" role="document">
+    <header class="modal-header">
+      <div><p class="eyebrow">Payment details</p><h2 id="schemeBulkPaymentEditorTitle">Enter payment</h2><p><strong data-bulk-payment-editor-customer></strong><small data-bulk-payment-editor-document></small></p></div>
+      <button class="modal-close-btn" type="button" data-bulk-payment-editor-close aria-label="Close payment editor">×</button>
+    </header>
+    <div class="modal-body scheme-bulk-payment-editor-body">
+      <div class="scheme-bulk-payment-editor-grid">
+        <label>Installment<select data-bulk-payment-editor-installment></select></label>
+        <label>Payment date<input type="date" data-bulk-payment-editor-date></label>
+      </div>
+      <div class="scheme-bulk-payment-method-grid">
+        <label>Cash<input type="number" min="0" step="0.01" inputmode="decimal" data-bulk-payment-editor-cash placeholder="0.00"></label>
+        <label>UPI<input type="number" min="0" step="0.01" inputmode="decimal" data-bulk-payment-editor-upi placeholder="0.00"></label>
+        <label>Card<input type="number" min="0" step="0.01" inputmode="decimal" data-bulk-payment-editor-card placeholder="0.00"></label>
+        <label>Bank transfer<input type="number" min="0" step="0.01" inputmode="decimal" data-bulk-payment-editor-bank placeholder="0.00"></label>
+      </div>
+      <label class="scheme-bulk-payment-editor-note">Narration (optional)<textarea rows="2" data-bulk-payment-editor-note placeholder="Optional payment note"></textarea></label>
+      <div class="scheme-bulk-payment-editor-total"><span>Total entered</span><strong data-bulk-payment-editor-total>₹0.00</strong><small>Monthly installment: ₹<%= Number(plan.monthlyAmount).toFixed(2) %></small></div>
+      <p class="scheme-bulk-feedback" data-bulk-payment-editor-feedback role="status" aria-live="polite"></p>
+    </div>
+    <footer class="modal-footer">
+      <button type="button" class="button ghost" data-bulk-payment-editor-close>Cancel</button>
+      <button type="button" class="button secondary small" data-bulk-payment-editor-fill>Full cash</button>
+      <button type="button" class="button" data-bulk-payment-editor-apply>Apply payment</button>
     </footer>
   </section>
 </div>
@@ -826,6 +857,7 @@
 (function initSchemeBulkPayment() {
   const modal = document.getElementById('schemeBulkPaymentModal');
   if (!modal) return;
+  const editorModal = document.getElementById('schemeBulkPaymentEditorModal');
   const planId = '<%= plan.id %>';
   const monthlyAmount = Number('<%= Number(plan.monthlyAmount) %>') || 0;
   const defaultDate = '<%= dateInput() %>';
@@ -840,12 +872,29 @@
   const pageLabel = modal.querySelector('[data-bulk-payment-page]');
   const previousButton = modal.querySelector('[data-bulk-payment-prev]');
   const nextButton = modal.querySelector('[data-bulk-payment-next]');
-  if (!rowsBody || !filterForm || !searchInput || !defaultMonthInput || !countLabel || !submitButton || !feedback || !pagination || !pageLabel || !previousButton || !nextButton) return;
+  const editorCustomer = editorModal?.querySelector('[data-bulk-payment-editor-customer]');
+  const editorDocument = editorModal?.querySelector('[data-bulk-payment-editor-document]');
+  const editorInstallment = editorModal?.querySelector('[data-bulk-payment-editor-installment]');
+  const editorDate = editorModal?.querySelector('[data-bulk-payment-editor-date]');
+  const editorMethods = {
+    cash: editorModal?.querySelector('[data-bulk-payment-editor-cash]'),
+    upi: editorModal?.querySelector('[data-bulk-payment-editor-upi]'),
+    card: editorModal?.querySelector('[data-bulk-payment-editor-card]'),
+    bank: editorModal?.querySelector('[data-bulk-payment-editor-bank]')
+  };
+  const editorNote = editorModal?.querySelector('[data-bulk-payment-editor-note]');
+  const editorTotal = editorModal?.querySelector('[data-bulk-payment-editor-total]');
+  const editorFeedback = editorModal?.querySelector('[data-bulk-payment-editor-feedback]');
+  const editorApply = editorModal?.querySelector('[data-bulk-payment-editor-apply]');
+  const editorFill = editorModal?.querySelector('[data-bulk-payment-editor-fill]');
+  if (!rowsBody || !filterForm || !searchInput || !defaultMonthInput || !countLabel || !submitButton || !feedback || !pagination || !pageLabel || !previousButton || !nextButton || !editorModal || !editorCustomer || !editorDocument || !editorInstallment || !editorDate || !editorNote || !editorTotal || !editorFeedback || !editorApply || !editorFill || Object.values(editorMethods).some((field) => !field)) return;
 
   let page = 1;
   let currentItems = [];
   let drafts = new Map();
   let previousFocus = null;
+  let editorRow = null;
+  let editorPreviousFocus = null;
 
   const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
   const setFeedback = (message, isError = false) => {
@@ -856,8 +905,8 @@
   const rowTotal = (row) => ['cash', 'upi', 'card', 'bank'].reduce((total, method) => total + numericValue(row, `[data-bulk-payment-${method}]`), 0);
   const captureRow = (row) => {
     const enrollmentId = String(row.dataset.enrollmentId || '');
-    if (!enrollmentId) return;
-    drafts.set(enrollmentId, {
+    if (!enrollmentId) return null;
+    const draft = {
       enrollmentId,
       installmentId: row.querySelector('[data-bulk-payment-installment]')?.value || '',
       paymentDate: row.querySelector('[data-bulk-payment-row-date]')?.value || defaultDate,
@@ -870,7 +919,9 @@
       narration: row.querySelector('[data-bulk-payment-note]')?.value.trim() || '',
       customerName: row.dataset.customerName || 'Customer',
       enrollmentNumber: row.dataset.enrollmentNumber || ''
-    });
+    };
+    drafts.set(enrollmentId, draft);
+    return draft;
   };
   const captureDrafts = () => rowsBody.querySelectorAll('[data-bulk-payment-row]').forEach(captureRow);
   const updateRowTotal = (row) => {
@@ -879,6 +930,21 @@
     if (output) output.textContent = `₹${total.toFixed(2)} / ₹${monthlyAmount.toFixed(2)}`;
     output?.classList.toggle('is-valid', Math.abs(total - monthlyAmount) < 0.01);
     output?.classList.toggle('is-invalid', total > 0 && Math.abs(total - monthlyAmount) >= 0.01);
+  };
+  const paymentSummary = (draft) => {
+    const parts = [['Cash', draft.cashPaid], ['UPI', draft.upiPaid], ['Card', draft.cardPaid], ['Bank', draft.bankPaid]]
+      .filter(([, amount]) => Number(amount) > 0.001)
+      .map(([label, amount]) => `${label} ₹${Number(amount).toFixed(2)}`);
+    return parts.length ? parts.join(' · ') : 'No payment entered';
+  };
+  const updateRowSummary = (row) => {
+    const draft = captureRow(row);
+    if (!draft) return;
+    const summary = row.querySelector('[data-bulk-payment-summary]');
+    if (summary) summary.textContent = paymentSummary(draft);
+    const installment = row.querySelector('[data-bulk-payment-installment]');
+    const label = row.querySelector('[data-bulk-payment-installment-label]');
+    if (label && installment) label.textContent = installment.selectedOptions[0]?.textContent || 'No pending installment';
   };
   const updateCount = () => {
     const count = [...drafts.values()].filter((draft) => (draft.cashPaid + draft.upiPaid + draft.cardPaid + draft.bankPaid) > 0).length;
@@ -906,40 +972,85 @@
       narration: existing.narration || ''
     };
   };
+  const editorValue = (field) => Number(field?.value || 0) || 0;
+  const updateEditorTotal = () => {
+    const total = Object.values(editorMethods).reduce((sum, field) => sum + editorValue(field), 0);
+    editorTotal.textContent = `₹${total.toFixed(2)}`;
+    editorTotal.classList.toggle('is-valid', Math.abs(total - monthlyAmount) < 0.01);
+    editorTotal.classList.toggle('is-invalid', total > 0 && Math.abs(total - monthlyAmount) >= 0.01);
+  };
+  const closeEditor = () => {
+    editorModal.style.display = 'none';
+    editorModal.setAttribute('aria-hidden', 'true');
+    editorRow = null;
+    editorFeedback.textContent = '';
+    editorPreviousFocus?.focus();
+  };
+  const openEditor = (row) => {
+    if (!row || row.querySelector('[data-bulk-payment-installment]')?.disabled) return;
+    editorRow = row;
+    editorPreviousFocus = document.activeElement;
+    const draft = captureRow(row);
+    editorCustomer.textContent = row.dataset.customerName || 'Customer';
+    editorDocument.textContent = row.dataset.enrollmentNumber || '';
+    editorInstallment.replaceChildren(...Array.from(row.querySelector('[data-bulk-payment-installment]').options).map((option) => option.cloneNode(true)));
+    editorInstallment.value = draft?.installmentId || '';
+    editorDate.value = draft?.paymentDate || defaultDate;
+    Object.entries(editorMethods).forEach(([method, field]) => { field.value = draft?.[`${method}Paid`] ? Number(draft[`${method}Paid`]).toFixed(2) : ''; });
+    editorNote.value = draft?.narration || '';
+    editorFeedback.textContent = '';
+    updateEditorTotal();
+    editorModal.style.display = 'flex';
+    editorModal.setAttribute('aria-hidden', 'false');
+    setTimeout(() => editorInstallment.focus(), 0);
+  };
+  const applyEditor = () => {
+    if (!editorRow) return;
+    const installment = editorRow.querySelector('[data-bulk-payment-installment]');
+    const date = editorRow.querySelector('[data-bulk-payment-row-date]');
+    installment.value = editorInstallment.value;
+    installment.dataset.manual = '1';
+    date.value = editorDate.value || defaultDate;
+    date.dataset.manual = '1';
+    Object.entries(editorMethods).forEach(([method, field]) => {
+      editorRow.querySelector(`[data-bulk-payment-${method}]`).value = field.value || '';
+    });
+    editorRow.querySelector('[data-bulk-payment-note]').value = editorNote.value.trim();
+    captureRow(editorRow);
+    updateRowTotal(editorRow);
+    updateRowSummary(editorRow);
+    updateCount();
+    closeEditor();
+  };
+  Object.values(editorMethods).forEach((field) => field?.addEventListener('input', updateEditorTotal));
+  editorFill.addEventListener('click', () => {
+    editorMethods.cash.value = monthlyAmount.toFixed(2);
+    ['upi', 'card', 'bank'].forEach((method) => { editorMethods[method].value = ''; });
+    updateEditorTotal();
+  });
+  editorApply.addEventListener('click', applyEditor);
+  editorModal.querySelectorAll('[data-bulk-payment-editor-close]').forEach((button) => button.addEventListener('click', closeEditor));
+  editorModal.addEventListener('click', (event) => { if (event.target === editorModal) closeEditor(); });
   const renderRows = () => {
     if (!currentItems.length) {
-      rowsBody.innerHTML = '<tr><td colspan="9" class="center muted">No active customers with pending installments found.</td></tr>';
+      rowsBody.innerHTML = '<tr><td colspan="4" class="center muted">No active customers with pending installments found.</td></tr>';
       updateCount();
       return;
     }
     rowsBody.innerHTML = currentItems.map((item) => {
       const pending = Array.isArray(item.pendingInstallments) ? item.pendingInstallments : [];
       const draft = draftFor(item, pending);
-      const options = pending.map((installment) => `<option value="${installment.id}" data-month="${installment.installmentNumber}" ${String(installment.id) === draft.installmentId ? 'selected' : ''}>Month ${installment.installmentNumber} · due ${escapeHtml(installment.dueDate)}</option>`).join('');
+      const options = pending.map((installment) => `<option value="${installment.id}" data-month="${installment.installmentNumber}" ${String(installment.id) === draft.installmentId ? 'selected' : ''}>Month ${installment.installmentNumber}</option>`).join('');
       const disabled = !pending.length;
       return `<tr data-bulk-payment-row data-enrollment-id="${item.id}" data-customer-name="${escapeHtml(item.customerName)}" data-enrollment-number="${escapeHtml(item.enrollmentNumber)}">
         <td><strong>${escapeHtml(item.customerName)}</strong><small>${escapeHtml(item.enrollmentNumber)}${item.customerPhone ? ` · ${escapeHtml(item.customerPhone)}` : ''}</small></td>
-        <td><select data-bulk-payment-installment data-manual="${draft.installmentManual ? '1' : ''}" ${disabled ? 'disabled' : ''}>${options || '<option value="">No pending installment</option>'}</select></td>
-        <td><input type="date" data-bulk-payment-row-date data-manual="${draft.paymentDateManual ? '1' : ''}" value="${draft.paymentDate}" ${disabled ? 'disabled' : ''}></td>
-        <td><input type="number" min="0" step="0.01" inputmode="decimal" data-bulk-payment-cash value="${draft.cashPaid || ''}" ${disabled ? 'disabled' : ''} placeholder="0.00"></td>
-        <td><input type="number" min="0" step="0.01" inputmode="decimal" data-bulk-payment-upi value="${draft.upiPaid || ''}" ${disabled ? 'disabled' : ''} placeholder="0.00"></td>
-        <td><input type="number" min="0" step="0.01" inputmode="decimal" data-bulk-payment-card value="${draft.cardPaid || ''}" ${disabled ? 'disabled' : ''} placeholder="0.00"></td>
-        <td><input type="number" min="0" step="0.01" inputmode="decimal" data-bulk-payment-bank value="${draft.bankPaid || ''}" ${disabled ? 'disabled' : ''} placeholder="0.00"></td>
-        <td><output class="scheme-bulk-payment-total" data-bulk-payment-total>₹0.00 / ₹${monthlyAmount.toFixed(2)}</output>${disabled ? '' : '<button type="button" class="scheme-bulk-fill-cash" data-bulk-payment-fill>Full cash</button>'}</td>
-        <td><input type="text" data-bulk-payment-note value="${escapeHtml(draft.narration)}" ${disabled ? 'disabled' : ''} placeholder="Optional"></td>
+         <td><span class="scheme-bulk-payment-installment-label" data-bulk-payment-installment-label>${escapeHtml(pending.find((installment) => String(installment.id) === draft.installmentId)?.installmentNumber ? `Month ${pending.find((installment) => String(installment.id) === draft.installmentId).installmentNumber}` : 'No pending installment')}</span><select class="scheme-bulk-payment-hidden-control" data-bulk-payment-installment data-manual="${draft.installmentManual ? '1' : ''}" ${disabled ? 'disabled' : ''}>${options || '<option value="">No pending installment</option>'}</select></td>
+        <td><output class="scheme-bulk-payment-total" data-bulk-payment-total>₹0.00 / ₹${monthlyAmount.toFixed(2)}</output><small class="scheme-bulk-payment-summary" data-bulk-payment-summary>${escapeHtml(paymentSummary(draft))}</small><div class="scheme-bulk-payment-draft" aria-hidden="true"><input type="date" data-bulk-payment-row-date data-manual="${draft.paymentDateManual ? '1' : ''}" value="${draft.paymentDate}" ${disabled ? 'disabled' : ''}><input type="number" data-bulk-payment-cash value="${draft.cashPaid || ''}" ${disabled ? 'disabled' : ''}><input type="number" data-bulk-payment-upi value="${draft.upiPaid || ''}" ${disabled ? 'disabled' : ''}><input type="number" data-bulk-payment-card value="${draft.cardPaid || ''}" ${disabled ? 'disabled' : ''}><input type="number" data-bulk-payment-bank value="${draft.bankPaid || ''}" ${disabled ? 'disabled' : ''}><input type="text" data-bulk-payment-note value="${escapeHtml(draft.narration)}" ${disabled ? 'disabled' : ''}></div></td>
+        <td><button type="button" class="button secondary small scheme-bulk-payment-edit" data-bulk-payment-edit ${disabled ? 'disabled' : ''}>${disabled ? 'No pending' : 'Enter payment'}</button></td>
       </tr>`;
     }).join('');
     rowsBody.querySelectorAll('[data-bulk-payment-row]').forEach((row) => {
-      row.querySelectorAll('input, select').forEach((input) => input.addEventListener('input', () => { captureRow(row); updateRowTotal(row); updateCount(); }));
-      row.querySelector('[data-bulk-payment-installment]')?.addEventListener('change', (event) => { event.currentTarget.dataset.manual = '1'; captureRow(row); updateRowTotal(row); });
-      row.querySelector('[data-bulk-payment-row-date]')?.addEventListener('change', (event) => { event.currentTarget.dataset.manual = '1'; captureRow(row); });
-      row.querySelector('[data-bulk-payment-fill]')?.addEventListener('click', () => {
-        row.querySelector('[data-bulk-payment-cash]').value = monthlyAmount.toFixed(2);
-        ['upi', 'card', 'bank'].forEach((method) => { row.querySelector(`[data-bulk-payment-${method}]`).value = ''; });
-        captureRow(row);
-        updateRowTotal(row);
-        updateCount();
-      });
+      row.querySelector('[data-bulk-payment-edit]')?.addEventListener('click', () => openEditor(row));
       updateRowTotal(row);
       captureRow(row);
     });
@@ -947,7 +1058,7 @@
   };
   const loadPage = async () => {
     captureDrafts();
-    rowsBody.innerHTML = '<tr><td colspan="9" class="center muted">Loading pending installments…</td></tr>';
+      rowsBody.innerHTML = '<tr><td colspan="4" class="center muted">Loading pending installments…</td></tr>';
     setFeedback('');
     try {
       const params = new URLSearchParams({ page: String(page), payments: '1' });
@@ -969,6 +1080,7 @@
     }
   };
   const close = () => {
+    if (editorModal.style.display === 'flex') closeEditor();
     modal.style.display = 'none';
     modal.setAttribute('aria-hidden', 'true');
     previousFocus?.focus();
@@ -987,7 +1099,11 @@
   document.querySelectorAll('[data-scheme-bulk-payment-open]').forEach((button) => button.addEventListener('click', open));
   modal.querySelectorAll('[data-scheme-bulk-payment-close]').forEach((button) => button.addEventListener('click', close));
   modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
-  document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && modal.style.display === 'flex') close(); });
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    if (editorModal.style.display === 'flex') { closeEditor(); return; }
+    if (modal.style.display === 'flex') close();
+  });
   filterForm.addEventListener('submit', (event) => { event.preventDefault(); page = 1; loadPage(); });
   defaultMonthInput.addEventListener('change', () => { captureDrafts(); renderRows(); });
   previousButton.addEventListener('click', () => { if (page > 1) { page -= 1; loadPage(); } });

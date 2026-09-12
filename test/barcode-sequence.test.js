@@ -77,7 +77,7 @@ test('uses the configured sales prefix and financial-year start month', async ()
   };
   assert.equal(
     await nextDocumentNumber(tx, 'SB', new Date(2026, 6, 1, 10, 0, 0), { invoicePrefix: 'KJ', financialYearStartMonth: 7 }),
-    'KJ/26-27/00012'
+    'KJ-2627-12'
   );
 });
 

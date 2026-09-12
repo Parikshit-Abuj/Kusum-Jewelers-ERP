@@ -522,7 +522,10 @@ model SchemePlan {
 
 model SchemeEnrollment {
   id               Int                 @id @default(autoincrement())
-  enrollmentNumber String              @unique @db.VarChar(50)
+  // Receipt numbers are scoped to a scheme plan. Each plan can therefore
+  // start at SCH-1 while the composite key keeps every receipt unique inside
+  // that plan.
+  enrollmentNumber String              @db.VarChar(50)
   schemePlanId     Int
   customerId       Int
   startDate        DateTime
@@ -540,6 +543,7 @@ model SchemeEnrollment {
   @@index([schemePlanId])
   @@index([customerId])
   @@index([status])
+  @@unique([schemePlanId, enrollmentNumber])
 }
 
 model SchemeInstallment {

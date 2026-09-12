@@ -6,15 +6,38 @@
 <div class="rate-notice"><strong>Rates in use: <%= rateInfo.sourceDate %></strong><span>22K <%- money(rateInfo.rate.gold22k) %>/g · 24K <%- money(rateInfo.rate.gold24k) %>/g · Silver <%- money(rateInfo.rate.silver) %>/g</span></div>
 <% } %>
 <form class="panel form-panel" method="post" action="/urd-purchases" data-urd-form>
-  <section class="form-section"><h2>Purchase details</h2><div class="form-grid four">
-    <label>URD No.<input name="purchaseNumber" readonly value="<%= typeof purchaseNumber !== 'undefined' ? purchaseNumber : '' %>" placeholder="Assigned when saved"></label>
-    <label>Date *<input name="purchaseDate" type="date" required value="<%= dateInput() %>"></label>
-    <label>Customer name *<input name="customerName" id="urdCustomerName" data-urd-customer-name autocomplete="off" required placeholder="Search or enter customer"></label>
-    <label>Mobile number<input name="customerPhone" id="urdCustomerPhone" inputmode="numeric" maxlength="15" placeholder="Optional"></label>
-    <label>Find existing customer<input id="urdCustomerSearch" type="search" autocomplete="off" placeholder="Search by name or mobile…"></label>
-    <label>Existing customer<select name="customerId" id="urdCustomer"><option value="">New customer / choose from search</option><% customers.forEach(c => { %><option value="<%= c.id %>" data-customer-name="<%= c.name %>" data-customer-phone="<%= c.phone || '' %>" data-customer-address="<%= c.address || '' %>" data-customer-pan="<%= c.panNumber || '' %>"><%= c.name %><%= c.phone ? ` · ${c.phone}` : '' %></option><% }); %></select></label>
-    <label>Metal *<select name="metal" data-urd-metal><option value="GOLD" selected>Gold</option><option value="SILVER">Silver</option><option value="PLATINUM">Platinum</option><option value="OTHER">Other</option></select></label>
-  </div></section>
+  <section class="form-section urd-customer-section">
+    <div class="urd-section-heading"><div><h2>Purchase details</h2><p>Enter the mobile number first to load an existing customer, or create a new profile.</p></div></div>
+    <div class="form-grid four urd-purchase-meta">
+      <label>URD No.<input name="purchaseNumber" readonly value="<%= typeof purchaseNumber !== 'undefined' ? purchaseNumber : '' %>" placeholder="Assigned when saved"></label>
+      <label>Date *<input name="purchaseDate" type="date" required value="<%= dateInput() %>"></label>
+      <label>Mobile number<input name="customerPhone" inputmode="numeric" autocomplete="tel" maxlength="15" placeholder="Optional mobile number" data-customer-phone autofocus></label>
+      <label>Metal *<select name="metal" data-urd-metal><option value="GOLD" selected>Gold</option><option value="SILVER">Silver</option><option value="PLATINUM">Platinum</option><option value="OTHER">Other</option></select></label>
+    </div>
+    <section class="customer-lookup" data-customer-lookup>
+      <input type="hidden" name="customerId" data-customer-id>
+      <div class="customer-search-control">
+        <label for="urdCustomerSearch">Find existing customer</label>
+        <input id="urdCustomerSearch" type="search" autocomplete="off" spellcheck="false" placeholder="Search by name or mobile" data-customer-search>
+        <div class="customer-search-results" data-customer-search-results role="listbox" hidden></div>
+      </div>
+      <button class="button ghost small customer-new-action" type="button" data-new-customer-open>+ New customer</button>
+      <div class="cust-status-badge" data-customer-status>Enter a customer name. Mobile number is optional.</div>
+      <div class="cust-existing-box" data-existing-customer hidden>
+        <div class="cust-existing-info"><strong data-existing-name></strong><span data-existing-details></span></div>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <label style="margin:0; font-size:10.5px; display:inline-flex; align-items:center; gap:4px; font-weight:700; color:#2e7d32;"><span>PAN (opt):</span><input name="existingCustomerPan" data-existing-pan placeholder="e.g. ABCDE1234F" maxlength="10" autocomplete="off" style="padding:4px 7px; font-size:11.5px; width:110px; text-transform:uppercase; border:1px solid #a3d9b8; border-radius:6px;"></label>
+          <a class="button ghost small" data-existing-ledger href="#" hidden style="background:#fff; border-color:#a3d9b8; color:#145a32; padding:3px 8px; font-size:11px;">Open Ledger →</a>
+        </div>
+      </div>
+      <div class="cust-new-grid" data-new-customer-fields hidden>
+        <div class="pos-field"><label>Customer Name *</label><input name="customerName" disabled data-customer-name data-uppercase placeholder="Customer full name"></div>
+        <div class="pos-field"><label>PAN No. (optional)</label><input name="customerPan" disabled data-customer-pan placeholder="e.g. ABCDE1234F" maxlength="10" autocomplete="off" style="text-transform:uppercase;"></div>
+        <div class="pos-field"><label>Email (optional)</label><input name="customerEmail" type="email" disabled data-customer-email placeholder="customer@gmail.com"></div>
+        <div class="pos-field"><label>City / Address</label><input name="customerAddress" disabled data-customer-address data-uppercase placeholder="City / Area"></div>
+      </div>
+    </section>
+  </section>
   <section class="form-section"><h2>Weight &amp; rate</h2><div class="form-grid four">
     <label>Purity
       <input name="purity" data-urd-purity maxlength="50" placeholder="e.g. 22K, 24K, 925, 99.9">
@@ -32,6 +55,26 @@
   <section class="form-section"><label>Description<textarea name="description" rows="2" placeholder="Item description — old bangles, broken chain, etc."></textarea></label><label>Notes<textarea name="notes" rows="2" placeholder="Customer ID proof, any deductions, etc."></textarea></label></section>
   <footer class="form-footer"><a class="button ghost" href="/urd-purchases">Cancel</a><button class="button" type="submit">Save URD purchase</button></footer>
 </form>
+<style>
+  /* Match the Sales customer picker so URD entry has one predictable flow. */
+  .urd-customer-section .customer-lookup { margin: 14px 0 0; padding: 13px 15px; }
+  .urd-customer-section .customer-search-control { position: relative; display: grid; gap: 4px; margin-bottom: 8px; }
+  .urd-customer-section .customer-search-control label { color: #63584c; font-size: 10.5px; font-weight: 750; letter-spacing: .03em; text-transform: uppercase; }
+  .urd-customer-section .customer-search-control input { width: 100%; box-sizing: border-box; padding: 8px 11px; border: 1.5px solid #ded5c5; border-radius: 8px; background: #fff; color: #1a1612; font-size: 13px; font-weight: 550; font-family: inherit; }
+  .urd-customer-section .customer-search-control input:focus { outline: none; border-color: #c9a044; box-shadow: 0 0 0 2.5px rgba(201, 160, 68, .15); }
+  .urd-customer-section .customer-search-results { position: absolute; z-index: 30; top: calc(100% + 23px); left: 0; right: 0; max-height: 220px; overflow-y: auto; border: 1px solid #dfd4c3; border-radius: 9px; background: #fff; box-shadow: 0 12px 28px rgba(46, 33, 15, .16); }
+  .urd-customer-section .customer-search-option { display: flex; width: 100%; flex-direction: column; align-items: flex-start; gap: 2px; padding: 9px 11px; border: 0; border-bottom: 1px solid #f0ebe4; background: #fff; color: #2b2319; cursor: pointer; text-align: left; }
+  .urd-customer-section .customer-search-option:last-child { border-bottom: 0; }
+  .urd-customer-section .customer-search-option:hover, .urd-customer-section .customer-search-option:focus, .urd-customer-section .customer-search-option.is-highlighted { background: #fff8eb; outline: none; }
+  .urd-customer-section .customer-search-option strong { font-size: 12.5px; }
+  .urd-customer-section .customer-search-option small, .urd-customer-section .customer-search-empty { color: #837665; font-size: 11.5px; }
+  .urd-customer-section .customer-search-empty { padding: 11px; }
+  .urd-customer-section .customer-new-action { margin: 0 0 8px; justify-self: start; }
+  .urd-customer-section .cust-status-badge { padding: 8px 12px; border-radius: 8px; font-size: 11.5px; background: #fdfbf7; border: 1px dashed #ded4c1; color: #706557; margin-bottom: 8px; }
+  .urd-customer-section .cust-existing-box { background: #f3faf5; border: 1.5px solid #b7e4c7; border-radius: 9px; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
+  .urd-customer-section .cust-existing-info strong { color: #145a32; font-size: 13px; display: block; }
+  .urd-customer-section .cust-existing-info span { color: #2e7d32; font-size: 11.5px; }
+</style>
 <script>
 (function() {
   const form = document.querySelector('[data-urd-form]'); if (!form) return;
@@ -48,73 +91,5 @@
   }
   grossInput.addEventListener('input', () => { netInput.value = grossInput.value; recalc(); }); netInput.addEventListener('input', recalc); rateInput.addEventListener('input', recalc); paidInput.addEventListener('input', () => { payoutEdited = true; }); purityInput?.addEventListener('input', updateRate); metalSel.addEventListener('change', updateRate); updateRate();
 
-  const customerName = document.getElementById('urdCustomerName');
-  const customerPhone = document.getElementById('urdCustomerPhone');
-  const customerSearch = document.getElementById('urdCustomerSearch');
-  const customerSelect = document.getElementById('urdCustomer');
-  let customerTimer, customerController, phoneTimer, phoneController;
-  function applyCustomer(customer) {
-    if (!customer) return;
-    customerName.value = customer.name || '';
-    customerPhone.value = customer.phone || '';
-    customerSelect.value = String(customer.id || '');
-    if (customerSelect.value !== String(customer.id || '')) {
-      const option = document.createElement('option');
-      option.value = String(customer.id); option.textContent = `${customer.name}${customer.phone ? ` · ${customer.phone}` : ''}`;
-      customerSelect.appendChild(option); customerSelect.value = option.value;
-    }
-  }
-  async function lookupCustomerByPhone() {
-    const phone = String(customerPhone?.value || '').replace(/\D/g, '').slice(0, 15);
-    if (customerPhone) customerPhone.value = phone;
-    if (!phone || phone.length < 10) { if (customerSelect) customerSelect.value = ''; return; }
-    phoneController?.abort(); phoneController = new AbortController();
-    try {
-      const response = await fetch('/api/customers/phone/' + encodeURIComponent(phone), { signal: phoneController.signal });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Could not look up this customer.');
-      if (data.found) applyCustomer(data.customer); else if (customerSelect) customerSelect.value = '';
-    } catch (error) { if (error.name !== 'AbortError' && customerSelect) customerSelect.value = ''; }
-  }
-  customerPhone?.addEventListener('input', () => {
-    if (customerSelect) customerSelect.value = '';
-    clearTimeout(phoneTimer);
-    const digits = String(customerPhone.value || '').replace(/\D/g, '');
-    if (digits.length >= 10) phoneTimer = setTimeout(lookupCustomerByPhone, 300);
-  });
-  customerPhone?.addEventListener('blur', lookupCustomerByPhone);
-  customerPhone?.addEventListener('keydown', async (event) => {
-    if (event.key !== 'Enter' || event.isComposing) return;
-    event.preventDefault(); clearTimeout(phoneTimer); await lookupCustomerByPhone(); customerName?.focus();
-  });
-  customerName?.addEventListener('input', () => { if (customerSelect) customerSelect.value = ''; });
-  customerSelect?.addEventListener('change', () => {
-    const option = customerSelect.selectedOptions[0];
-    if (!option) return;
-    if (option.dataset.customer) {
-      try { applyCustomer(JSON.parse(option.dataset.customer)); } catch (_) { /* the selected id is still submitted */ }
-    } else if (option.dataset.customerName) {
-      applyCustomer({ id: option.value, name: option.dataset.customerName, phone: option.dataset.customerPhone, address: option.dataset.customerAddress, panNumber: option.dataset.customerPan });
-    }
-  });
-  if (customerSearch && customerSelect) {
-    const blankOption = () => { const option = document.createElement('option'); option.value = ''; option.textContent = 'New customer / choose from search'; return option; };
-    customerSearch.addEventListener('input', () => {
-      clearTimeout(customerTimer);
-      const query = customerSearch.value.trim();
-      if (query.length < 2) { customerSelect.replaceChildren(blankOption()); return; }
-      customerTimer = setTimeout(async () => {
-        customerController?.abort(); customerController = new AbortController();
-        try {
-          const response = await fetch(`/api/customers/search?q=${encodeURIComponent(query)}`, { signal: customerController.signal });
-          const data = await response.json();
-          if (!response.ok) throw new Error(data.error || 'Could not search customers.');
-          const options = (data.customers || []).map((customer) => { const option = document.createElement('option'); option.value = String(customer.id); option.textContent = `${customer.name}${customer.phone ? ` · ${customer.phone}` : ''}`; option.dataset.customer = JSON.stringify(customer); return option; });
-          customerSelect.replaceChildren(blankOption(), ...options);
-          if (options.length === 1) { customerSelect.value = options[0].value; applyCustomer(JSON.parse(options[0].dataset.customer)); }
-        } catch (error) { if (error.name !== 'AbortError') customerSelect.replaceChildren(blankOption()); }
-      }, 180);
-    });
-  }
 })();
 </script>
